@@ -18,7 +18,7 @@ Two looks, switched with **F9** in game:
 No original game files come with these builds. The music and HD textures are included but locked: they open only
 with the `LEGO.JAM` file from your own LEGO Racers install.
 
-1. Download the build for your platform from [Releases](../../releases).
+1. Download the build for your platform from the table below (always the latest), or any version from [Releases](../../releases).
 2. Extract it and run the game (see `README.txt` in the download).
 3. On first launch, choose `LEGO.JAM` from your LEGO Racers folder (next to `LEGORacers.exe`). It's copied into
    `LegoRacers/GameData/`, so you're only asked once. No file dialog on your system (e.g. a handheld's game mode)?
@@ -28,11 +28,11 @@ Video settings: OPTIONS > VIDEO OPTIONS, or Esc during a race.
 
 ## Platforms
 
-| Platform | Download | Run |
+| Platform | Download (latest) | Run |
 |---|---|---|
-| Windows (x64) | `LegoRacers-Windows.zip` | `LegoRacers.exe` |
-| Linux (x86-64) | `LegoRacers-Linux.tar.gz` | `./LegoRacers.sh` |
-| AYN Thor (Linux, ARM64) | `LegoRacers-Thor.tar.gz` | `./LegoRacers-Arm64.sh -nosplash` |
+| Windows (x64) | [LegoRacers-Windows.zip](https://github.com/zmelumian972/LRUE5/releases/latest/download/LegoRacers-Windows.zip) | `LegoRacers.exe` |
+| Linux (x86-64) | [LegoRacers-Linux.tar.gz](https://github.com/zmelumian972/LRUE5/releases/latest/download/LegoRacers-Linux.tar.gz) | `./LegoRacers.sh` |
+| AYN Thor (Linux, ARM64) | [LegoRacers-Thor.tar.gz](https://github.com/zmelumian972/LRUE5/releases/latest/download/LegoRacers-Thor.tar.gz) | `./LegoRacers-Arm64.sh -nosplash` |
 
 On Windows, if it says `VCRUNTIME140.dll` or `MSVCP140.dll` is missing, install Microsoft's
 [Visual C++ Redistributable (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe).
