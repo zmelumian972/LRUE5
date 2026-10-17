@@ -14,9 +14,10 @@ No original game files come with these builds. The music and HD textures are inc
 with the `LEGO.JAM` file from your own LEGO Racers install.
 
 1. Download the build for your platform from [Releases](../../releases).
-2. Extract it.
-3. Copy `LEGO.JAM` from your LEGO Racers folder (next to `LEGORacers.exe`) into `LegoRacers/GameData/`.
-4. Run the game (see `README.txt` in the download).
+2. Extract it and run the game (see `README.txt` in the download).
+3. On first launch, choose `LEGO.JAM` from your LEGO Racers folder (next to `LEGORacers.exe`). It's copied into
+   `LegoRacers/GameData/`, so you're only asked once. No file dialog on your system (e.g. a handheld's game mode)?
+   Copy `LEGO.JAM` into `LegoRacers/GameData/` yourself.
 
 Video settings: OPTIONS > VIDEO OPTIONS, or Esc during a race.
 
