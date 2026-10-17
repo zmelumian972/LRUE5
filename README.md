@@ -23,8 +23,13 @@ Video settings: OPTIONS > VIDEO OPTIONS, or Esc during a race.
 
 ## Platforms
 
-- Linux (x86-64)
-- AYN Thor (Linux, ARM64)
-- Windows (coming)
+| Platform | Download | Run |
+|---|---|---|
+| Windows (x64) | `LegoRacers-Windows.zip` | `LegoRacers.exe` |
+| Linux (x86-64) | `LegoRacers-Linux.tar.gz` | `./LegoRacers.sh` |
+| AYN Thor (Linux, ARM64) | `LegoRacers-Thor.tar.gz` | `./LegoRacers-Arm64.sh -nosplash` |
+
+On Windows, if it says `VCRUNTIME140.dll` or `MSVCP140.dll` is missing, install Microsoft's
+[Visual C++ Redistributable (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe).
 
 LEGO and LEGO Racers are trademarks of the LEGO Group. This is a fan project, not affiliated with or endorsed by it.
