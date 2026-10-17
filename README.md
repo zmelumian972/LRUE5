@@ -3,6 +3,11 @@
 A recreation of LEGO Racers (1999) in Unreal Engine 5: the original game's races, tracks, menus, builder and
 handling as you remember them, running on a modern engine.
 
+> **Alpha: experimental.** The whole game is playable, but expect bugs, crashes and visual glitches, and saves
+> that may not carry over between versions. The Modern look is still changing. Tested so far: Linux on a desktop
+> PC; the Windows and AYN Thor builds haven't been played on real hardware yet. Reports are welcome in
+> [Issues](../../issues).
+
 Two looks, switched with **F9** in game:
 
 - **Classic**: the original's pixels and lighting.
