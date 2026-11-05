@@ -20,10 +20,7 @@ inline int32_t partIndex(const AnimationFile& file, std::string_view name)
 	return -1;
 }
 
-inline bool partEnded(const AnimationFile& file, int32_t part, float position)
-{
-	return part >= 0 && position >= float(file.parts[size_t(part)].frames - 1);
-}
+inline bool partEnded(const AnimationFile& file, int32_t part, float position) { return part >= 0 && position >= float(file.parts[size_t(part)].frames - 1); }
 
 inline float advance(const AnimationFile& file, int32_t part, float position, int32_t dt)
 {

@@ -29,16 +29,17 @@ struct LRCORE_API Program {
 	bool loaded = false, ended = false; // a race was set up (the presentation loads its track), one ended, this frame
 
 	struct Input {
-		std::span<const MenuKey> keys;      // in order (menuKey's codes)
-		int32_t mouseX = 0, mouseY = 0;     // 640x480
+		std::span<const MenuKey> keys; // in order (menuKey's codes)
+		int32_t mouseX = 0, mouseY = 0; // 640x480
 		uint32_t buttons = 0;
 		std::array<uint16_t, 2> players = {}; // each player's race keys (Key bits)
+		float windowAspect = 4.0f / 3; // the window's width over its height
 	};
 
 	// A fresh game for the joysticks present, the save files found (by slot; empty: none), then the legal screen.
 	void boot(const MenuData& menuData, const Cache& files, uint8_t pads, std::span<const std::vector<uint8_t>> saves);
 	// One frame of dt ms. What it draws and plays is the menus' output (menus.elements, sounds, tune; in a race also
-	// world.tune), the save files to write are menus.saves.
+	// world.session.tune), the save files to write are menus.saves.
 	void frame(int32_t dt, const Input& input);
 
 	// A race of the session: its brief, the world set up (only its session when the world replays a captured run),

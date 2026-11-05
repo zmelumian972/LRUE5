@@ -28,13 +28,13 @@ struct LRCORE_API Route {
 		int32_t length; // ms: the segment that ends at this point
 		int32_t contacts; // ground contacts while on it
 	};
-	Vec3 start, loop;      // the start pose, and the pose at the end of the loop point's segment: where laps go on
+	Vec3 start, loop; // the start pose, and the pose at the end of the loop point's segment: where laps go on
 	Quat startRotation, loopRotation;
 	int32_t loopTime, loopPoint;
 	std::vector<Point> points;
 
 	// "GAMEDATA/RACEC0R1/R1_F_0.RRB". False if it is missing or malformed.
-	bool load(const Cache& cache, std::string_view path, bool mirrored);
+	[[nodiscard]] bool load(const Cache& cache, std::string_view path, bool mirrored);
 };
 
 struct LRCORE_API RoutePlace {
@@ -45,7 +45,7 @@ struct LRCORE_API RoutePlace {
 	float rate = 1;
 	float time = 0; // ms along the route
 	int32_t a = -1, b = 0; // the segment's start and end points (a = -1: before the first point)
-	int32_t ta = 0;        // the segment's start time
+	int32_t ta = 0; // the segment's start time
 	Vec3 pa, pb;
 	Quat qa, qb;
 
@@ -62,7 +62,7 @@ struct LRCORE_API RoutePlace {
 // A racer's route playback.
 struct Playback {
 	RoutePlace cursor;
-	int32_t route = -1;  // the slot whose route it has; -1 none
+	int32_t route = -1; // the slot whose route it has; -1 none
 	bool active = false; // in route mode (for good, once in)
 	bool paused = false; // until the race starts
 	float sink = 0, hop = 0, hopVelocity = 0, side = 0; // side: along the kart's left
@@ -77,8 +77,7 @@ LRCORE_API void attachAtLoop(Playback& play, Kart& kart, Pose& visible, const Ka
 
 // One step of dt ms: the rate, the cursor, the motion (side offset, hop, lift, tilt, spin) into the visible pose, the
 // velocity, and the sweep of the worlds past the track. What the sweep met is appended to hits.
-LRCORE_API void stepPlayback(Playback& play, Kart& kart, Pose& visible, const KartParams& params, const Track& track, const Route& route,
-	int32_t dt, std::vector<SweepHit>* hits);
+LRCORE_API void stepPlayback(Playback& play, Kart& kart, Pose& visible, const KartParams& params, const Track& track, const Route& route, int32_t dt, std::vector<SweepHit>* hits);
 
 // A bump: the kart is pushed along its line (dir, magnitude) and moved by `moved` (along the line, then sideways
 // within its widths).

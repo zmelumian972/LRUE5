@@ -32,7 +32,7 @@ struct LRDATA_API CollisionDatabase {
 	std::vector<Entity> entities;
 
 	// False on a malformed file, or one using what no track does (material-table overrides).
-	bool decode(std::span<const uint8_t> bytes);
+	[[nodiscard]] bool decode(std::span<const uint8_t> bytes);
 	bool operator==(const CollisionDatabase&) const = default;
 };
 
@@ -55,24 +55,13 @@ struct LRDATA_API BoundingVolume {
 	std::vector<Node> nodes; // the root is node 0
 
 	// False on a malformed file (including indices out of range).
-	bool decode(std::span<const uint8_t> bytes);
+	[[nodiscard]] bool decode(std::span<const uint8_t> bytes);
 	bool operator==(const BoundingVolume&) const = default;
 };
 
 struct LRDATA_API SurfaceFile {
-	// Which properties a surface sets (the file's keywords 0x28.. map to bits 1..; bit 0 is always set).
-	enum : uint32_t {
-		HasTouchEvent = 1u << 3,
-		HasProjectileEvent = 1u << 4,
-		HasPush = 1u << 6,
-		HasSlopeHold = 1u << 11,
-		HasFriction = 1u << 12,
-		HasGrip = 1u << 13,
-		HasRolling = 1u << 15,
-		NonSolid = 1u << 16,
-		ProjectilesPass = 1u << 17,
-		FinishLine = 1u << 18,
-	};
+	// A surface's flags: which properties it sets (the file's keywords 0x28.. map to bits 1..; bit 0 is always set),
+	// named in LRCore's Track.h.
 	struct Surface {
 		std::string name;
 		uint32_t flags = 1;
@@ -80,13 +69,13 @@ struct LRDATA_API SurfaceFile {
 		std::array<float, 3> push = {0, 0, 0};
 		float slopeHold = 0, friction = 0, grip = 0, rolling = 0;
 		std::string particle; // the wheels' particle emitter on it (empty: none)
-		int32_t sound = -1;   // the wheels' sound on it (the track's bank; -1: none)
+		int32_t sound = -1; // the wheels' sound on it (the track's bank; -1: none)
 		bool operator==(const Surface&) const = default;
 	};
 	std::vector<Surface> surfaces;
 
 	// False on a malformed file.
-	bool decode(std::span<const uint8_t> bytes);
+	[[nodiscard]] bool decode(std::span<const uint8_t> bytes);
 	bool operator==(const SurfaceFile&) const = default;
 };
 

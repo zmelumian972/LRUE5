@@ -87,18 +87,18 @@ struct Checkpoint {
 	Vec3 normal;
 	float offset; // the gate's plane: dot(normal, p) + offset = 0
 	uint8_t next[4]; // [0] along the main lap, [1..3] branches that rejoin it; 255 none
-	float fraction;  // of a lap at the gate; -1 unset
-	Vec3 position;   // the gate's place (homing missiles fly the course by them)
+	float fraction; // of a lap at the gate; -1 unset
+	Vec3 position; // the gate's place (homing missiles fly the course by them)
 };
 
 // A sphere that starts an event for a racer entering it (the lap marks, the start line's world).
 struct TouchSphere {
 	Vec3 centre;
 	float radius, xlo, xhi; // xlo and xhi: the centre's x -+ radius
-	int32_t index;  // in the file
-	int32_t event;  // -1 none
-	int32_t world;  // a volume the racer collides with while touching; -1 none
-	int32_t lap;    // only a racer with this many laps done touches it; -1 any
+	int32_t index; // in the file
+	int32_t event; // -1 none
+	int32_t world; // a volume the racer collides with while touching; -1 none
+	int32_t lap; // only a racer with this many laps done touches it; -1 any
 	bool playersOnly;
 };
 
@@ -121,9 +121,9 @@ struct EventResource {
 	bool onEnd, noEnd;
 	int32_t chains[3]; // start, active, end
 	int32_t durationMs, holdEvent; // a timer's
-	Vec3 force;                    // a force's (mirrored), its push channel and the event that arms it
+	Vec3 force; // a force's (mirrored), its push channel and the event that arms it
 	int32_t channel, armingEvent;
-	int32_t forced;                // a link's
+	int32_t forced; // a link's
 	// A sound's or a particle's place (mirrored; or the event's, if `atEvent`); a particle's emitter or a sky's
 	// transition; a sound's id, volume, pitch, distances, whether it loops and its retrigger chance (255: none); a sky's
 	// ms and hide flags.
@@ -139,7 +139,7 @@ struct EventResource {
 	bool clear = false, onEntity = false; // a colour transform's: clears the tint; tints an entity, not the racer
 	// A sound's tracked animated entity (an index into Track::animated, -1 none) and its node: the sound rides it. A part
 	// animation's and a node transform's animated entity; a model distance's model (a plain one if `plain`).
-	std::string entityName;
+	std::string entityName = {};
 	int16_t entity = -1;
 	int32_t node = 0;
 	// A part animation's parts: active, idle, start, end (-1 none); `looping` its flag. A node transform's collision
@@ -173,20 +173,19 @@ struct TargetPoint {
 struct AnimatedModel {
 	using Node = SkeletonNode;
 	std::string name;
-	std::string model;      // its model's name (none: a camera's dummy)
+	std::string model; // its model's name (none: a camera's dummy)
 	Pose pose;
-	float scale = 1;        // the model's times the entity's
+	float scale = 1; // the model's times the entity's
 	// Its levels of detail's draw distances, squared: a level the file doesn't give -1, one not below
-	// FLT_MAX FLT_MAX. (The world keeps them as they change: World::animatedDistances.)
+	// FLT_MAX FLT_MAX. (The world keeps them as they change: Scenery::animatedDistances.)
 	std::array<float, 3> distances = {-1, -1, -1};
-	float radius = 0;       // the model's (the hazards' spheres)
-	Sphere bounds;          // the model's (model frame, unscaled)
+	float radius = 0; // the model's (the hazards' spheres)
+	Sphere bounds; // the model's (model frame, unscaled)
 	int16_t animation = -1; // Track::animations, -1 none
-	int16_t part = -1;      // played looping from load, -1 none
+	int16_t part = -1; // played looping from load, -1 none
 	std::vector<Node> nodes;
-	// Material animation bindings (Track::materialTracks) and the texture scroll (1/65536 UV per ms).
+	// Material animation bindings (Track::materialTracks).
 	std::vector<std::array<int32_t, 3>> bindings; // track, material slot, level of detail
-	int32_t scrollU = 0, scrollV = 0;
 };
 
 struct Animation {
@@ -208,9 +207,9 @@ struct Animation {
 
 // A hazard as the file gives it (positions mirrored, names resolved).
 struct HazardSpec {
-	int32_t type;           // the file's keyword
+	int32_t type; // the file's keyword
 	int32_t trigger;
-	int16_t model = -1;     // Track::animated, -1 none
+	int16_t model = -1; // Track::animated, -1 none
 	int16_t models[4] = {-1, -1, -1, -1};
 	int16_t surface = -1;
 	Vec3 source, target, triggerPoint;
@@ -252,7 +251,7 @@ public:
 	// The race file's track: "GAMEDATA/RACEC0R1/RACEC0R1.RAB". Its other files are beside it. Mirrored tracks are
 	// flipped in y at load (positions, directions and normals). A time race has its own bricks (the power-up file's
 	// name with a 2 before its extension). False if a file is missing or malformed.
-	bool load(const Cache& cache, std::string_view raceFile, bool mirrored, bool timeRace = false);
+	[[nodiscard]] bool load(const Cache& cache, std::string_view raceFile, bool mirrored, bool timeRace = false);
 
 	// The segment a->b, in volume's frame.
 	bool query(uint32_t volume, Vec3 a, Vec3 b, SegmentHit& hit) const;
@@ -291,7 +290,7 @@ public:
 		float rate = 0.03f;
 	};
 	struct MaterialBinding {
-		bool animated;  // an animated entity's (else a plain model's)
+		bool animated; // an animated entity's (else a plain model's)
 		int32_t entity; // its index in animated or models
 		int32_t track, slot, level;
 	};
@@ -306,7 +305,7 @@ public:
 	std::vector<Scroll> scrolls;
 	std::vector<Sprite> sprites; // the track's (mirrored)
 	int32_t blowupDuration = 0, blowupRate = 0; // the shared database's "blowup" material track (a sphinx's)
-	Sphere hook, stick;   // the grapple's and the dynamite stick's bounds (model frame, scaled)
+	Sphere hook, stick; // the grapple's and the dynamite stick's bounds (model frame, scaled)
 	AnimatedModel missile; // the homing missile, with its animation
 	// The power-up bricks' four shared entities: the colour brick's cube and streak, the white
 	// brick's cube and streaks, each with its animation (after the track's), at the origin, entity scale 1.
@@ -325,9 +324,11 @@ public:
 	int16_t surfaceOf(std::string_view material) const;
 
 private:
-	bool loadRace(const Cache& cache, const std::string& dir, const RaceFile& race, const CollisionDatabase& db, bool mirrored);
-	bool loadPowerups(const Cache& cache, const std::string& dir, const RaceFile& race, bool timeRace);
-	bool loadScenery(const Cache& cache, const std::string& dir, const RaceFile& race);
+	[[nodiscard]] bool loadMeshes(const Cache& cache, const std::string& dir, const CollisionDatabase& db, bool mirror);
+	void findEventEntities();
+	[[nodiscard]] bool loadRace(const Cache& cache, const std::string& dir, const RaceFile& race, const CollisionDatabase& db, bool mirrored);
+	[[nodiscard]] bool loadPowerups(const Cache& cache, const std::string& dir, const RaceFile& race, bool timeRace);
+	[[nodiscard]] bool loadScenery(const Cache& cache, const std::string& dir, const RaceFile& race);
 };
 
 // X inside triangle (a, b, c), projected on the two axes picked by normal n. On an edge counts as inside.

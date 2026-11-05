@@ -24,28 +24,28 @@ struct World;
 
 struct ShowParticle {
 	Vec3 position, velocity; // world; units, units per second
-	int32_t age = 0;         // ms
+	int32_t age = 0; // ms
 };
 
 // An effect set's slot and where its particles come from.
 struct EffectSlot {
 	enum Place : uint8_t { AtPoint, Wheel, RearAxle, Exhaust, AboveOwner, OilSlick, Dynamite };
 	bool active = false;
-	int16_t emitter = -1;   // the definition it runs; -1 draining
-	int16_t look = -1;      // the emitter its particles look like (kept while draining)
+	int16_t emitter = -1; // the definition it runs; -1 draining
+	int16_t look = -1; // the emitter its particles look like (kept while draining)
 	int32_t timerMs = 0, ageMs = 0, emissions = 0;
 	bool finishPending = false;
-	int16_t handle = -1;    // the handle controlling it, -1 none
+	int16_t handle = -1; // the handle controlling it, -1 none
 	Place place = AtPoint;
 	Owner owner;
-	int16_t racer = -1;     // the racer it follows (wheels, axle, exhaust, above), or the action (oil, dynamite)
+	int16_t racer = -1; // the racer it follows (wheels, axle, exhaust, above), or the action (oil, dynamite)
 	uint8_t wheel = 0;
 	Vec3 position, velocity; // the slot's, this frame (velocity per second)
-	Basis rotation;          // kept when a spawn gives none (QUIRK)
-	Vec3 offset;             // an oil slick's bubble place about its centre (drawn each frame)
-	bool bubbled = false;    // this frame
-	bool slickWas = false;   // its slick was active as the frame began
-	Vec3 anchor;             // its first particle's birthplace since it was taken
+	Basis rotation; // kept when a spawn gives none (QUIRK)
+	Vec3 offset; // an oil slick's bubble place about its centre (drawn each frame)
+	bool bubbled = false; // this frame
+	bool slickWas = false; // its slick was active as the frame began
+	Vec3 anchor; // its first particle's birthplace since it was taken
 	bool anchored = false;
 	std::vector<ShowParticle> particles; // newest first, at most 16
 };
@@ -71,9 +71,9 @@ struct EffectHandle {
 struct Decal {
 	enum Kind : uint8_t { Shadow, Skid, Scar, Slick };
 	Kind kind = Shadow;
-	int16_t owner = -1;      // racer (shadow), trail (skid), explosion (scar), action (slick)
-	std::string material;    // RACERFX's (carshadN, skid, trbskid), EMITTER's (exscar, oilslck)
-	uint8_t alpha = 255;     // the vertex alpha (a shadow's per camera: Show::shadowAlpha)
+	int16_t owner = -1; // racer (shadow), trail (skid), explosion (scar), action (slick)
+	std::string material; // RACERFX's (carshadN, skid, trbskid), EMITTER's (exscar, oilslck)
+	uint8_t alpha = 255; // the vertex alpha (a shadow's per camera: Show::shadowAlpha)
 	std::vector<Vec3> points; // three per triangle
 	std::vector<std::array<float, 2>> uvs;
 };
@@ -83,19 +83,19 @@ struct Decal {
 // is off or can't be heard keeps no voice and waits.
 struct ShowSound {
 	enum Role : uint8_t { Rule, Engine, Brake, Others, Skid, Spin, Shield, Turbo, Warp, Fuse, Flight, Crackle, Retrigger, Surface };
-	int32_t id = -1;         // the race's sound id
-	uint32_t serial = 0;     // unique for the race (a voice names its sound by it)
+	int32_t id = -1; // the race's sound id
+	uint32_t serial = 0; // unique for the race (a voice names its sound by it)
 	Owner owner;
 	Role role = Rule;
-	uint8_t slot = 0;        // the role's: an engine's layer, a turbo's level, a flight's kind
+	uint8_t slot = 0; // the role's: an engine's layer, a turbo's level, a flight's kind
 	bool looping = false, positional = true;
-	bool standing = false;   // made at the load (never asked again: turned on and off)
-	bool on = true;          // a loop that wants to play
-	bool asked = true;       // a one-shot not heard yet (it plays at its first hearing or never)
+	bool standing = false; // made at the load (never asked again: turned on and off)
+	bool on = true; // a loop that wants to play
+	bool asked = true; // a one-shot not heard yet (it plays at its first hearing or never)
 	float near = 30, far = 300, volume = 1, pitch = 1;
 	Vec3 place, velocity;
-	float playedMs = 0;      // a one-shot's, at its pitch
-	int8_t voice = -1;       // the voice playing it
+	float playedMs = 0; // a one-shot's, at its pitch
+	int8_t voice = -1; // the voice playing it
 	// As last heard: volume, pan (negative: to the left), pitch (with the Doppler), the priority.
 	float heard = 0, pan = 0, heardPitch = 1;
 	int32_t priority = 0;
@@ -105,14 +105,28 @@ class LRCORE_API Show {
 public:
 	// Why the presentation draws (the tests follow the draws by these).
 	enum class Draw : uint8_t {
-		ParticleChance, ParticlePoint, DustCorner, TyreWheel, OilBubble, Hazard,
+		ParticleChance,
+		ParticlePoint,
+		DustCorner,
+		TyreWheel,
+		OilBubble,
+		Hazard,
 		// The sounds'.
-		ReactionSound, ReactionCooldown, Scrape, Bump, ShieldHit, SoundDelayLoad, SoundDelay, SoundChance, Crackle, Wail,
+		ReactionSound,
+		ReactionCooldown,
+		Scrape,
+		Bump,
+		ShieldHit,
+		SoundDelayLoad,
+		SoundDelay,
+		SoundChance,
+		Crackle,
+		Wail,
 	};
 
 	// Set up for a world just set up from the cache (its race file's effect sets and sky, the chassis' skid and shadow
 	// sizes). Keeps the presentation stream's index.
-	bool load(const Cache& cache, const World& world);
+	[[nodiscard]] bool load(const Cache& cache, const World& world);
 	// One race frame of `ms` (the race's: 0 while paused) after the world's frame: its events, the effect sets'
 	// update, the car visuals, the particles, decals and sky.
 	void advance(const World& world, int32_t ms);
@@ -146,7 +160,7 @@ public:
 		std::array<EffectHandle, 4> wheels;
 		std::array<std::array<char, 9>, 4> wanted = {};
 		bool skidding = false, spinning = false, turbo = false; // what the skid trails are laying for
-		uint8_t skidWheels = 0;   // the wheels laying marks
+		uint8_t skidWheels = 0; // the wheels laying marks
 		std::array<int32_t, 4> liftedMs = {};
 	};
 	std::vector<Visuals> visuals;
@@ -161,7 +175,7 @@ public:
 		uint8_t wheel = 0;
 		bool turbo = false, spinning = false, fading = false;
 		int32_t fadeMs = 0;
-		Vec3 anchor;               // where the live piece starts (world)
+		Vec3 anchor; // where the live piece starts (world)
 		struct Piece {
 			Vec3 from, to;
 			int32_t ageMs = 0;
@@ -185,9 +199,9 @@ public:
 	// the 32 voices (the serial of the sound each plays, 0 free), and what this frame asked for and started.
 	static constexpr size_t Voices = 32;
 	struct Bank {
-		std::string folder;            // where its samples are: "GAMEDATA/COMMON/"
+		std::string folder; // where its samples are: "GAMEDATA/COMMON/"
 		std::vector<std::string> names; // its samples' files, as the cache names them: "321.PCM"
-		std::vector<float> lengthsMs;  // each one's length at pitch 1 (0: none, plays nothing)
+		std::vector<float> lengthsMs; // each one's length at pitch 1 (0: none, plays nothing)
 	};
 	std::array<Bank, 4> banks;
 	std::vector<ShowSound> sounds;
@@ -197,7 +211,7 @@ public:
 		int32_t id;
 	};
 	std::vector<Started> asked, started, stopped; // in order (stopped: a loop's voice let go)
-	float effectsVolume = 1;               // the effects setting (0..1)
+	float effectsVolume = 1; // the effects setting (0..1)
 	// A sound id's sample (the cache's path), empty if it has none.
 	std::string sample(int32_t id) const;
 	const ShowSound* find(uint32_t serial) const;
@@ -209,39 +223,54 @@ public:
 private:
 	// The sounds' half (Sounds.cpp).
 	void loadSounds(const Cache& cache, const World& world);
+	void standingLoops(const World& world); // (loadSounds')
 	void updateSounds(const World& world, int32_t ms);
 	void soundEvent(const World& world, const RaceEvent& e);
+	void ruleSound(const RaceEvent& e, bool racer, size_t i); // soundEvent's parts
+	void voiceLine(const World& world, const RaceEvent& e, size_t i);
 	ShowSound& play(int32_t id, Owner owner, const Vec3* at, float near = 30, float far = 300, bool looping = false);
 	ShowSound* held(ShowSound::Role role, Owner owner, uint8_t slot = 0);
 	void stopSound(ShowSound& s); // off: its voice freed
-	void letGo(ShowSound& s);     // its voice freed (a loop waits for another)
+	void letGo(ShowSound& s); // its voice freed (a loop waits for another)
 	void hear(const World& world);
 	void allocate(bool paused);
 	void deriveSounds(const World& world, int32_t ms);
+	void othersEngine(const World& world, size_t n, bool one, int8_t listener);
+	void kartLoops(const World& world, size_t n);
+	void actionLoops(const World& world, size_t n, int32_t ms);
+	void flights(const World& world, int8_t listener);
+	void ghostWails(const World& world, int32_t ms);
 	void retrigger(const World& world, int32_t ms);
 	void engines(const World& world, int32_t ms);
 	Vec3 placeOf(const World& world, const ShowSound& s, Vec3& velocity) const;
 	struct Voicing {
-		int32_t base = -1;            // the racer's first voice line's sound id (-1 silent)
+		int32_t base = -1; // the racer's first voice line's sound id (-1 silent)
 		int32_t reactionMs = 0, scrapeMs = 0; // cooldowns (the shield-hit one gates nothing: Absorb)
-		bool engineOn = false;        // a player's engine (from the countdown)
+		bool engineOn = false; // a player's engine (from the countdown)
 		std::array<float, 3> layers = {}; // idle, drive, coast
 		bool braking = false;
 	};
-	std::vector<Voicing> m_voicing;    // by racer
-	std::vector<int32_t> m_delays;     // the track's retriggered sounds' delays, by event resource
+	std::vector<Voicing> m_voicing; // by racer
+	std::vector<int32_t> m_delays; // the track's retriggered sounds' delays, by event resource
 	std::vector<uint8_t> m_retriggering; // and whether each was on as the last frame ended
-	std::vector<int32_t> m_crackleMs;  // by action: a lightning's next crackle
-	std::vector<int32_t> m_wailMs;     // by hazard: a ghost's wail
-	std::vector<float> m_wail;         // its depth
+	std::vector<int32_t> m_crackleMs; // by action: a lightning's next crackle
+	std::vector<int32_t> m_wailMs; // by hazard: a ghost's wail
+	std::vector<float> m_wail; // its depth
 	uint32_t m_serial = 0;
 	bool m_othersMade = false;
 	bool m_racing = false;
 
 private:
+	void loadChassis(const Cache& cache, const World& world); // load's parts
+	void groundCells(const World& world);
 	void apply(const World& world, const RaceEvent& e);
+	void spawnFor(const World& world, const RaceEvent& e); // apply's parts
+	void letGoOf(const RaceEvent& e);
+	void wheelParticle(const World& world, const RaceEvent& e, size_t i);
+	void skyEvent(const RaceEvent& e);
 	void bubble(EffectSlot& slot);
 	void updateSets(const World& world, int32_t ms);
+	bool emitParticle(const World& world, EffectSlot& slot, const EmitterFile::Emitter& em); // (updateSets')
 	void carVisuals(const World& world);
 	void retries(const World& world, bool hazards);
 	std::vector<uint8_t> m_wanting, m_hazardsOn; // last frame's: a track event's particle active, a hazard on
@@ -249,9 +278,13 @@ private:
 	void moveParticles(const World& world, int32_t ms);
 	void place(const World& world, EffectSlot& slot);
 	void updateDecals(const World& world, int32_t ms);
+	void carShadows(const World& world);
+	void skidMarks(const World& world, int32_t ms);
+	void layTrail(const World& world, size_t i, uint8_t w, int32_t ms);
+	void trailDecals(int32_t ms);
+	void groundMarks(const World& world);
 	void updateSky(int32_t ms);
-	EffectHandle spawn(const World& world, int set, const char* name, Owner owner, const Vec3* at, EffectSlot::Place where, int16_t racer,
-		uint8_t wheel = 0);
+	EffectHandle spawn(const World& world, int32_t set, const char* name, Owner owner, const Vec3* at, EffectSlot::Place where, int16_t racer, uint8_t wheel = 0);
 	void finish(EffectHandle& h);
 	void release(EffectHandle& h);
 	bool controls(EffectHandle h, int32_t atLeast) const; // controls a slot with at least that many emissions

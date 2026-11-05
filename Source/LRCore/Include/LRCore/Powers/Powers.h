@@ -25,11 +25,11 @@ struct Brick {
 	enum State : uint8_t { Idle, Wait, Growing, Shrinking };
 	Vec3 position, home;
 	State state = Wait, next = Wait;
-	int32_t ms = 0;        // in its state, counting up
+	int32_t ms = 0; // in its state, counting up
 	int32_t respawnMs = 3000;
 	uint8_t colour = 0, nextColour = 0, assigned = 0; // a colour brick's; 0: a white brick
 	bool touched = false, wasTouched = false; // this frame, the frame before
-	bool dropped = false, goHome = false;     // a white brick a hit racer lost; back home after shrinking
+	bool dropped = false, goHome = false; // a white brick a hit racer lost; back home after shrinking
 	int32_t droppedMs = 0;
 	int16_t member = -1;
 	// Its drawn size: 0.8 idle, growing to 1 and back to 0.8 over 500 ms, shrinking to nothing in 250
@@ -56,8 +56,8 @@ struct Power {
 	uint8_t shieldLevel = 0, turboLevel = 0;
 	int32_t curseMs = 0;
 	bool cursePassed = false; // QUIRK: never cleared once cursed
-	uint8_t shoveSlot = 0;    // the push a shove started: 1 A, 2 B
-	float carScale = 1;       // the car's size (a warp shrinks it)
+	uint8_t shoveSlot = 0; // the push a shove started: 1 A, 2 B
+	float carScale = 1; // the car's size (a warp shrinks it)
 	// Where it was and faced at its last timers (a lightning bolt comes from here).
 	Vec3 sourcePosition, sourceForward{1, 0, 0};
 };
@@ -78,7 +78,7 @@ struct Action {
 	enum : uint8_t { Ready = 1, Done = 6 };
 	Kind kind = Magnet;
 	uint8_t state = Ready;
-	uint32_t ms = 0;     // the state's timer, counting down
+	uint32_t ms = 0; // the state's timer, counting down
 	uint8_t level = 0;
 	int8_t owner = -1, held = -1, pulled = -1; // racers (held, pulled: a magnet's; held: a hook's or bolt's victim)
 	int16_t member = -1; // its entry in the trigger list
@@ -88,11 +88,11 @@ struct Action {
 	bool hasTarget = false, followsPath = false, demo = false; // a warp's
 	Projectile shot;
 	// The red weapons.
-	int16_t aimPoint = -1;    // a target point it was fired at
-	int32_t shockMs = 0;      // lightning: how long its victim has been struck
-	Vec3 letGo;               // where the reeling hook goes
-	uint8_t missile = 0;      // which of three
-	float riseFrames = 0;     // its launch animation's time, riding the car (as last followed)
+	int16_t aimPoint = -1; // a target point it was fired at
+	int32_t shockMs = 0; // lightning: how long its victim has been struck
+	Vec3 letGo; // where the reeling hook goes
+	uint8_t missile = 0; // which of three
+	float riseFrames = 0; // its launch animation's time, riding the car (as last followed)
 	Pose ride;
 	Vec3 centre, heading, waypoint; // homing: the path's centre, its direction, a point to fly over
 	bool hasWaypoint = false;
@@ -100,17 +100,17 @@ struct Action {
 	int32_t retargetMs = 0;
 	int16_t checkpoint = -1;
 	int8_t emplacement = -1; // a hazard that fired it (cannonball rain)
-	bool smoked = false;     // a level 2 turbo's smoke spawned
+	bool smoked = false; // a level 2 turbo's smoke spawned
 };
 
 struct Explosion {
 	enum State : uint8_t { Idle = 1, Exploding, Scar };
 	State state = Idle;
-	int32_t ms = 0;      // left in its state
+	int32_t ms = 0; // left in its state
 	float growth = 0, rate = 0;
 	Vec3 centre;
 	float radius = 0;
-	float blast = 5;     // its full radius
+	float blast = 5; // its full radius
 	int8_t owner = -1;
 	bool scar = false;
 	int16_t member = -1;

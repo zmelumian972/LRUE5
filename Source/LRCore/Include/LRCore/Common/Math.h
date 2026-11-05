@@ -9,8 +9,14 @@
 
 #include <array>
 #include <cmath>
+#include <cstdint>
 
 namespace lr {
+
+constexpr float Pi = 3.14159274f, Tau = 6.28318548f; // float(pi), float(2pi)
+
+// A looping time wrapped into the loop.
+inline float wrapLoop(float t, float loop) { return t >= loop ? t - loop * float(int32_t(t / loop)) : t; }
 
 struct Vec3 {
 	float x = 0, y = 0, z = 0;
@@ -50,6 +56,15 @@ inline float cosf64(float a) { return float(std::cos(double(a))); }
 struct Basis {
 	Vec3 f{1, 0, 0}, s{0, 1, 0}, u{0, 0, 1}; // forward, left, up
 };
+
+inline Basis operator*(const Basis& b, float k) { return {b.f * k, b.s * k, b.u * k}; }
+
+// A box's principal inertia as the game computes it: each mass divided by a box size (not the textbook box).
+inline Vec3 boxInertia(float mass, Vec3 b)
+{
+	return {((mass / b.x) * (b.z * b.z + b.y * b.y)) * 0.083333336f, ((mass / b.y) * (b.z * b.z + b.x * b.x)) * 0.083333336f,
+		((mass / b.z) * (b.y * b.y + b.x * b.x)) * 0.083333336f};
+}
 
 struct Pose {
 	Vec3 position;
@@ -129,7 +144,7 @@ inline Quat blend(Quat a, Quat b, float t)
 
 // The game's 1024-entry angle tables. Their steps (about 0.0625 rad near d = +-1 for the arc cosine) show in the
 // karts' headings, so they're kept rather than computing acos and cos exactly.
-LRCORE_API float tableAcos(float d);     // acos(d), from d in [-1, 1]
+LRCORE_API float tableAcos(float d); // acos(d), from d in [-1, 1]
 LRCORE_API float tableCos(float angle); // cos(angle), any angle >= 0
 LRCORE_API float cosEntry(int32_t index); // the cosine table's entry index & 1023: cos(2*pi*index/1024)
 

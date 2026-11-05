@@ -3,13 +3,12 @@
 
 #include "LRCore/Race/Track.h"
 #include "LRCore/Show/View.h"
+#include "LRData/Cache.h"
 #include "LRData/Model.h"
 
 namespace lr {
 
 namespace {
-
-float wrappedTime(float t, float loop) { return t >= loop ? t - loop * float(int32_t(t / loop)) : t; }
 
 // Between the keys around `at` (from the last to the first before the first key and after the last): the two keys'
 // indices and the fraction.
@@ -52,7 +51,7 @@ Sample sample(const Animation& a, size_t node, int32_t part, float time, bool lo
 	const Animation::Part& p = a.parts[size_t(part)];
 	const Animation::Track& t = a.tracks[size_t(p.track) + node];
 	const float n = float(loop ? p.loopFrames : p.frames);
-	const float at = loop ? wrappedTime(time, float(p.loopFrames)) : time;
+	const float at = loop ? wrapLoop(time, float(p.loopFrames)) : time;
 	int32_t from, to;
 	if (t.rotationKeys == 1) {
 		s.rotation = a.rotations[size_t(t.rotationFrame)];
@@ -104,6 +103,19 @@ Quat quatOf(const Basis& b)
 }
 
 } // namespace
+
+std::vector<SkeletonNode> nodesOf(const SkeletonFile& file)
+{
+	std::vector<SkeletonNode> out;
+	for (const SkeletonFile::Node& n : file.nodes) {
+		int16_t parent = -1;
+		for (size_t k = 0; k < file.nodes.size(); k++) {
+			parent = !n.parent.empty() && file.nodes[k].name == n.parent ? int16_t(k) : parent;
+		}
+		out.push_back({vec(n.position), basisOf({n.rotation[0], n.rotation[1], n.rotation[2], n.rotation[3]}), parent});
+	}
+	return out;
+}
 
 Quat quaternionOf(const Basis& rows) { return quatOf(rows); }
 
@@ -172,7 +184,7 @@ void placeNodes(const std::vector<SkeletonNode>& nodes, const std::vector<Pose>&
 			pp = out[size_t(parent)].position;
 		}
 		else {
-			pr = {place.rotation.f * scale, place.rotation.s * scale, place.rotation.u * scale};
+			pr = place.rotation * scale;
 			pp = place.position;
 		}
 		NodeMatrix& m = out[n];
@@ -181,8 +193,7 @@ void placeNodes(const std::vector<SkeletonNode>& nodes, const std::vector<Pose>&
 	}
 }
 
-void poseSkeleton(const std::vector<SkeletonNode>& nodes, const Animation* a, const PartPose& pose, const Pose& place, float scale,
-	std::vector<NodeMatrix>& out)
+void poseSkeleton(const std::vector<SkeletonNode>& nodes, const Animation* a, const PartPose& pose, const Pose& place, float scale, std::vector<NodeMatrix>& out)
 {
 	std::vector<Pose> locals;
 	sampleLocals(nodes, a, pose, locals);

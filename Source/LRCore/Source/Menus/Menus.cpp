@@ -2,6 +2,7 @@
 // music and the stack's flow.
 
 #include "LRCore/Menus/Menus.h"
+#include "LRData/Archive.h"
 #include "LRCore/Common/Tables.h"
 
 #include "LRData/Cache.h"
@@ -17,29 +18,6 @@
 namespace lr {
 
 namespace {
-
-std::string upper(std::string_view s)
-{
-	std::string u(s);
-	for (char& c : u) {
-		c = char(std::toupper(uint8_t(c)));
-	}
-	return u;
-}
-
-// A skeleton file's nodes for the sampler (parents by name).
-std::vector<SkeletonNode> nodesOf(const SkeletonFile& file)
-{
-	std::vector<SkeletonNode> out;
-	for (const SkeletonFile::Node& n : file.nodes) {
-		int16_t parent = -1;
-		for (size_t k = 0; k < file.nodes.size(); k++) {
-			parent = !n.parent.empty() && file.nodes[k].name == n.parent ? int16_t(k) : parent;
-		}
-		out.push_back({vec(n.position), basisOf({n.rotation[0], n.rotation[1], n.rotation[2], n.rotation[3]}), parent});
-	}
-	return out;
-}
 
 // A cinematic's world databases (through its folder, then MENUDATA/), with their skeletons,
 // animations, material animations and models' scales.
@@ -70,7 +48,7 @@ bool loadCinemaWorlds(const Cache& cache, MenuData::Screen& screen, const std::s
 		}
 		for (const std::string& name : w.scene.skeletons) {
 			SkeletonFile f;
-			cache.get(path(name, ".SDB"), f);
+			(void)cache.get(path(name, ".SDB"), f); // (none: a skeleton without nodes)
 			w.skeletons.push_back(nodesOf(f));
 		}
 		for (const std::string& name : w.scene.animations) {
@@ -78,7 +56,7 @@ bool loadCinemaWorlds(const Cache& cache, MenuData::Screen& screen, const std::s
 			w.animations.push_back(cache.get(path(name, ".ADB"), f) ? animationOf(f, false) : Animation());
 		}
 		for (const std::string& name : w.scene.materialAnimations) {
-			cache.get(path(name, ".MAB"), w.materialAnimations.emplace_back());
+			(void)cache.get(path(name, ".MAB"), w.materialAnimations.emplace_back()); // (none: no tracks)
 		}
 		for (const std::string& name : w.scene.models) {
 			Model m;
@@ -86,6 +64,281 @@ bool loadCinemaWorlds(const Cache& cache, MenuData::Screen& screen, const std::s
 		}
 	}
 	return true;
+}
+
+// The menus' tables and the quick builds.
+bool loadTables(const Cache& cache, MenuData& m)
+{
+	bool ok = cache.get("MENUDATA/MENUNAME.SRF", m.names) && cache.get("MENUDATA/GSTYLES.MSB", m.styles) && cache.get("MENUDATA/DIALOG.MIB", m.dialog) &&
+		cache.get("MENUDATA/LEGOMSC", m.music) && cache.get("MENUDATA/GENC0R0.SBK", m.sounds) && cache.get("MENUDATA/LEGORACE.CRB", m.circuits) &&
+		cache.get("MENUDATA/LEGORACE.RCB", m.races) && cache.get("MENUDATA/LEGOMAN.ADB", m.minifig) && cache.get("MENUDATA/RSANIM.ADB", m.showcase) &&
+		cache.get("MENUDATA/PIECEDB/LPIECEHI.LEB", m.pieces) && cache.get("MENUDATA/PIECEDB/CRSTMGR.LEB", m.sets) && cache.get("MENUDATA/PARTDB/BODYPART.PCB", m.parts) &&
+		cache.get("MENUDATA/CBANIM.ADB", m.driverAnimations) && cache.get("MENUDATA/CMAMAN.ADB", m.photo);
+	OriginalSave quick;
+	ok = ok && cache.get("MENUDATA/QBUILD.LRS", quick);
+	for (const OriginalSave::Record& r : quick.records) {
+		MenuData::QuickBuild& q = m.quickBuilds.emplace_back();
+		q.name = r.name;
+		q.chassis = r.chassis;
+		for (const OriginalSave::Piece& p : r.pieces) {
+			q.pieces.push_back({p.type, p.x, p.y, p.rotation, p.colour, p.part});
+		}
+	}
+	return ok;
+}
+
+// An image list's images (beside the list, or in MENUDATA), added to the menus' images; their ids in ids.
+bool addImageList(const Cache& cache, MenuData& m, std::string_view path, std::vector<int16_t>& ids)
+{
+	ImageList list;
+	if (!cache.get(path, list)) {
+		return false;
+	}
+	const std::string folder(path.substr(0, path.rfind('/') + 1));
+	for (const ImageList::Entry& e : list.images) {
+		Image image;
+		const std::string file = upper(e.name) + ".BMP";
+		if (!cache.get(cache.has(folder + file) ? folder + file : "MENUDATA/" + file, image)) {
+			return false;
+		}
+		ids.push_back(int16_t(m.images.size()));
+		m.images.push_back({e.name, image.width, image.height, e.keyed, e.key, std::move(image.rgba)});
+	}
+	return true;
+}
+
+// Each screen's layout, styles and own images, then the screens that share a layout.
+bool loadLayouts(const Cache& cache, MenuData& m)
+{
+	bool ok = true;
+	m.screens.resize(145);
+	for (size_t n = 0; ok && n < m.screens.size(); n++) {
+		const std::string name = upper(m.names.narrow(n));
+		if (name.empty()) {
+			continue;
+		}
+		MenuData::Screen& s = m.screens[n];
+		const std::string base = "MENUDATA/" + name;
+		if (cache.has(base + ".MIB")) {
+			ok = cache.get(base + ".MIB", s.layout);
+		}
+		if (ok && cache.has(base + ".MSB")) {
+			ok = cache.get(base + ".MSB", s.styles);
+		}
+		if (ok && cache.has(base + ".IDB")) {
+			ok = addImageList(cache, m, base + ".IDB", s.images);
+		}
+	}
+	// The screens that share a layout.
+	if (ok) {
+		for (uint16_t n : {uint16_t(10), uint16_t(11)}) {
+			m.screens[n] = m.screens[9];
+		}
+		for (uint16_t n : {uint16_t(45), uint16_t(46), uint16_t(47), uint16_t(48), uint16_t(49)}) {
+			m.screens[n] = m.screens[50];
+		}
+		for (uint16_t n : {uint16_t(39), uint16_t(40)}) {
+			m.screens[n] = m.screens[1];
+		}
+		// The builders' images (the sets' icons, the arrows, the pads).
+		std::vector<int16_t> builder;
+		ok = addImageList(cache, m, "MENUDATA/BUILDER.IDB", builder);
+		for (uint16_t n : {uint16_t(ScreenEditCar), uint16_t(ScreenCarBuilder)}) {
+			m.screens[n].images.insert(m.screens[n].images.end(), builder.begin(), builder.end());
+		}
+		// The screens that share a layout: the time race's is the single race's, racer select's three one.
+		m.screens[29].layout = m.screens[6].layout;
+		m.screens[29].styles = m.screens[6].styles;
+		m.screens[29].images = m.screens[6].images;
+		m.screens[20] = m.screens[21] = m.screens[19];
+	}
+	return ok;
+}
+
+// A screen's cinematic: its scene file, its effects, string tables (the first in each language) and image lists.
+bool loadCinema(const Cache& cache, MenuData& m, MenuData::Screen& screen, const std::string& folder, std::string_view base)
+{
+	const std::string stem = folder + upper(base);
+	CinemaFile& c = screen.cinema;
+	if (!cache.get(stem + ".CDB", c) || !loadCinemaWorlds(cache, screen, folder)) { // (with its effects)
+		return false;
+	}
+	for (size_t l = 0; l < 9; l++) {
+		for (size_t t = 0; t < c.stringTables.size(); t++) {
+			const std::string name = t == 0 && l > 0 ? cache.languages()[l] : upper(c.stringTables[t]);
+			if (!cache.get(folder + name + ".SRF", screen.cinemaText[l].emplace_back())) {
+				return false;
+			}
+		}
+	}
+	for (const std::string& list : c.imageLists) {
+		if (!addImageList(cache, m, folder + upper(list) + ".IDB", screen.images)) {
+			return false;
+		}
+	}
+	return true;
+}
+
+// The cinematics of the legal splash, the credits and the screens with a scene view.
+bool loadCinemas(const Cache& cache, MenuData& m)
+{
+	bool ok = loadCinema(cache, m, m.screens[ScreenLegal], "MENUDATA/LEGAL/", "splash1") && loadCinema(cache, m, m.screens[ScreenCredits], "MENUDATA/CREDITS/", "credits") &&
+		loadCinema(cache, m, m.screens[ScreenSingleRace], "MENUDATA/SINGRACE/", "pst");
+	for (uint16_t n = 22; ok && n <= 37; n++) {
+		if (n == ScreenTimeRace || n == 30) {
+			continue; // (the time race's layout is the single race's)
+		}
+		const MenuLayout& layout = m.screens[n].layout;
+		const auto view = std::find_if(layout.bindings.begin(), layout.bindings.end(), [](const MenuLayout::Binding& b) { return b.kind == MenuLayout::SceneReference; });
+		if (view != layout.bindings.end()) {
+			ok = loadCinema(cache, m, m.screens[n], "MENUDATA/" + upper(m.names.narrow(n)) + "/", view->world);
+		}
+	}
+	if (ok) {
+		for (uint16_t n : {uint16_t(ScreenCircuitRace), uint16_t(ScreenTimeRace)}) {
+			m.screens[n].cinema = m.screens[ScreenSingleRace].cinema;
+			m.screens[n].cinemaFolder = m.screens[ScreenSingleRace].cinemaFolder;
+			m.screens[n].cinemaWorlds = m.screens[ScreenSingleRace].cinemaWorlds;
+			m.screens[n].cinemaLibraries = m.screens[ScreenSingleRace].cinemaLibraries;
+		}
+	}
+	return ok;
+}
+
+// The drivers and the stock racers.
+bool loadRacers(const Cache& cache, MenuData& m)
+{
+	OriginalSave stock;
+	const bool ok = cache.get("GAMEDATA/COMMON/DRIVERS.DDB", m.drivers) && cache.get("MENUDATA/DEFAULT.LRS", stock);
+	for (const OriginalSave::Record& r : stock.records) {
+		RacerRecord& d = m.defaults.emplace_back();
+		d.name = r.name, d.looks = r.looks, d.expression = r.expression, d.stockCar = r.stockCar, d.chassis = r.chassis, d.trophies = r.trophies;
+		for (const OriginalSave::Piece& p : r.pieces) {
+			d.pieces.push_back({p.type, p.x, p.y, p.rotation, p.colour, p.part});
+		}
+	}
+	return ok;
+}
+
+// Each track's loading screen and the HUD's map.
+bool loadLoadingScreens(const Cache& cache, MenuData& m)
+{
+	bool ok = true;
+	for (const RaceTable::Race& race : m.races.races) {
+		const std::string track = upper(race.folder);
+		if (!ok || m.loading(track)) {
+			continue;
+		}
+		MenuData::Loading& l = m.loadings.emplace_back();
+		l.track = track;
+		std::vector<int16_t> ids;
+		ok = cache.get("GAMEDATA/" + track + "/LOADSCRN.LSB", l.screen);
+		ImageList list;
+		ok = ok && cache.get("GAMEDATA/" + track + "/LOADSCRN.IDB", list);
+		for (const ImageList::Entry& e : list.images) {
+			Image image;
+			ok = ok && cache.get("GAMEDATA/" + track + "/" + upper(e.name) + ".BMP", image);
+			l.tick = int16_t(m.images.size());
+			m.images.push_back({e.name, image.width, image.height, e.keyed, e.key, std::move(image.rgba)});
+		}
+		// The HUD's map: the race file's bounds, and the texture of the map library's first material (every track's
+		// local world has IGD_MAP.MDB as its second library). Stored as drawn: a flipped entry's rows turned over.
+		RaceFile raceFile;
+		ok = ok && cache.get("GAMEDATA/" + track + "/" + track + ".RAB", raceFile);
+		l.mapBounds = raceFile.mapBounds;
+		MaterialLibrary maps;
+		TextureList textures;
+		Texture texture;
+		const std::string mapList = "GAMEDATA/" + track + "/IGD_MAP.TDB";
+		if (ok && cache.get("GAMEDATA/" + track + "/IGD_MAP.MDB", maps) && !maps.materials.empty() && cache.get(mapList, textures) &&
+			cache.texture(mapList, maps.materials[0].texture, texture)) {
+			const int32_t entry = textures.find(maps.materials[0].texture);
+			if (entry >= 0 && textures.textures[size_t(entry)].flip) {
+				const size_t row = size_t(texture.width) * 4;
+				for (size_t y = 0; y < texture.height / 2; y++) {
+					std::swap_ranges(texture.rgba.begin() + std::ptrdiff_t(y * row), texture.rgba.begin() + std::ptrdiff_t((y + 1) * row),
+						texture.rgba.begin() + std::ptrdiff_t((texture.height - 1 - y) * row));
+				}
+			}
+			l.map = int16_t(m.images.size());
+			m.images.push_back({maps.materials[0].texture, texture.width, texture.height, false, 0, std::move(texture.rgba)});
+		}
+	}
+	return ok;
+}
+
+// Each language's texts and fonts.
+bool loadLanguages(const Cache& cache, MenuData& m)
+{
+	bool ok = true;
+	for (size_t l = 0; ok && l < 9; l++) {
+		MenuData::Language& lang = m.languages[l];
+		const std::string folder = "MENUDATA/" + cache.languages()[l] + "/";
+		const std::string race = "GAMEDATA/COMMON/" + cache.languages()[l] + "/";
+		FontList list, raceList;
+		ok = cache.get(folder + "MENUTEXT.SRF", lang.text) && cache.get(folder + "CIRCUIT.SRF", lang.circuits) && cache.get(race + "GAME.SRF", lang.game) &&
+			cache.get(race + "DRIVERS.SRF", lang.drivers) && cache.get(folder + "GFONTS.FDB", list) && cache.get(race + "LEGOFNTS.FDB", raceList);
+		// The menus' fonts, then the race's.
+		for (const auto& [fonts, dir] : {std::pair{&list, &folder}, std::pair{&raceList, &race}}) {
+			if (fonts == &raceList) {
+				lang.raceFonts = lang.fonts.size();
+			}
+			for (const FontList::Font& f : fonts->fonts) {
+				Image image;
+				MenuData::Font& font = lang.fonts.emplace_back();
+				font.name = f.name;
+				font.spacing = f.spacing;
+				font.keyed = f.keyed;
+				font.key = f.key;
+				ok = ok && cache.get(*dir + upper(f.name) + ".BMP", image) && font.glyphs.scan(image, f.chars);
+				font.width = image.width;
+				font.rgba = std::move(image.rgba);
+			}
+		}
+	}
+	return ok;
+}
+
+// The scene views' worlds: each binding's world not yet found, through MENUDATA/'s folders, with
+// its first camera and its lights.
+void findMenuWorlds(const Cache& cache, MenuData& m)
+{
+	for (const MenuData::Screen& sc : m.screens) {
+		for (const MenuLayout::Binding& b : sc.layout.bindings) {
+			if (b.world.empty() || b.kind == MenuLayout::SceneReference || m.menuWorld(b.world)) {
+				continue;
+			}
+			const std::string wanted = "/" + upper(b.world) + ".WDB";
+			for (const std::string& f : cache.paths()) {
+				SceneFile scene;
+				if (!f.starts_with("MENUDATA/") || !f.ends_with(wanted) || !cache.get(f, scene)) {
+					continue;
+				}
+				MenuData::MenuWorld& w = m.menuWorlds.emplace_back();
+				w.name = upper(b.world);
+				w.folder = f.substr(0, f.rfind('/') + 1);
+				for (const SceneFile::Camera& c : scene.cameras) {
+					if (!w.hasCamera) {
+						w.hasCamera = true;
+						w.camera = c;
+					}
+				}
+				w.lit = !scene.ambients.empty() || !scene.lights.empty();
+				const auto colour = [](const std::array<float, 3>& c) {
+					return 0xff000000u | uint32_t(uint8_t(c[0])) << 16 | uint32_t(uint8_t(c[1])) << 8 | uint32_t(uint8_t(c[2]));
+				};
+				if (!scene.ambients.empty()) {
+					w.ambient = colour(scene.ambients[0].colour);
+				}
+				for (const SceneFile::Light& l : scene.lights) {
+					if (w.lights.size() < 7) {
+						w.lights.push_back({normalize(vec(l.direction)), colour(l.colour)});
+					}
+				}
+				break;
+			}
+		}
+	}
 }
 
 } // namespace
@@ -162,20 +415,12 @@ bool MenuData::load3d(const Cache& cache)
 	SkeletonFile nodes;
 	AnimationFile spin;
 	SceneFile blended;
-	if (!cache.get("MENUDATA/RS_SET/CRSDOW.SDB", nodes) || !cache.get("MENUDATA/RS_SET/CRSDOW.ADB", spin) ||
-		!cache.get("MENUDATA/RS_SET/BLENDED.WDB", blended)) {
+	if (!cache.get("MENUDATA/RS_SET/CRSDOW.SDB", nodes) || !cache.get("MENUDATA/RS_SET/CRSDOW.ADB", spin) || !cache.get("MENUDATA/RS_SET/BLENDED.WDB", blended)) {
 		return false;
 	}
-	for (const SkeletonFile::Node& n : nodes.nodes) {
-		int16_t parent = -1;
-		for (size_t k = 0; k < nodes.nodes.size(); k++) {
-			parent = !n.parent.empty() && nodes.nodes[k].name == n.parent ? int16_t(k) : parent;
-		}
-		turntableNodes.push_back({vec(n.position), basisOf({n.rotation[0], n.rotation[1], n.rotation[2], n.rotation[3]}), parent});
-	}
+	turntableNodes = nodesOf(nodes);
 	turntable = animationOf(spin, false);
-	// The bodies' skeletons, the champions (the win car's), the scene views' worlds (their first
-	// camera and their lights).
+	// The bodies' skeletons, the champions (the win car's), the scene views' worlds.
 	for (size_t b = 0; b < bodySkeletons.size(); b++) {
 		SkeletonFile f;
 		if (!cache.get("MENUDATA/PARTDB/MENUPART/" + upper(parts.bodies[b]) + ".SDB", f)) {
@@ -186,42 +431,7 @@ bool MenuData::load3d(const Cache& cache)
 	if (!cache.get("GAMEDATA/COMMON/CHAMPS.CCB", champions)) {
 		return false;
 	}
-	for (const Screen& sc : screens) {
-		for (const MenuLayout::Binding& b : sc.layout.bindings) {
-			if (b.world.empty() || b.kind == MenuLayout::SceneReference || menuWorld(b.world)) {
-				continue;
-			}
-			const std::string wanted = "/" + upper(b.world) + ".WDB";
-			for (const std::string& f : cache.paths()) {
-				SceneFile scene;
-				if (!f.starts_with("MENUDATA/") || !f.ends_with(wanted) || !cache.get(f, scene)) {
-					continue;
-				}
-				MenuWorld& w = menuWorlds.emplace_back();
-				w.name = upper(b.world);
-				w.folder = f.substr(0, f.rfind('/') + 1);
-				for (const SceneFile::Camera& c : scene.cameras) {
-					if (!w.hasCamera) {
-						w.hasCamera = true;
-						w.camera = c;
-					}
-				}
-				w.lit = !scene.ambients.empty() || !scene.lights.empty();
-				const auto colour = [](const std::array<float, 3>& c) {
-					return 0xff000000u | uint32_t(uint8_t(c[0])) << 16 | uint32_t(uint8_t(c[1])) << 8 | uint32_t(uint8_t(c[2]));
-				};
-				if (!scene.ambients.empty()) {
-					w.ambient = colour(scene.ambients[0].colour);
-				}
-				for (const SceneFile::Light& l : scene.lights) {
-					if (w.lights.size() < 7) {
-						w.lights.push_back({normalize(vec(l.direction)), colour(l.colour)});
-					}
-				}
-				break;
-			}
-		}
-	}
+	findMenuWorlds(cache, *this);
 	for (const std::vector<SceneFile::Entity>* list : {&blended.entities, &blended.animated}) {
 		for (const SceneFile::Entity& e : *list) {
 			if (e.model >= 0 && size_t(e.model) < blended.models.size() && upper(blended.models[size_t(e.model)]) == "CRSDOW") {
@@ -236,202 +446,12 @@ bool MenuData::load(const Cache& cache)
 {
 	*this = {};
 	useExecutableTables(cache.executable());
-	const std::vector<std::string>& languageFolders = cache.languages();
-	bool ok = languageFolders.size() == languages.size() && cache.get("MENUDATA/MENUNAME.SRF", names) &&
-		cache.get("MENUDATA/GSTYLES.MSB", styles) && cache.get("MENUDATA/DIALOG.MIB", dialog) && cache.get("MENUDATA/LEGOMSC", music) &&
-		cache.get("MENUDATA/GENC0R0.SBK", sounds) && cache.get("MENUDATA/LEGORACE.CRB", circuits) && cache.get("MENUDATA/LEGORACE.RCB", races) &&
-		cache.get("MENUDATA/LEGOMAN.ADB", minifig) && cache.get("MENUDATA/RSANIM.ADB", showcase) &&
-		cache.get("MENUDATA/PIECEDB/LPIECEHI.LEB", pieces) && cache.get("MENUDATA/PIECEDB/CRSTMGR.LEB", sets) &&
-		cache.get("MENUDATA/PARTDB/BODYPART.PCB", parts) && cache.get("MENUDATA/CBANIM.ADB", driverAnimations) &&
-		cache.get("MENUDATA/CMAMAN.ADB", photo);
-	OriginalSave quick;
-	ok = ok && cache.get("MENUDATA/QBUILD.LRS", quick);
-	for (const OriginalSave::Record& r : quick.records) {
-		QuickBuild& q = quickBuilds.emplace_back();
-		q.name = r.name;
-		q.chassis = r.chassis;
-		for (const OriginalSave::Piece& p : r.pieces) {
-			q.pieces.push_back({p.type, p.x, p.y, p.rotation, p.colour, p.part});
-		}
-	}
-	// The images: the global list's, then each screen's own (beside the list, or in MENUDATA).
-	const auto addList = [&](std::string_view path, std::vector<int16_t>& ids) {
-		ImageList list;
-		if (!cache.get(path, list)) {
-			return false;
-		}
-		const std::string folder(path.substr(0, path.rfind('/') + 1));
-		for (const ImageList::Entry& e : list.images) {
-			Image image;
-			const std::string file = upper(e.name) + ".BMP";
-			if (!cache.get(cache.has(folder + file) ? folder + file : "MENUDATA/" + file, image)) {
-				return false;
-			}
-			ids.push_back(int16_t(images.size()));
-			images.push_back({e.name, image.width, image.height, e.keyed, e.key, std::move(image.rgba)});
-		}
-		return true;
-	};
-	ok = ok && addList("MENUDATA/GIMAGES.IDB", globalImages) && addList("GAMEDATA/COMMON/LEGOIMGS.IDB", hudImages);
-	screens.resize(145);
-	for (size_t n = 0; ok && n < screens.size(); n++) {
-		const std::string name = upper(names.narrow(n));
-		if (name.empty()) {
-			continue;
-		}
-		Screen& s = screens[n];
-		const std::string base = "MENUDATA/" + name;
-		if (cache.has(base + ".MIB")) {
-			ok = cache.get(base + ".MIB", s.layout);
-		}
-		if (ok && cache.has(base + ".MSB")) {
-			ok = cache.get(base + ".MSB", s.styles);
-		}
-		if (ok && cache.has(base + ".IDB")) {
-			ok = addList(base + ".IDB", s.images);
-		}
-	}
-	// The screens that share a layout, and the cinematics' scenes.
-	if (ok) {
-		for (uint16_t n : {uint16_t(10), uint16_t(11)}) {
-			screens[n] = screens[9];
-		}
-		for (uint16_t n : {uint16_t(45), uint16_t(46), uint16_t(47), uint16_t(48), uint16_t(49)}) {
-			screens[n] = screens[50];
-		}
-		for (uint16_t n : {uint16_t(39), uint16_t(40)}) {
-			screens[n] = screens[1];
-		}
-		// The builders' images (the sets' icons, the arrows, the pads).
-		std::vector<int16_t> builder;
-		ok = addList("MENUDATA/BUILDER.IDB", builder);
-		for (uint16_t n : {uint16_t(ScreenEditCar), uint16_t(ScreenCarBuilder)}) {
-			screens[n].images.insert(screens[n].images.end(), builder.begin(), builder.end());
-		}
-		// The screens that share a layout: the time race's is the single race's, racer select's three one.
-		screens[29].layout = screens[6].layout;
-		screens[29].styles = screens[6].styles;
-		screens[29].images = screens[6].images;
-		screens[20] = screens[21] = screens[19];
-	}
-	// The cinematics: each scene file, its effects, string tables (the first in each language) and image lists.
-	const auto loadCinema = [&](Screen& screen, const std::string& folder, std::string_view base) {
-		const std::string stem = folder + upper(base);
-		CinemaFile& c = screen.cinema;
-		if (!cache.get(stem + ".CDB", c) || !loadCinemaWorlds(cache, screen, folder)) { // (with its effects)
-			return false;
-		}
-		for (size_t l = 0; l < 9; l++) {
-			for (size_t t = 0; t < c.stringTables.size(); t++) {
-				const std::string name = t == 0 && l > 0 ? languageFolders[l] : upper(c.stringTables[t]);
-				if (!cache.get(folder + name + ".SRF", screen.cinemaText[l].emplace_back())) {
-					return false;
-				}
-			}
-		}
-		for (const std::string& list : c.imageLists) {
-			if (!addList(folder + upper(list) + ".IDB", screen.images)) {
-				return false;
-			}
-		}
-		return true;
-	};
-	ok = ok && loadCinema(screens[ScreenLegal], "MENUDATA/LEGAL/", "splash1") && loadCinema(screens[ScreenCredits], "MENUDATA/CREDITS/", "credits") &&
-		loadCinema(screens[ScreenSingleRace], "MENUDATA/SINGRACE/", "pst");
-	for (uint16_t n = 22; ok && n <= 37; n++) {
-		if (n == ScreenTimeRace || n == 30) {
-			continue; // (the time race's layout is the single race's)
-		}
-		const MenuLayout& layout = screens[n].layout;
-		const auto view = std::find_if(layout.bindings.begin(), layout.bindings.end(), [](const MenuLayout::Binding& b) { return b.kind == MenuLayout::SceneReference; });
-		if (view != layout.bindings.end()) {
-			ok = loadCinema(screens[n], "MENUDATA/" + upper(names.narrow(n)) + "/", view->world);
-		}
-	}
-	if (ok) {
-		for (uint16_t n : {uint16_t(ScreenCircuitRace), uint16_t(ScreenTimeRace)}) {
-			screens[n].cinema = screens[ScreenSingleRace].cinema;
-			screens[n].cinemaFolder = screens[ScreenSingleRace].cinemaFolder;
-			screens[n].cinemaWorlds = screens[ScreenSingleRace].cinemaWorlds;
-			screens[n].cinemaLibraries = screens[ScreenSingleRace].cinemaLibraries;
-		}
-	}
+	bool ok = cache.languages().size() == languages.size() && loadTables(cache, *this);
+	// The images: the global list's, then each screen's own.
+	ok = ok && addImageList(cache, *this, "MENUDATA/GIMAGES.IDB", globalImages) && addImageList(cache, *this, "GAMEDATA/COMMON/LEGOIMGS.IDB", hudImages);
+	ok = ok && loadLayouts(cache, *this) && loadCinemas(cache, *this);
 	// The race's: the drivers, the stock racers, each track's loading screen.
-	OriginalSave stock;
-	ok = ok && cache.get("GAMEDATA/COMMON/DRIVERS.DDB", drivers) && cache.get("MENUDATA/DEFAULT.LRS", stock);
-	for (const OriginalSave::Record& r : stock.records) {
-		RacerRecord& d = defaults.emplace_back();
-		d.name = r.name, d.looks = r.looks, d.expression = r.expression, d.stockCar = r.stockCar, d.chassis = r.chassis, d.trophies = r.trophies;
-		for (const OriginalSave::Piece& p : r.pieces) {
-			d.pieces.push_back({p.type, p.x, p.y, p.rotation, p.colour, p.part});
-		}
-	}
-	for (const RaceTable::Race& race : races.races) {
-		const std::string track = upper(race.folder);
-		if (!ok || loading(track)) {
-			continue;
-		}
-		Loading& l = loadings.emplace_back();
-		l.track = track;
-		std::vector<int16_t> ids;
-		ok = cache.get("GAMEDATA/" + track + "/LOADSCRN.LSB", l.screen);
-		ImageList list;
-		ok = ok && cache.get("GAMEDATA/" + track + "/LOADSCRN.IDB", list);
-		for (const ImageList::Entry& e : list.images) {
-			Image image;
-			ok = ok && cache.get("GAMEDATA/" + track + "/" + upper(e.name) + ".BMP", image);
-			l.tick = int16_t(images.size());
-			images.push_back({e.name, image.width, image.height, e.keyed, e.key, std::move(image.rgba)});
-		}
-		// The HUD's map: the race file's bounds, and the texture of the map library's first material (every track's
-		// local world has IGD_MAP.MDB as its second library). Stored as drawn: a flipped entry's rows turned over.
-		RaceFile raceFile;
-		ok = ok && cache.get("GAMEDATA/" + track + "/" + track + ".RAB", raceFile);
-		l.mapBounds = raceFile.mapBounds;
-		MaterialLibrary maps;
-		TextureList textures;
-		Texture texture;
-		const std::string mapList = "GAMEDATA/" + track + "/IGD_MAP.TDB";
-		if (ok && cache.get("GAMEDATA/" + track + "/IGD_MAP.MDB", maps) && !maps.materials.empty() && cache.get(mapList, textures) &&
-			cache.texture(mapList, maps.materials[0].texture, texture)) {
-			const int32_t entry = textures.find(maps.materials[0].texture);
-			if (entry >= 0 && textures.textures[size_t(entry)].flip) {
-				const size_t row = size_t(texture.width) * 4;
-				for (size_t y = 0; y < texture.height / 2; y++) {
-					std::swap_ranges(texture.rgba.begin() + std::ptrdiff_t(y * row), texture.rgba.begin() + std::ptrdiff_t((y + 1) * row),
-						texture.rgba.begin() + std::ptrdiff_t((texture.height - 1 - y) * row));
-				}
-			}
-			l.map = int16_t(images.size());
-			images.push_back({maps.materials[0].texture, texture.width, texture.height, false, 0, std::move(texture.rgba)});
-		}
-	}
-	for (size_t l = 0; ok && l < 9; l++) {
-		Language& lang = languages[l];
-		const std::string folder = "MENUDATA/" + languageFolders[l] + "/";
-		const std::string race = "GAMEDATA/COMMON/" + languageFolders[l] + "/";
-		FontList list, raceList;
-		ok = cache.get(folder + "MENUTEXT.SRF", lang.text) && cache.get(folder + "CIRCUIT.SRF", lang.circuits) &&
-			cache.get(race + "GAME.SRF", lang.game) && cache.get(race + "DRIVERS.SRF", lang.drivers) && cache.get(folder + "GFONTS.FDB", list) &&
-			cache.get(race + "LEGOFNTS.FDB", raceList);
-		// The menus' fonts, then the race's.
-		for (const auto& [fonts, dir] : {std::pair{&list, &folder}, std::pair{&raceList, &race}}) {
-			if (fonts == &raceList) {
-				lang.raceFonts = lang.fonts.size();
-			}
-			for (const FontList::Font& f : fonts->fonts) {
-				Image image;
-				Font& font = lang.fonts.emplace_back();
-				font.name = f.name;
-				font.spacing = f.spacing;
-				font.keyed = f.keyed;
-				font.key = f.key;
-				ok = ok && cache.get(*dir + upper(f.name) + ".BMP", image) && font.glyphs.scan(image, f.chars);
-				font.width = image.width;
-				font.rgba = std::move(image.rgba);
-			}
-		}
-	}
+	ok = ok && loadRacers(cache, *this) && loadLoadingScreens(cache, *this) && loadLanguages(cache, *this);
 	return ok && load3d(cache); // (after the screens: their views' worlds)
 }
 
@@ -489,10 +509,9 @@ uint32_t menuKey(uint32_t usb)
 	// USB usages 4.. (a..z, 1..0, Enter, Esc, Backspace, Tab, Space, - = [ ] \ # ; ' ` , . /, Caps Lock, F1..F12,
 	// Print Screen, Scroll Lock, Pause, Insert, Home, Page Up, Delete, End, Page Down, Right, Left, Down, Up, Num Lock,
 	// the keypad's / * - + Enter 1..9 0 .) as DirectInput scan codes.
-	static const uint8_t Codes[100] = {0, 0, 0, 0, 0x1e, 0x30, 0x2e, 0x20, 0x12, 0x21, 0x22, 0x23, 0x17, 0x24, 0x25, 0x26, 0x32, 0x31,
-		0x18, 0x19, 0x10, 0x13, 0x1f, 0x14, 0x16, 0x2f, 0x11, 0x2d, 0x15, 0x2c, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a,
-		0x0b, 0x1c, 0x01, 0x0e, 0x0f, 0x39, 0x0c, 0x0d, 0x1a, 0x1b, 0x2b, 0x2b, 0x27, 0x28, 0x29, 0x33, 0x34, 0x35, 0x3a, 0x3b, 0x3c,
-		0x3d, 0x3e, 0x3f, 0x40, 0x41, 0x42, 0x43, 0x44, 0x57, 0x58, 0xb7, 0x46, 0xc5, 0xd2, 0xc7, 0xc9, 0xd3, 0xcf, 0xd1, 0xcd, 0xcb,
+	static const uint8_t Codes[100] = {0, 0, 0, 0, 0x1e, 0x30, 0x2e, 0x20, 0x12, 0x21, 0x22, 0x23, 0x17, 0x24, 0x25, 0x26, 0x32, 0x31, 0x18, 0x19, 0x10, 0x13, 0x1f, 0x14, 0x16,
+		0x2f, 0x11, 0x2d, 0x15, 0x2c, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x1c, 0x01, 0x0e, 0x0f, 0x39, 0x0c, 0x0d, 0x1a, 0x1b, 0x2b, 0x2b, 0x27, 0x28,
+		0x29, 0x33, 0x34, 0x35, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f, 0x40, 0x41, 0x42, 0x43, 0x44, 0x57, 0x58, 0xb7, 0x46, 0xc5, 0xd2, 0xc7, 0xc9, 0xd3, 0xcf, 0xd1, 0xcd, 0xcb,
 		0xd0, 0xc8, 0x45, 0xb5, 0x37, 0x4a, 0x4e, 0x9c, 0x4f, 0x50, 0x51, 0x4b, 0x4c, 0x4d, 0x47, 0x48, 0x49, 0x52, 0x53};
 	// The modifiers (224..231: left Ctrl, Shift, Alt, GUI, then the right ones) and the Menu key.
 	static const uint8_t Modifiers[8] = {0x1d, 0x2a, 0x38, 0xdb, 0x9d, 0x36, 0xb8, 0xdc};
@@ -503,8 +522,14 @@ uint32_t menuKey(uint32_t usb)
 char16_t menuCharacter(uint32_t usb)
 {
 	static const char Punctuation[] = "-=[]\\;'`,./";
-	return usb >= 4 && usb <= 29 ? char16_t('A' + usb - 4) : usb >= 30 && usb <= 38 ? char16_t('1' + usb - 30) : usb == 39 ? u'0'
-		: usb == 40 ? u'\r' : usb == 42 ? u'\b' : usb == 44 ? u' ' : usb >= 45 && usb <= 56 && usb != 50 ? char16_t(Punctuation[usb - 45 - (usb > 50)]) : 0;
+	return usb >= 4 && usb <= 29			  ? char16_t('A' + usb - 4)
+		: usb >= 30 && usb <= 38			  ? char16_t('1' + usb - 30)
+		: usb == 39							  ? u'0'
+		: usb == 40							  ? u'\r'
+		: usb == 42							  ? u'\b'
+		: usb == 44							  ? u' '
+		: usb >= 45 && usb <= 56 && usb != 50 ? char16_t(Punctuation[usb - 45 - (usb > 50)])
+											  : 0;
 }
 
 void Menus::playTune(int32_t number, bool loops)
@@ -569,7 +594,7 @@ void Menus::start(const MenuData& menuData, Game& g, uint16_t next, bool save)
 
 // Dialogs.
 
-void Menus::openDialog(uint8_t kind, int32_t message)
+void Menus::openDialog(MenuDialog::Kind kind, int32_t message)
 {
 	if (dialogCount >= dialogs.size()) {
 		return;
@@ -676,8 +701,8 @@ void Menus::updateDialog(int32_t dt)
 {
 	MenuDialog& d = dialogs[dialogCount - 1];
 	d.ageMs += dt;
-	if (d.kind == 0 && d.ageMs > 5000 && d.phase == MenuDialog::Open) {
-		d.result = 1;
+	if (d.kind == MenuDialog::TimedNotice && d.ageMs > 5000 && d.phase == MenuDialog::Open) {
+		d.result = MenuDialog::TimedOut;
 		closeDialog();
 	}
 	float scale = 1;
@@ -731,37 +756,87 @@ void Menus::frame(Game& g, int32_t dt, std::span<const MenuKey> keys, int32_t mx
 		tickScreen(dt);
 	}
 
-	// The frame's events, then the repeats.
-	const auto enqueue = [&](MenuKey k) {
-		if (queued < queue.size()) {
-			queue[queued++] = k;
+	// The frame's events and the repeats, then the dispatcher.
+	queueInput(keys, buttons, dt);
+	dispatchKeys(g);
+
+	// The mouse: its motion is handled where the cursor was; the cursor moves at the frame's end.
+	const int32_t dx = mx - mouseX, dy = my - mouseY;
+	const bool moved = dx || dy;
+	mouseX = mx;
+	mouseY = my;
+	if (moved) {
+		moveMouse(dx, dy);
+	}
+
+	// The dialog's update, or the screen's.
+	if (dialogCount) {
+		updateDialog(dt);
+	}
+	else {
+		updateScreen(g, dt);
+	}
+	if (quit) {
+		return;
+	}
+	if (depth == 0) {
+		leaveScreen();
+		raceStart = true;
+	}
+	else if (top() != before) {
+		leaveScreen();
+		build(g);
+	}
+	stepFades(dt);
+	if (!raceStart) {
+		drawFrame();
+	}
+	if (moved) {
+		// Kept a quarter of the arrow (32x32) from the right and bottom edges.
+		cursorX = std::clamp(mx, 0, 640 - 8);
+		cursorY = std::clamp(my, 0, 480 - 8);
+	}
+}
+
+void Menus::queueKey(MenuKey k)
+{
+	if (queued < queue.size()) {
+		queue[queued++] = k;
+	}
+}
+
+// A key or button going down (held, its device's repeat restarted) or up.
+void Menus::holdKey(uint32_t key, bool down)
+{
+	const int device = (key >> 28) == 2 ? 1 : 0;
+	if (down) {
+		repeatMs[size_t(device)] = 500;
+		if (std::find(held.begin(), held.end(), key) == held.end()) {
+			held.push_back(key);
 		}
-	};
-	const auto pressed = [&](uint32_t key, bool down) {
-		const int device = (key >> 28) == 2 ? 1 : 0;
-		if (down) {
-			repeatMs[size_t(device)] = 500;
-			if (std::find(held.begin(), held.end(), key) == held.end()) {
-				held.push_back(key);
-			}
-		}
-		else {
-			held.erase(std::remove(held.begin(), held.end(), key), held.end());
-		}
-		enqueue({key, down, false});
-	};
+	}
+	else {
+		held.erase(std::remove(held.begin(), held.end(), key), held.end());
+	}
+	queueKey({key, down, false});
+}
+
+// The frame's events, then the repeats: each device's held keys again, in key order, 500 ms after a press and every
+// 250 ms after that.
+void Menus::queueInput(std::span<const MenuKey> keys, uint32_t buttons, int32_t dt)
+{
 	for (const MenuKey& k : keys) {
 		if ((k.key >> 28) == (SourceCharacter >> 28)) {
-			enqueue(k); // typed, not held
+			queueKey(k); // typed, not held
 		}
 		else {
-			pressed(k.key, k.down);
+			holdKey(k.key, k.down);
 		}
 	}
 	for (uint32_t b = 0; b < 4; b++) {
 		const bool was = mouseButtons & (1u << b), now = buttons & (1u << b);
 		if (was != now) {
-			pressed(SourceMouse | b, now);
+			holdKey(SourceMouse | b, now);
 		}
 	}
 	mouseButtons = buttons;
@@ -778,12 +853,15 @@ void Menus::frame(Game& g, int32_t dt, std::span<const MenuKey> keys, int32_t mx
 		}
 		std::sort(repeats.begin(), repeats.end());
 		for (uint32_t key : repeats) {
-			enqueue({key, true, true});
+			queueKey({key, true, true});
 		}
 		repeatMs[size_t(device)] = repeats.empty() ? 500 : 250;
 	}
+}
 
-	// The dispatcher.
+// The dispatcher: the queued events in order, until one is taken by the screen or the focused widget.
+void Menus::dispatchKeys(Game& g)
+{
 	size_t taken = 0;
 	for (; taken < queued; taken++) {
 		// The screen's own handler, the focused widget (either taking it ends the frame's events: the rest wait), then
@@ -826,45 +904,27 @@ void Menus::frame(Game& g, int32_t dt, std::span<const MenuKey> keys, int32_t mx
 	}
 	std::copy(queue.begin() + taken, queue.begin() + queued, queue.begin());
 	queued = uint8_t(queued - taken);
+}
 
-	// The mouse: its motion is handled where the cursor was; the cursor moves at the frame's end.
-	const int32_t dx = mx - mouseX, dy = my - mouseY;
-	const bool moved = dx || dy;
-	mouseX = mx;
-	mouseY = my;
-	if (moved) {
-		WidgetTree& now = active();
-		const int16_t focused = now.widgets.empty() ? int16_t(-1) : now.focused();
-		// A focused text field keeps the motion only once the mouse has taken it there (hovering it); the focus it has
-		// from its screen's opening doesn't hold the mouse (on the license, the first motion
-		// hover-selects the button under the cursor, a later one after hovering the field is kept by it).
-		const bool keeps = focused >= 0 && (now[focused].kind != Widget::TextField || now[focused].grabbed);
-		const bool builder = !dialogCount && screen == ScreenCarBuilder && builderMotion(dx, dy);
-		if (!builder && !(keeps && cursorOver(now, focused, dx)) && !now.widgets.empty()) {
-			routeCursor(now, 0, cursorX, cursorY);
-		}
+// The mouse's motion, handled where the cursor was: the builder's drag, the focused widget keeping it, else down the
+// tree.
+void Menus::moveMouse(int32_t dx, int32_t dy)
+{
+	WidgetTree& now = active();
+	const int16_t focused = now.widgets.empty() ? int16_t(-1) : now.focused();
+	// A focused text field keeps the motion only once the mouse has taken it there (hovering it); the focus it has
+	// from its screen's opening doesn't hold the mouse (on the license, the first motion
+	// hover-selects the button under the cursor, a later one after hovering the field is kept by it).
+	const bool keeps = focused >= 0 && (now[focused].kind != Widget::TextField || now[focused].grabbed);
+	const bool builder = !dialogCount && screen == ScreenCarBuilder && builderMotion(dx, dy);
+	if (!builder && !(keeps && cursorOver(now, focused, dx)) && !now.widgets.empty()) {
+		routeCursor(now, 0, cursorX, cursorY);
 	}
+}
 
-	// The dialog's update, or the screen's.
-	if (dialogCount) {
-		updateDialog(dt);
-	}
-	else {
-		updateScreen(g, dt);
-	}
-	if (quit) {
-		return;
-	}
-	if (depth == 0) {
-		leaveScreen();
-		raceStart = true;
-	}
-	else if (top() != before) {
-		leaveScreen();
-		build(g);
-	}
-
-	// The fades.
+// The fades: each one's time down; ended the frame after it reaches 0, let go the frame after that.
+void Menus::stepFades(int32_t dt)
+{
 	for (Fade& f : fades) {
 		if (!f.active) {
 			continue;
@@ -877,14 +937,6 @@ void Menus::frame(Game& g, int32_t dt, std::span<const MenuKey> keys, int32_t mx
 			f.ended = true;
 		}
 		f.leftMs = std::max(0, f.leftMs - dt);
-	}
-	if (!raceStart) {
-		drawFrame();
-	}
-	if (moved) {
-		// Kept a quarter of the arrow (32x32) from the right and bottom edges.
-		cursorX = std::clamp(mx, 0, 640 - 8);
-		cursorY = std::clamp(my, 0, 480 - 8);
 	}
 }
 

@@ -5,6 +5,8 @@
 // entities, guy1 and the carbody swapped for the player's minifig and car). The presentation draws it as given.
 
 #include "LRCore/Menus/Menus.h"
+#include "Common/Assert.h"
+#include "LRData/Archive.h"
 
 #include <algorithm>
 #include <cctype>
@@ -12,22 +14,6 @@
 namespace lr {
 
 namespace {
-
-// Names as the scene files compare them: up to 8 characters, case-insensitively.
-bool sameName(std::string_view a, std::string_view b)
-{
-	a = a.substr(0, 8), b = b.substr(0, 8);
-	return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) { return std::tolower(uint8_t(x)) == std::tolower(uint8_t(y)); });
-}
-
-std::string upper(std::string_view s)
-{
-	std::string u(s);
-	for (char& c : u) {
-		c = char(std::toupper(uint8_t(c)));
-	}
-	return u;
-}
 
 int32_t blinkMs(int32_t frames) { return int32_t(float(frames) * 33.333328f); }
 
@@ -99,6 +85,64 @@ void stepTracks(CinemaPlayer& c, const MenuData::Screen& s, const CinemaFile::Cu
 			written = c.written.insert(c.written.end(), {slot, {}});
 		}
 		written->material = *material;
+	}
+}
+
+// A camera cue's view: the tracked node's pose at its entity's time, through the entity's placement (no model scale).
+void trackCamera(CinemaPlayer& c, const MenuData::Screen& s, const std::array<int16_t, 3>& e)
+{
+	LR_ASSERT(size_t(e[0]) < s.cinemaWorlds.size() && e[2] >= 0 && size_t(e[2]) < s.cinemaWorlds[size_t(e[0])].scene.cameras.size());
+	const MenuData::CinemaWorld& w = s.cinemaWorlds[size_t(e[0])];
+	const SceneFile::Camera& cam = w.scene.cameras[size_t(e[2])];
+	if (cam.entity < 0 || cam.node < 0 || size_t(cam.entity) >= w.scene.animated.size()) {
+		return;
+	}
+	const SceneFile::Entity& dummy = w.scene.animated[size_t(cam.entity)];
+	if (dummy.skeleton < 0 || size_t(dummy.skeleton) >= w.skeletons.size()) {
+		return;
+	}
+	const CinemaPlayer::Clock& clock = c.clocks[size_t(e[0])][size_t(cam.entity)];
+	const Animation* a = dummy.animation >= 0 && size_t(dummy.animation) < w.animations.size() ? &w.animations[size_t(dummy.animation)] : nullptr;
+	const CinemaPlayer::Placed& at = c.placed[size_t(e[0])][1][size_t(cam.entity)];
+	std::vector<NodeMatrix> nodes;
+	poseSkeleton(w.skeletons[size_t(dummy.skeleton)], a, {a ? clock.part : -1, clock.part >= 0 ? clock.time : -1, true}, Pose{at.position, at.rows}, 1, nodes);
+	if (size_t(cam.node) < nodes.size()) {
+		CinemaPlayer::View& v = c.views[size_t(e[0])][size_t(e[2])];
+		v.eye = nodes[size_t(cam.node)].position;
+		v.forward = nodes[size_t(cam.node)].rows.f;
+		v.up = nodes[size_t(cam.node)].rows.u; // (the third row)
+	}
+}
+
+// A blinking ambient or light cue: on and off by its blink's frames (at most 7 lights on, the oldest let go).
+void blinkCue(CinemaPlayer& c, const CinemaFile::Cue& q, uint16_t cue, int32_t ms)
+{
+	std::pair<bool, int32_t>& b = c.blinks[cue];
+	if (ms <= b.second) {
+		b.second -= ms;
+		return;
+	}
+	const bool ambient = q.kind == CinemaFile::Cue::Ambient;
+	if (b.first) {
+		if (ambient && c.ambient == int32_t(cue)) {
+			c.ambient = -1;
+		}
+		if (!ambient) {
+			c.lights.erase(std::remove(c.lights.begin(), c.lights.end(), cue), c.lights.end());
+		}
+		b = {false, blinkMs(q.blink[1])};
+	}
+	else {
+		if (ambient) {
+			c.ambient = int32_t(cue);
+		}
+		else if (std::find(c.lights.begin(), c.lights.end(), cue) == c.lights.end()) {
+			if (c.lights.size() >= 7) {
+				c.lights.erase(c.lights.begin());
+			}
+			c.lights.push_back(cue);
+		}
+		b = {true, blinkMs(q.blink[0])};
 	}
 }
 
@@ -217,7 +261,8 @@ void Menus::cue3d(CinemaPlayer& c, const MenuData::Screen& s, size_t cue, bool b
 		}
 		if (begins) {
 			c.placed[size_t(e[0])][size_t(e[1])][size_t(e[2])] = {vec(q.position), basisFromForwardUp(vec(q.forward), vec(q.up))};
-			c.cueMs[cue] = 0;			if (e[1] && q.part >= 0) {
+			c.cueMs[cue] = 0;
+			if (e[1] && q.part >= 0) {
 				c.clocks[size_t(e[0])][size_t(e[2])] = {q.part, 0, true};
 			}
 		}
@@ -262,34 +307,11 @@ void Menus::cueTicks(CinemaPlayer& c, const MenuData::Screen& s, int32_t ms) con
 		const CinemaFile::Cue& q = scene.cues[cue];
 		const std::array<int16_t, 3> e = c.entityOf[cue];
 		switch (q.kind) {
-		case CinemaFile::Cue::Camera: {
-			if (e[0] < 0) {
-				break;
-			}
-			const MenuData::CinemaWorld& w = s.cinemaWorlds[size_t(e[0])];
-			const SceneFile::Camera& cam = w.scene.cameras[size_t(e[2])];
-			if (cam.entity < 0 || cam.node < 0 || size_t(cam.entity) >= w.scene.animated.size()) {
-				break;
-			}
-			// The tracked node's pose at its entity's time, through the entity's placement (no model scale).
-			const SceneFile::Entity& dummy = w.scene.animated[size_t(cam.entity)];
-			if (dummy.skeleton < 0 || size_t(dummy.skeleton) >= w.skeletons.size()) {
-				break;
-			}
-			const CinemaPlayer::Clock& clock = c.clocks[size_t(e[0])][size_t(cam.entity)];
-			const Animation* a = dummy.animation >= 0 && size_t(dummy.animation) < w.animations.size() ? &w.animations[size_t(dummy.animation)] : nullptr;
-			const CinemaPlayer::Placed& at = c.placed[size_t(e[0])][1][size_t(cam.entity)];
-			std::vector<NodeMatrix> nodes;
-			poseSkeleton(w.skeletons[size_t(dummy.skeleton)], a, {a ? clock.part : -1, clock.part >= 0 ? clock.time : -1, true}, Pose{at.position, at.rows}, 1,
-				nodes);
-			if (size_t(cam.node) < nodes.size()) {
-				CinemaPlayer::View& v = c.views[size_t(e[0])][size_t(e[2])];
-				v.eye = nodes[size_t(cam.node)].position;
-				v.forward = nodes[size_t(cam.node)].rows.f;
-				v.up = nodes[size_t(cam.node)].rows.u; // (the third row)
+		case CinemaFile::Cue::Camera:
+			if (e[0] >= 0) {
+				trackCamera(c, s, e);
 			}
 			break;
-		}
 		case CinemaFile::Cue::Model:
 			c.cueMs[cue] += ms;
 			if (e[0] >= 0 && e[1]) {
@@ -304,39 +326,11 @@ void Menus::cueTicks(CinemaPlayer& c, const MenuData::Screen& s, int32_t ms) con
 			}
 			break;
 		case CinemaFile::Cue::Ambient:
-		case CinemaFile::Cue::Light: {
-			if (q.blink[0] == 0 && q.blink[1] == 0) {
-				break;
-			}
-			std::pair<bool, int32_t>& b = c.blinks[cue];
-			if (ms <= b.second) {
-				b.second -= ms;
-				break;
-			}
-			const bool ambient = q.kind == CinemaFile::Cue::Ambient;
-			if (b.first) {
-				if (ambient && c.ambient == int32_t(cue)) {
-					c.ambient = -1;
-				}
-				if (!ambient) {
-					c.lights.erase(std::remove(c.lights.begin(), c.lights.end(), cue), c.lights.end());
-				}
-				b = {false, blinkMs(q.blink[1])};
-			}
-			else {
-				if (ambient) {
-					c.ambient = int32_t(cue);
-				}
-				else if (std::find(c.lights.begin(), c.lights.end(), cue) == c.lights.end()) {
-					if (c.lights.size() >= 7) {
-						c.lights.erase(c.lights.begin());
-					}
-					c.lights.push_back(cue);
-				}
-				b = {true, blinkMs(q.blink[0])};
+		case CinemaFile::Cue::Light:
+			if (q.blink[0] != 0 || q.blink[1] != 0) {
+				blinkCue(c, q, cue, ms);
 			}
 			break;
-		}
 		default: break;
 		}
 	}
@@ -348,8 +342,7 @@ void Menus::cueTicks(CinemaPlayer& c, const MenuData::Screen& s, int32_t ms) con
 
 // The cues in the window [a, b] in time order; links fire only on the cinematic screens.
 namespace {
-template <class Change>
-void window(CinemaPlayer& c, const CinemaFile::Scene& scene, int32_t a, int32_t b, Change&& change)
+template <class Change> void window(CinemaPlayer& c, const CinemaFile::Scene& scene, int32_t a, int32_t b, Change&& change)
 {
 	const size_t n = scene.cues.size();
 	for (;;) {
@@ -443,8 +436,67 @@ void Menus::updatePreview(int32_t dt)
 	playScene(c, s, dt, dt, true, false); // (the frame's ms from the first update on, as a cinematic's)
 }
 
-void Menus::describeCinema(const CinemaPlayer& c, const MenuData::Screen& s, MenuScene& out, const std::array<uint8_t, 5>* looks,
-	const RacerRecord* car) const
+namespace {
+
+// The camera at the bottom of the stack (the previous view while it is empty); the light cues: the ambient, the
+// directional lights (none of either: the cleared device).
+void sceneCameraAndLights(const CinemaPlayer& c, const CinemaFile::Scene& scene, MenuScene& out)
+{
+	out.camera = c.viewed;
+	if (c.viewed) {
+		const Vec3 t = c.view.eye + c.view.forward;
+		out.eye = {c.view.eye.x, c.view.eye.y, c.view.eye.z};
+		out.target = {t.x, t.y, t.z};
+		out.up = {c.view.up.x, c.view.up.y, c.view.up.z};
+		out.fov = c.view.fov, out.nearPlane = c.view.nearPlane, out.farPlane = c.view.farPlane;
+	}
+	out.lighting = {};
+	if (c.ambient >= 0) {
+		const std::array<int32_t, 3>& rgb = scene.cues[size_t(c.ambient)].colour;
+		out.lighting.ambient = 0xff000000u | uint32_t(rgb[0] & 255) << 16 | uint32_t(rgb[1] & 255) << 8 | uint32_t(rgb[2] & 255);
+	}
+	for (const uint16_t l : c.lights) {
+		const CinemaFile::Cue& q = scene.cues[l];
+		out.lighting.lights.push_back(
+			{normalize(vec(q.direction)), 0xff000000u | uint32_t(q.colour[0] & 255) << 16 | uint32_t(q.colour[1] & 255) << 8 | uint32_t(q.colour[2] & 255)});
+	}
+}
+
+// A minifig's skeleton and part files: its entity's, in the screen's cinema folder.
+void minifigFiles(const MenuData::Screen& s, const MenuData::CinemaWorld& w, const SceneFile::Entity& ent, MenuScene::Thing& t)
+{
+	const auto path = [&](const std::string& name, const char* extension) { return s.cinemaFolder + upper(name) + extension; };
+	if (ent.skeleton >= 0 && size_t(ent.skeleton) < w.scene.skeletons.size()) {
+		t.skeleton = path(w.scene.skeletons[size_t(ent.skeleton)], ".SDB");
+	}
+	if (ent.animation >= 0 && size_t(ent.animation) < w.scene.animations.size()) {
+		t.partFile = path(w.scene.animations[size_t(ent.animation)], ".ADB");
+	}
+}
+
+// An entity's model's shared material table and colour transform (every entity drawing the model shows them).
+void entityMaterials(const CinemaPlayer& c, const MenuData::Screen& s, int16_t world, int32_t model, MenuScene::Thing& t)
+{
+	for (const CinemaPlayer::Written& k : c.written) {
+		if (k.slot[0] == world && k.slot[1] == model) {
+			t.materials.push_back({k.slot[2], k.material});
+		}
+	}
+	for (const CinemaPlayer::Colouring& k : c.colourings) {
+		if (k.model == std::array<int16_t, 2>{world, int16_t(model)}) {
+			const CinemaFile::Effect& fx = s.cinema.effects[size_t(k.effect)];
+			t.coloured = true;
+			for (size_t ch = 0; ch < 3; ch++) {
+				t.colourShift[ch] = fx.shift[ch];
+				t.colourOffset[ch] = int32_t(k.offsets[ch]);
+			}
+		}
+	}
+}
+
+} // namespace
+
+void Menus::describeCinema(const CinemaPlayer& c, const MenuData::Screen& s, MenuScene& out, const std::array<uint8_t, 5>* looks, const RacerRecord* car) const
 {
 	using Thing = MenuScene::Thing;
 	out.cinemaScreen = screen;
@@ -458,26 +510,7 @@ void Menus::describeCinema(const CinemaPlayer& c, const MenuData::Screen& s, Men
 	out.time = float(c.scaled) / 1000.0f;
 	out.cues = c.begun;
 	out.cinemaScreen = screen;
-	// The camera at the bottom of the stack (the previous view while it is empty).
-	out.camera = c.viewed;
-	if (c.viewed) {
-		const Vec3 t = c.view.eye + c.view.forward;
-		out.eye = {c.view.eye.x, c.view.eye.y, c.view.eye.z};
-		out.target = {t.x, t.y, t.z};
-		out.up = {c.view.up.x, c.view.up.y, c.view.up.z};
-		out.fov = c.view.fov, out.nearPlane = c.view.nearPlane, out.farPlane = c.view.farPlane;
-	}
-	// The light cues: the ambient, the directional lights (none of either: the cleared device).
-	out.lighting = {};
-	if (c.ambient >= 0) {
-		const std::array<int32_t, 3>& rgb = scene.cues[size_t(c.ambient)].colour;
-		out.lighting.ambient = 0xff000000u | uint32_t(rgb[0] & 255) << 16 | uint32_t(rgb[1] & 255) << 8 | uint32_t(rgb[2] & 255);
-	}
-	for (const uint16_t l : c.lights) {
-		const CinemaFile::Cue& q = scene.cues[l];
-		out.lighting.lights.push_back({normalize(vec(q.direction)),
-			0xff000000u | uint32_t(q.colour[0] & 255) << 16 | uint32_t(q.colour[1] & 255) << 8 | uint32_t(q.colour[2] & 255)});
-	}
+	sceneCameraAndLights(c, scene, out);
 	// The model cues' entities, newest first.
 	for (const uint16_t cue : c.begun) {
 		const CinemaFile::Cue& q = scene.cues[cue];
@@ -493,7 +526,6 @@ void Menus::describeCinema(const CinemaPlayer& c, const MenuData::Screen& s, Men
 		}
 		const float scale = ent.scale * (ent.model >= 0 && size_t(ent.model) < w.modelScales.size() ? w.modelScales[size_t(ent.model)] : 1.0f);
 		const CinemaPlayer::Clock clock = e[1] ? c.clocks[size_t(e[0])][size_t(e[2])] : CinemaPlayer::Clock();
-		const auto scaled = [&](float k) { return Basis{at.rows.f * k, at.rows.s * k, at.rows.u * k}; };
 		// WINRRCAR's peg-leg swap models show only for leg piece 10.
 		if (looks && screen == ScreenRocketCar && (sameName(ent.name, "swap") || sameName(ent.name, "pleg")) && (*looks)[2] != 10) {
 			continue;
@@ -504,16 +536,10 @@ void Menus::describeCinema(const CinemaPlayer& c, const MenuData::Screen& s, Men
 			t.kind = Thing::Minifig;
 			t.looks = *looks;
 			t.body = bodyOf(*looks, false);
-			const auto path = [&](const std::string& name, const char* extension) { return s.cinemaFolder + upper(name) + extension; };
-			if (ent.skeleton >= 0 && size_t(ent.skeleton) < w.scene.skeletons.size()) {
-				t.skeleton = path(w.scene.skeletons[size_t(ent.skeleton)], ".SDB");
-			}
-			if (ent.animation >= 0 && size_t(ent.animation) < w.scene.animations.size()) {
-				t.partFile = path(w.scene.animations[size_t(ent.animation)], ".ADB");
-			}
+			minifigFiles(s, w, ent, t);
 			t.animation = clock.part;
 			t.frame = clock.time;
-			t.world = {scaled(scale), at.position};
+			t.world = {at.rows * scale, at.position};
 			t.cue = cue, t.cueMs = c.cueMs[cue];
 			// Its face: what the face tracks wrote into guy1's model's table (its first track's slot).
 			for (const CinemaPlayer::Written& k : c.written) {
@@ -533,7 +559,7 @@ void Menus::describeCinema(const CinemaPlayer& c, const MenuData::Screen& s, Men
 				Thing& wheels = out.things.emplace_back();
 				wheels.kind = Thing::Chassis;
 				wheels.model = ch->model;
-				wheels.world = {scaled(chassisScale(ch)), at.position};
+				wheels.world = {at.rows * chassisScale(ch), at.position};
 				wheels.frame = -1; // (its part animation off)
 			}
 			continue;
@@ -544,24 +570,9 @@ void Menus::describeCinema(const CinemaPlayer& c, const MenuData::Screen& s, Men
 		t.model = w.scene.models[size_t(ent.model)];
 		t.animation = clock.part;
 		t.frame = clock.time;
-		t.world = {scaled(scale), at.position};
+		t.world = {at.rows * scale, at.position};
 		t.cue = cue, t.cueMs = c.cueMs[cue];
-		// Its model's shared material table and colour transform (every entity drawing the model shows them).
-		for (const CinemaPlayer::Written& k : c.written) {
-			if (k.slot[0] == e[0] && k.slot[1] == ent.model) {
-				t.materials.push_back({k.slot[2], k.material});
-			}
-		}
-		for (const CinemaPlayer::Colouring& k : c.colourings) {
-			if (k.model == std::array<int16_t, 2>{e[0], int16_t(ent.model)}) {
-				const CinemaFile::Effect& fx = s.cinema.effects[size_t(k.effect)];
-				t.coloured = true;
-				for (size_t ch = 0; ch < 3; ch++) {
-					t.colourShift[ch] = fx.shift[ch];
-					t.colourOffset[ch] = int32_t(k.offsets[ch]);
-				}
-			}
-		}
+		entityMaterials(c, s, e[0], ent.model, t);
 	}
 }
 

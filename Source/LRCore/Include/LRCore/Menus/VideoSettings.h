@@ -28,7 +28,7 @@ struct LRCORE_API VideoSettings {
 	std::array<int8_t, Rows> value = {};
 	std::array<std::u16string, Rows> other;
 	uint8_t row = 0;
-	bool pad = false;    // the last input came from a pad (the prompt says so)
+	bool pad = false; // the last input came from a pad (the prompt says so)
 	bool closed = false; // Esc or B: the presentation hides the screen
 	std::vector<int32_t> sounds; // the menus' sound numbers to play (the presentation clears them)
 

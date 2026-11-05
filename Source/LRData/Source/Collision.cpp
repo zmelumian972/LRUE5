@@ -8,20 +8,20 @@ namespace {
 
 // .WDB
 enum : int {
-	DbModels = 0x28,    // [n] { "name" ... }: the display models (not collision)
+	DbModels = 0x28, // [n] { "name" ... }: the display models (not collision)
 	DbMaterialTables = 0x2b, // [n] { "name" ... }: material-table overrides (no track has them)
-	DbVolumes = 0x40,   // [n] { "bvb name" ... }
-	DbEntities = 0x41,  // [n] { K(0x41) ["name"] { fields } ... }
+	DbVolumes = 0x40, // [n] { "bvb name" ... }
+	DbEntities = 0x41, // [n] { K(0x41) ["name"] { fields } ... }
 	EntityVolume = 0x40, // i
 	EntityPlace = 0x31, // r r r
-	EntityFacing = 0x32,  // r r r (forward) r r r (up)
+	EntityFacing = 0x32, // r r r (forward) r r r (up)
 	EntityMaterialTable = 0x2b, // i
 };
 
 // .BVB
 enum : int {
 	VolumeMaterials = 0x27, // [n] { "name" ... }
-	VolumeVertices = 0x34,  // [n] { r r r ... }
+	VolumeVertices = 0x34, // [n] { r r r ... }
 	VolumeTriangles = 0x2d, // [n] { i v0, i v1, i v2, i material ... }
 	VolumeRealNodes = 0x8b, // [n] { child0 child1 r nx r ny r nz r d i first i count ... }; a child is i or K(0x8c/0x8d)
 	VolumeFixedNodes = 0x8e, // [n] { i child0 i child1 i nx i ny i nz i first i count ... }; normal * 2^30
@@ -32,7 +32,7 @@ enum : int {
 // .TMB
 enum : int {
 	TableSurfaces = 0x27, // [n] { K(0x27) "name" { properties } ... }
-	PropFirst = 0x28,     // properties 0x28..0x39 set flag bit (key - 0x27)
+	PropFirst = 0x28, // properties 0x28..0x39 set flag bit (key - 0x27)
 	PropTouchEvent = 0x2a,
 	PropProjectileEvent = 0x2b,
 	PropUnusedVector = 0x2c,
@@ -192,8 +192,7 @@ bool BoundingVolume::decode(std::span<const uint8_t> bytes)
 	}
 	for (const Node& n : nodes) {
 		// Every node needs a triangle: its plane passes through the first one's vertex 0.
-		if (n.count == 0 || uint64_t(n.first) + n.count > triangles.size() || n.child[0] >= int32_t(nodes.size()) ||
-			n.child[1] >= int32_t(nodes.size())) {
+		if (n.count == 0 || uint64_t(n.first) + n.count > triangles.size() || n.child[0] >= int32_t(nodes.size()) || n.child[1] >= int32_t(nodes.size())) {
 			return false;
 		}
 	}

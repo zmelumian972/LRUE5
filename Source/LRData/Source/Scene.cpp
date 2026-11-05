@@ -8,7 +8,7 @@ namespace {
 
 // .WDB
 enum : int {
-	SceneModels = 0x2a,       // [n] { "name" ... }
+	SceneModels = 0x2a, // [n] { "name" ... }
 	SceneSkeletons = 0x2c,
 	SceneAnimations = 0x29,
 	SceneMaterialAnimations = 0x3d,
@@ -16,34 +16,34 @@ enum : int {
 	SceneTextureLists = 0x28,
 	SceneUnplaced = 0x2d,
 
-	SceneEntities = 0x2e,     // [n] { K(0x2e) ["name"] { fields } ... }
+	SceneEntities = 0x2e, // [n] { K(0x2e) ["name"] { fields } ... }
 	SceneAnimated = 0x2f,
-	EntityModel = 0x2a,       // i model, r distance
+	EntityModel = 0x2a, // i model, r distance
 	EntityAnimatedModel = 0x33, // i model, i skeleton, i animation, r distance
-	EntitySkeleton = 0x2c,    // i skeleton, i animation, r distance (no model)
+	EntitySkeleton = 0x2c, // i skeleton, i animation, r distance (no model)
 	EntityPosition = 0x31,
-	EntityAxes = 0x32,        // r r r forward, r r r up
-	EntityPart = 0x35,        // i part, or "part name"
+	EntityAxes = 0x32, // r r r forward, r r r up
+	EntityPart = 0x35, // i part, or "part name"
 	EntityScale = 0x36,
 	EntityMaterialAnimation = 0x3e, // [n] { i file i track i slot i level ... }
-	EntityScroll = 0x3f,      // r u, r v (per second)
-	SceneCameras = 0x43,      // [n] { K(0x43) ["name"] { fields } ... }
-	CameraTracks = 0x2f,      // i entity, i node
-	CameraTarget = 0x44,      // r r r: forward = target - position
+	EntityScroll = 0x3f, // r u, r v (per second)
+	SceneCameras = 0x43, // [n] { K(0x43) ["name"] { fields } ... }
+	CameraTracks = 0x2f, // i entity, i node
+	CameraTarget = 0x44, // r r r: forward = target - position
 	CameraNear = 0x45,
 	CameraFar = 0x46,
 	CameraFov = 0x47,
-	SceneAmbients = 0x48,     // [n] { K(0x48) "name" { K(0x4a) r g b } ... }
-	SceneLights = 0x49,       // [n] { K(0x49) "name" { K(0x4a) r g b, K(0x4b) x y z } ... }
+	SceneAmbients = 0x48, // [n] { K(0x48) "name" { K(0x4a) r g b } ... }
+	SceneLights = 0x49, // [n] { K(0x49) "name" { K(0x4a) r g b, K(0x4b) x y z } ... }
 	LightColour = 0x4a,
 	LightDirection = 0x4b,
-	SceneSprites = 0x37,      // [n] { K(0x37) { fields } ... }
+	SceneSprites = 0x37, // [n] { K(0x37) { fields } ... }
 	SpriteAxis = 0x38,
 	SpriteMaterial = 0x39,
 	SpriteWidth = 0x3a,
 	SpriteHeight = 0x3b,
 	SpriteDistance = 0x3c,
-	SpriteAnimation = 0x3e,   // i file, i track
+	SpriteAnimation = 0x3e, // i file, i track
 };
 
 // .SDB
@@ -64,10 +64,7 @@ enum : int {
 };
 
 // A value the file may write as an integer or a real.
-float number(TokenReader& r)
-{
-	return r.next(Token::Integer) ? float(r.tokens().list[r.position() - 1].integer) : r.real();
-}
+float number(TokenReader& r) { return r.next(Token::Integer) ? float(r.tokens().list[r.position() - 1].integer) : r.real(); }
 
 void names(TokenReader& r, std::vector<std::string>& into)
 {
@@ -90,6 +87,195 @@ void skipField(TokenReader& r)
 	}
 }
 
+// "i part" or "part name".
+void readPart(TokenReader& r, int32_t& part, std::string& partName)
+{
+	if (r.next(Token::Integer)) {
+		part = r.tokens().list[r.position() - 1].integer;
+	}
+	else {
+		partName = r.text();
+	}
+}
+
+// An entity's model, animated model or skeleton (its first level of detail); a further level keeps only its distance.
+void readEntityLevel(TokenReader& r, int key, SceneFile::Entity& e)
+{
+	if (e.model >= 0 || e.skeleton >= 0) {
+		r.integer();
+		if (key != EntityModel) {
+			r.integer();
+		}
+		if (key == EntityAnimatedModel) {
+			r.integer();
+		}
+		e.distances.push_back(r.real());
+		return;
+	}
+	if (key != EntitySkeleton) {
+		e.model = r.integer();
+	}
+	if (key != EntityModel) {
+		e.skeleton = r.integer();
+		e.animation = r.integer();
+	}
+	e.drawDistance = r.real();
+	e.distances.push_back(e.drawDistance);
+}
+
+// An entity's fields after its "{" (section: SceneEntities or SceneAnimated).
+bool readEntity(TokenReader& r, int section, SceneFile::Entity& e)
+{
+	while (!r.failed() && !r.next(Token::Close)) {
+		const int key = r.keyword();
+		if (key < 0) {
+			return false;
+		}
+		const bool level = (key == EntityModel && section == SceneEntities) || key == EntityAnimatedModel || (key == EntitySkeleton && section == SceneAnimated);
+		if (level) {
+			readEntityLevel(r, key, e);
+		}
+		else if (key == EntityScroll) {
+			e.scroll = r.reals<2>();
+		}
+		else if (key == EntityMaterialAnimation) {
+			const uint32_t n = r.openCounted();
+			for (uint32_t b = 0; b < n && !r.failed(); b++) {
+				e.materialBindings.push_back({r.integer(), r.integer(), r.integer(), r.integer()});
+			}
+			r.close();
+			continue;
+		}
+		else if (key == EntityPosition) {
+			e.position = r.reals<3>();
+		}
+		else if (key == EntityAxes) {
+			e.forward = r.reals<3>();
+			e.up = r.reals<3>();
+		}
+		else if (key == EntityPart) {
+			readPart(r, e.part, e.partName);
+		}
+		else if (key == EntityScale) {
+			e.scale = r.real();
+		}
+		skipField(r); // the other levels of detail, materials, scrolling, flags
+	}
+	return true;
+}
+
+// A camera's fields after its "{".
+bool readCamera(TokenReader& r, SceneFile::Camera& c)
+{
+	bool aimed = false;
+	std::array<float, 3> target = {};
+	while (!r.failed() && !r.next(Token::Close)) {
+		const int key = r.keyword();
+		if (key == CameraTracks) {
+			c.entity = r.integer();
+			c.node = r.integer();
+		}
+		else if (key == EntityPosition) {
+			c.position = r.reals<3>();
+		}
+		else if (key == CameraTarget) {
+			target = r.reals<3>();
+			aimed = true;
+		}
+		else if (key == EntityAxes) {
+			c.forward = r.reals<3>();
+			c.up = r.reals<3>();
+		}
+		else if (key == CameraNear) {
+			c.nearPlane = r.real();
+		}
+		else if (key == CameraFar) {
+			c.farPlane = r.real();
+		}
+		else if (key == CameraFov) {
+			c.fov = r.real();
+		}
+		else if (key == EntityPart) {
+			readPart(r, c.part, c.partName);
+		}
+		else if (key < 0) {
+			return false;
+		}
+		skipField(r);
+	}
+	if (aimed) {
+		c.forward = {target[0] - c.position[0], target[1] - c.position[1], target[2] - c.position[2]};
+	}
+	return true;
+}
+
+// An ambient's or a light's fields after its "{".
+bool readLight(TokenReader& r, SceneFile::Light& l)
+{
+	while (!r.failed() && !r.next(Token::Close)) {
+		const int key = r.keyword();
+		if (key == LightColour || key == LightDirection) {
+			for (float& x : key == LightColour ? l.colour : l.direction) {
+				x = number(r);
+			}
+		}
+		else if (key < 0) {
+			return false;
+		}
+		skipField(r);
+	}
+	return true;
+}
+
+// A sprite's fields after its "{".
+bool readSprite(TokenReader& r, SceneFile::Sprite& s)
+{
+	while (!r.failed() && !r.next(Token::Close)) {
+		switch (r.keyword()) {
+		case EntityPosition: s.position = r.reals<3>(); break;
+		case SpriteAxis: s.axis = r.reals<3>(); break;
+		case SpriteWidth: s.width = r.real(); break;
+		case SpriteHeight: s.height = r.real(); break;
+		case SpriteDistance: s.distance = r.real(); break;
+		case SpriteMaterial: s.material = r.text(); break;
+		case SpriteAnimation:
+			s.animationFile = r.integer();
+			s.animationTrack = r.integer();
+			break;
+		case -1: return false;
+		default: skipField(r);
+		}
+	}
+	return true;
+}
+
+// A section's counted entries "K(section) ["name"] { fields }" (a sprite has no name), each's fields read by
+// read(r, entry). False if one doesn't decode.
+template <class T, class Read> bool readEntries(TokenReader& r, int section, std::vector<T>& list, Read read)
+{
+	const uint32_t count = r.openCounted();
+	for (uint32_t i = 0; i < count && !r.failed(); i++) {
+		if (r.keyword() != section) {
+			return false;
+		}
+		T& entry = list.emplace_back();
+		if constexpr (requires { entry.name; }) {
+			if (!r.next(Token::Open)) {
+				entry.name = r.text();
+				r.expect(Token::Open);
+			}
+		}
+		else {
+			r.expect(Token::Open);
+		}
+		if (!read(r, entry)) {
+			return false;
+		}
+	}
+	r.close();
+	return true;
+}
+
 } // namespace
 
 bool SceneFile::decode(std::span<const uint8_t> bytes)
@@ -102,6 +288,7 @@ bool SceneFile::decode(std::span<const uint8_t> bytes)
 	TokenReader r(tokens);
 	while (!r.atEnd() && !r.failed()) {
 		const int section = r.keyword();
+		bool ok = true;
 		switch (section) {
 		case SceneModels: names(r, models); break;
 		case SceneSkeletons: names(r, skeletons); break;
@@ -111,202 +298,18 @@ bool SceneFile::decode(std::span<const uint8_t> bytes)
 		case SceneTextureLists: names(r, textureLists); break;
 		case SceneUnplaced: names(r, unplaced); break;
 		case SceneEntities:
-		case SceneAnimated: {
-			std::vector<Entity>& list = section == SceneEntities ? entities : animated;
-			const uint32_t count = r.openCounted();
-			for (uint32_t i = 0; i < count && !r.failed(); i++) {
-				if (r.keyword() != section) {
-					return false;
-				}
-				Entity& e = list.emplace_back();
-				if (!r.next(Token::Open)) {
-					e.name = r.text();
-					r.expect(Token::Open);
-				}
-				while (!r.failed() && !r.next(Token::Close)) {
-					const int key = r.keyword();
-					if (key < 0) {
-						return false;
-					}
-					const bool first = e.model < 0 && e.skeleton < 0;
-					const bool level = (key == EntityModel && section == SceneEntities) || key == EntityAnimatedModel ||
-						(key == EntitySkeleton && section == SceneAnimated);
-					if (level && !first) {
-						// A further level of detail: only its distance is kept.
-						r.integer();
-						if (key != EntityModel) {
-							r.integer();
-						}
-						if (key == EntityAnimatedModel) {
-							r.integer();
-						}
-						e.distances.push_back(r.real());
-					}
-					else if (key == EntityModel && section == SceneEntities) {
-						e.model = r.integer();
-						e.drawDistance = r.real();
-						e.distances.push_back(e.drawDistance);
-					}
-					else if (key == EntityAnimatedModel) {
-						e.model = r.integer();
-						e.skeleton = r.integer();
-						e.animation = r.integer();
-						e.drawDistance = r.real();
-						e.distances.push_back(e.drawDistance);
-					}
-					else if (key == EntitySkeleton && section == SceneAnimated) {
-						e.skeleton = r.integer();
-						e.animation = r.integer();
-						e.drawDistance = r.real();
-						e.distances.push_back(e.drawDistance);
-					}
-					else if (key == EntityScroll) {
-						e.scroll = r.reals<2>();
-					}
-					else if (key == EntityMaterialAnimation) {
-						const uint32_t n = r.openCounted();
-						for (uint32_t b = 0; b < n && !r.failed(); b++) {
-							e.materialBindings.push_back({r.integer(), r.integer(), r.integer(), r.integer()});
-						}
-						r.close();
-						continue;
-					}
-					else if (key == EntityPosition) {
-						e.position = r.reals<3>();
-					}
-					else if (key == EntityAxes) {
-						e.forward = r.reals<3>();
-						e.up = r.reals<3>();
-					}
-					else if (key == EntityPart) {
-						if (r.next(Token::Integer)) {
-							e.part = r.tokens().list[r.position() - 1].integer;
-						}
-						else {
-							e.partName = r.text();
-						}
-					}
-					else if (key == EntityScale) {
-						e.scale = r.real();
-					}
-					skipField(r); // the other levels of detail, materials, scrolling, flags
-				}
-			}
-			r.close();
+		case SceneAnimated:
+			ok = readEntries(r, section, section == SceneEntities ? entities : animated, [section](TokenReader& in, Entity& e) { return readEntity(in, section, e); });
 			break;
-		}
-		case SceneCameras: {
-			const uint32_t count = r.openCounted();
-			for (uint32_t i = 0; i < count && !r.failed(); i++) {
-				if (r.keyword() != SceneCameras) {
-					return false;
-				}
-				Camera& c = cameras.emplace_back();
-				if (!r.next(Token::Open)) {
-					c.name = r.text();
-					r.expect(Token::Open);
-				}
-				bool aimed = false;
-				std::array<float, 3> target = {};
-				while (!r.failed() && !r.next(Token::Close)) {
-					const int key = r.keyword();
-					if (key == CameraTracks) {
-						c.entity = r.integer();
-						c.node = r.integer();
-					}
-					else if (key == EntityPosition) {
-						c.position = r.reals<3>();
-					}
-					else if (key == CameraTarget) {
-						target = r.reals<3>();
-						aimed = true;
-					}
-					else if (key == EntityAxes) {
-						c.forward = r.reals<3>();
-						c.up = r.reals<3>();
-					}
-					else if (key == CameraNear || key == CameraFar || key == CameraFov) {
-						(key == CameraNear ? c.nearPlane : key == CameraFar ? c.farPlane : c.fov) = r.real();
-					}
-					else if (key == EntityPart) {
-						if (r.next(Token::Integer)) {
-							c.part = r.tokens().list[r.position() - 1].integer;
-						}
-						else {
-							c.partName = r.text();
-						}
-					}
-					else if (key < 0) {
-						return false;
-					}
-					skipField(r);
-				}
-				if (aimed) {
-					c.forward = {target[0] - c.position[0], target[1] - c.position[1], target[2] - c.position[2]};
-				}
-			}
-			r.close();
-			break;
-		}
+		case SceneCameras: ok = readEntries(r, section, cameras, readCamera); break;
 		case SceneAmbients:
-		case SceneLights: {
-			std::vector<Light>& list = section == SceneAmbients ? ambients : lights;
-			const uint32_t count = r.openCounted();
-			for (uint32_t i = 0; i < count && !r.failed(); i++) {
-				if (r.keyword() != section) {
-					return false;
-				}
-				Light& l = list.emplace_back();
-				if (!r.next(Token::Open)) {
-					l.name = r.text();
-					r.expect(Token::Open);
-				}
-				while (!r.failed() && !r.next(Token::Close)) {
-					const int key = r.keyword();
-					if (key == LightColour || key == LightDirection) {
-						for (float& x : key == LightColour ? l.colour : l.direction) {
-							x = number(r);
-						}
-					}
-					else if (key < 0) {
-						return false;
-					}
-					skipField(r);
-				}
-			}
-			r.close();
-			break;
-		}
-		case SceneSprites: {
-			const uint32_t count = r.openCounted();
-			for (uint32_t i = 0; i < count && !r.failed(); i++) {
-				if (r.keyword() != SceneSprites) {
-					return false;
-				}
-				Sprite& s = sprites.emplace_back();
-				r.expect(Token::Open);
-				while (!r.failed() && !r.next(Token::Close)) {
-					switch (r.keyword()) {
-					case EntityPosition: s.position = r.reals<3>(); break;
-					case SpriteAxis: s.axis = r.reals<3>(); break;
-					case SpriteWidth: s.width = r.real(); break;
-					case SpriteHeight: s.height = r.real(); break;
-					case SpriteDistance: s.distance = r.real(); break;
-					case SpriteMaterial: s.material = r.text(); break;
-					case SpriteAnimation:
-						s.animationFile = r.integer();
-						s.animationTrack = r.integer();
-						break;
-					case -1: return false;
-					default: skipField(r);
-					}
-				}
-			}
-			r.close();
-			break;
-		}
+		case SceneLights: ok = readEntries(r, section, section == SceneAmbients ? ambients : lights, readLight); break;
+		case SceneSprites: ok = readEntries(r, section, sprites, readSprite); break;
 		case -1: return false;
 		default: skipField(r); // texture and material lists, the sky
+		}
+		if (!ok) {
+			return false;
 		}
 	}
 	return !r.failed();

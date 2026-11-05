@@ -28,8 +28,8 @@ struct LRDATA_API SceneFile {
 		std::array<float, 3> forward = {1, 0, 0};
 		std::array<float, 3> up = {0, 0, 1};
 		float scale = 1;
-		int32_t part = -1;      // the animation part it plays from the start; -1 none
-		std::string partName;   // or the part by name
+		int32_t part = -1; // the animation part it plays from the start; -1 none
+		std::string partName; // or the part by name
 		std::array<float, 2> scroll = {}; // texture scroll, u and v per second (key 0x3f)
 		// Material animation bindings (key 0x3e): the scene's material animation file, its track, the material slot
 		// and the level of detail.
@@ -51,7 +51,7 @@ struct LRDATA_API SceneFile {
 		std::array<float, 3> forward = {1, 0, 0};
 		std::array<float, 3> up = {0, 0, 1};
 		float nearPlane = 1, farPlane = 100, fov = 65; // degrees
-		int32_t part = -1;    // the part the tracked entity plays from the load (K(0x35)); -1 none
+		int32_t part = -1; // the part the tracked entity plays from the load (K(0x35)); -1 none
 		std::string partName; // or by name
 		bool operator==(const Camera&) const = default;
 	};
@@ -78,7 +78,7 @@ struct LRDATA_API SceneFile {
 	std::vector<Sprite> sprites;
 
 	// False on a malformed file.
-	bool decode(std::span<const uint8_t> bytes);
+	[[nodiscard]] bool decode(std::span<const uint8_t> bytes);
 	bool operator==(const SceneFile&) const = default;
 };
 
@@ -93,7 +93,7 @@ struct LRDATA_API SkeletonFile {
 	std::vector<Node> nodes;
 
 	// False on a malformed file.
-	bool decode(std::span<const uint8_t> bytes);
+	[[nodiscard]] bool decode(std::span<const uint8_t> bytes);
 	bool operator==(const SkeletonFile&) const = default;
 };
 
@@ -108,13 +108,13 @@ struct LRDATA_API MaterialAnimationFile {
 	struct Track {
 		int32_t firstFrame = 0, frames = 1; // its range of the frame list
 		int32_t duration = 1; // in frames
-		int32_t rate = 30;    // frames per second
+		int32_t rate = 30; // frames per second
 		bool operator==(const Track&) const = default;
 	};
 	std::vector<Track> tracks;
 
 	// False on a malformed file.
-	bool decode(std::span<const uint8_t> bytes);
+	[[nodiscard]] bool decode(std::span<const uint8_t> bytes);
 	bool operator==(const MaterialAnimationFile&) const = default;
 };
 

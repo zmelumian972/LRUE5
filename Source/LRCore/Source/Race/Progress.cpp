@@ -2,6 +2,7 @@
 // award, each race's brief and what it hands back, a time race's records and unlocks.
 
 #include "LRCore/Common/Game.h"
+#include "LRData/Archive.h"
 
 #include "LRCore/Kart/Car.h"
 #include "LRCore/Menus/Menus.h"
@@ -19,15 +20,6 @@ namespace {
 
 constexpr uint16_t MainMenu = 2, Garage = 3, LostAward = 25, VeronicasCar = 28;
 constexpr int32_t TestRace = 26, RecordSlots = 13, UnlockingRaces = 12;
-
-std::string upperCase(std::string_view s)
-{
-	std::string u(s);
-	for (char& c : u) {
-		c = char(std::toupper(uint8_t(c)));
-	}
-	return u;
-}
 
 } // namespace
 
@@ -117,7 +109,7 @@ RaceBrief Game::brief(const MenuData& data, const Cache& cache) const
 {
 	RaceBrief b;
 	const RaceTable::Race& race = data.races.races[size_t(races[size_t(current)])];
-	b.track = upperCase(race.folder);
+	b.track = upper(race.folder);
 	b.mirrored = race.mirrored || ((cheats & CheatMirrorRocket) && circuit == 6);
 	b.laps = players == 2 ? settings.laps : 3;
 	b.autopilot = demo;
@@ -126,8 +118,11 @@ RaceBrief Game::brief(const MenuData& data, const Cache& cache) const
 	b.cheats = cheats;
 	b.random = random;
 	b.views = views;
-	b.mode = demo ? RaceBrief::Mode::Demo : backToGarage ? RaceBrief::Mode::TestDrive : mode == Mode::Circuit ? RaceBrief::Mode::Circuit
-		: mode == Mode::TimeRace ? RaceBrief::Mode::TimeRace : RaceBrief::Mode::Single;
+	b.mode = demo				 ? RaceBrief::Mode::Demo
+		: backToGarage			 ? RaceBrief::Mode::TestDrive
+		: mode == Mode::Circuit	 ? RaceBrief::Mode::Circuit
+		: mode == Mode::TimeRace ? RaceBrief::Mode::TimeRace
+								 : RaceBrief::Mode::Single;
 	// The circuit's drivers in the slots the players don't take (AI slot i races driver i), the players first.
 	const std::vector<std::string> none;
 	const std::vector<std::string>& drivers = circuit >= 0 ? data.circuits.circuits[size_t(circuit)].drivers : none;
@@ -167,19 +162,19 @@ RaceBrief Game::brief(const MenuData& data, const Cache& cache) const
 		s.looks = r->looks;
 	}
 	if (b.mode == RaceBrief::Mode::TimeRace) {
-		cache.get("GAMEDATA/" + b.track + "/GHOST.GHB", b.ghost, b.mirrored);
+		(void)cache.get("GAMEDATA/" + b.track + "/GHOST.GHB", b.ghost, b.mirrored); // (none: no record ghost)
 	}
 	return b;
 }
 
 void Game::takeResult(const World& w)
 {
-	views = w.brief.views; // (each player's camera view, for the session's next race)
+	views = w.session.brief.views; // (each player's camera view, for the session's next race)
 	if (mode == Mode::Circuit) {
-		points = w.circuitPoints;
+		points = w.session.circuitPoints;
 	}
 	RaceRecord& entry = times[size_t(current)];
-	const RaceRecord& r = w.record;
+	const RaceRecord& r = w.session.record;
 	if (r.lapMs) {
 		if (entry.lapMs == 0 || r.lapMs <= entry.lapMs) {
 			entry.lapMs = r.lapMs, entry.lapBy = r.lapBy;
@@ -188,11 +183,11 @@ void Game::takeResult(const World& w)
 			entry.raceMs = r.raceMs, entry.raceBy = r.raceBy;
 		}
 	}
-	aborted = w.ending == World::End::Abort;
-	restartCircuit = w.ending == World::End::RestartCircuit;
-	if (w.brief.mode == RaceBrief::Mode::TimeRace) {
+	aborted = w.session.ending == Session::End::Abort;
+	restartCircuit = w.session.ending == Session::End::RestartCircuit;
+	if (w.session.brief.mode == RaceBrief::Mode::TimeRace) {
 		bestTimesPending = true;
-		recordBeaten = w.timeRace.beaten();
+		recordBeaten = w.session.timeRace.beaten();
 	}
 	random = w.random;
 }
@@ -215,8 +210,7 @@ uint16_t Game::menusStart(bool& save)
 				const RacerRecord* r = size_t(by) < chosen.size() ? racer(chosen[size_t(by)]) : nullptr;
 				return r ? r->name.substr(0, 14) : std::u16string();
 			};
-			for (const auto& [ms, held, by, race] :
-				{std::tuple{t.lapMs, &best.lapMs, t.lapBy, 0}, std::tuple{t.raceMs, &best.raceMs, t.raceBy, 1}}) {
+			for (const auto& [ms, held, by, race] : {std::tuple{t.lapMs, &best.lapMs, t.lapBy, 0}, std::tuple{t.raceMs, &best.raceMs, t.raceBy, 1}}) {
 				const bool taken = *held == 0 || uint32_t(ms) < *held;
 				if (taken) {
 					*held = uint32_t(ms);
@@ -267,7 +261,7 @@ void Game::grantAward(uint16_t screen, const MenuData& data)
 			if (trophy) {
 				held = uint8_t(place);
 			}
-			(void) r;
+			(void)r;
 		}
 	}
 	if (place == 1 && c.partSet >= 0 && !(settings.parts & 1u << c.partSet)) {

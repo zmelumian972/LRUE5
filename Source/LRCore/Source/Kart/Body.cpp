@@ -21,15 +21,29 @@ namespace {
 constexpr Vec3 BoxSize = {8.0f, 5.0f, 6.2f};
 constexpr float GroundClearance = 0.2f;
 constexpr float ProbeDepthPerMs = 0.04f;
-constexpr float ContactBand = 0.4f;   // wheels this far below the highest hit still touch
-constexpr float DropOnLoss = 0.008f;  // the instant fall when the ground is lost
+constexpr float ContactBand = 0.4f; // wheels this far below the highest hit still touch
+constexpr float DropOnLoss = 0.008f; // the instant fall when the ground is lost
 constexpr int32_t YawKickMs = 200;
 constexpr int32_t WallBackOffMs = 5;
 
+// The forces' coefficients (per unit mass): the sideways slip damped by the wheels' grip, less while spinning or yaw
+// locked; the engine brake with no thrust.
+constexpr float LateralGrip = 0.0099999998f, LockedLateralGrip = 0.0020000001f;
+constexpr float EngineBrake = 0.001f;
+// Not steering, a kart creeping faster than this but slower than the slow yaw speed turns at the slow yaw speed's rate.
+constexpr float CreepSpeed = 0.00050000002f, SlowYawSpeed = 0.03f;
+constexpr float RestingTurn = 0.00060000003f; // a turn this small (squared) with no torque stops the spin
+constexpr float MaxTiltCos = 0.70710677f, MaxTilt = 0.78539819f; // the tilt clamped to 45 degrees
+constexpr float HeadingSnap = 0.98000002f; // a heading this close to its target takes it
+constexpr float HeadingTurnRate = 0.0025f; // radians per ms
+constexpr float RollingSpeed = 0.0080000004f; // the wheels' particles from this heading speed
+// A wall hit: the yaw kick away from it (nose in), the rebound off it (less upward), the push out, the most upward speed.
+constexpr float WallYawKick = 0.0040000002f;
+constexpr float WallRebound = 0.30000001f, WallReboundUp = 0.15000001f;
+constexpr float WallPush = 0.0040000002f, WallMaxRise = 0.30000001f;
+
 // Surface defaults for a wheel off the ground or on a plain material.
 constexpr float PlainSlopeHold = 0.5f, PlainFriction = 0.25f, PlainGrip = 3.0f, PlainRolling = 0.0f;
-
-inline Vec3 timesRows(const Basis& m, Vec3 v) { return {dot(m.f, v), dot(m.s, v), dot(m.u, v)}; }
 
 } // namespace
 
@@ -48,7 +62,7 @@ void cancelAlong(Kart& k, Vec3 axis) { k.angularMomentum -= axis * dot(k.angular
 void spinAt(Kart& k, const KartParams& p, Vec3 rate)
 {
 	const Vec3 local = toLocal(k.rotation, rate);
-	k.angularMomentum += k.rotation.f * (p.inertia.x * local.x) + k.rotation.s * (p.inertia.y * local.y) + k.rotation.u * (p.inertia.z * local.z);
+	k.angularMomentum += toWorld(k.rotation, {p.inertia.x * local.x, p.inertia.y * local.y, p.inertia.z * local.z});
 }
 void yawKick(Kart& k, const KartParams& p, float rate, int32_t ms)
 {
@@ -59,9 +73,12 @@ void yawKick(Kart& k, const KartParams& p, float rate, int32_t ms)
 
 class Body {
 public:
-	Body(Kart& kart, const KartParams& params, const Track& track, std::vector<SweepHit>* hits = nullptr,
-		std::vector<std::array<int16_t, 4>>* surfaces = nullptr)
-		: k(kart), p(params), t(track), m_hits(hits), m_surfaces(surfaces)
+	Body(Kart& kart, const KartParams& params, const Track& track, std::vector<SweepHit>* hits = nullptr, std::vector<std::array<int16_t, 4>>* surfaces = nullptr)
+		: k(kart)
+		, p(params)
+		, t(track)
+		, m_hits(hits)
+		, m_surfaces(surfaces)
 	{
 	}
 
@@ -88,11 +105,20 @@ private:
 	void addForceAt(Vec3 f, Vec3 at) { m_torqueSum += cross(at - k.centerOfMassWorld, f); }
 
 	void accumulateForces();
+	void groundForces(float align);
 	void integrate(float dt);
 	void limitTilt();
 	void placeWheels();
 	void probeGround(int32_t dt);
+	void consider(int i, int& best, float& bestDepth2) const;
+	void probeVolumes(float above, float below, int& best, float& bestDepth2);
+	void probeTrack(float above, float below, int& best, float& bestDepth2);
+	void settle(int best, float bestDepth2, bool landing);
 	void probeHover(int32_t dt);
+	void probeSurface(int probe, int16_t surface);
+	void hoverVolumes(float above, float below);
+	void hoverTrack(float above, float below);
+	void settleHover(int best, float bestDepth2, bool landing);
 	bool cachedGround(int wheel, Vec3 a, Vec3 b);
 	void insertPlane(int wheel, const SegmentHit& hit);
 	void snapToGround(int best);
@@ -137,12 +163,10 @@ namespace {
 void Body::accumulateForces()
 {
 	const float g = gravityForce();
-	const float gm = Gravity * p.massScale;
-	const Basis& r = k.rotation;
 	k.yawRate = 0;
 	float align = 0;
 	if (k.flags & KartSteering) {
-		align = dot(r.f, k.velocityDirection);
+		align = dot(k.rotation.f, k.velocityDirection);
 		if (align <= 0) {
 			stopSteering();
 		}
@@ -159,67 +183,7 @@ void Body::accumulateForces()
 		}
 	}
 	else {
-		const Wheel* w = k.wheels;
-		const float slopeHold = (w[0].slopeHold + w[1].slopeHold + w[2].slopeHold + w[3].slopeHold) * 0.25f;
-		const float friction = (w[0].friction + w[1].friction + w[2].friction + w[3].friction) * 0.25f;
-		// Gravity along the ground, unless the surface holds the kart on the slope.
-		if (length(k.slopeForce) > gm * slopeHold) {
-			addForce(k.slopeForce);
-		}
-		if (k.flags & KartHover) {
-			// The two axle probes: no tipping over the other axle.
-			for (int i = 0; i < 2; i++) {
-				if (w[i].contact) {
-					cancelPositiveAbout(k.groundNormal, k.axles[1 - i]);
-				}
-			}
-		}
-		else if (k.pitchMs == 0) {
-			for (int i = 0; i < 4; i++) {
-				if (w[i].contact) {
-					if (k.contacts < 3) {
-						addForceAt(w[i].force, w[i].position);
-					}
-					cancelPositiveAbout(k.groundNormal, w[3 - i].position); // the diagonal wheel: no tipping over it
-				}
-			}
-		}
-		float grip = 1;
-		if (k.flags & (KartSteering | KartSpinning)) {
-			addForce(k.velocityDirection * -((gm * friction) * k.slipRatio));
-			grip = 1 - k.slipRatio;
-		}
-		if (!(k.flags & (KartSpinning | KartYawLock))) {
-			addForce(k.lateralVelocity * ((p.mass * -0.0099999998f) * grip));
-			if (k.thrust != 0) {
-				const Vec3 along = k.contacts >= 3 && !(k.flags & KartSteering) ? r.f : k.heading;
-				addForce(along * (k.thrust * p.massScale));
-			}
-			else {
-				addForce(k.forwardVelocity * (p.mass * -0.001f)); // engine brake
-			}
-			if (k.turnRadius != 0) {
-				const Vec3 left = normalize(Vec3{-k.heading.y, k.heading.x, 0});
-				const float fs = k.headingSpeed;
-				addForce(left * (((p.mass * fs) * fs) / k.turnRadius));
-				float yaw;
-				if (k.flags & KartSteering) {
-					yaw = 0;
-					if (align >= k.steerAlignMin) {
-						k.yawRate = fs / k.turnRadius;
-						yaw = k.steerGain * k.yawRate;
-					}
-				}
-				else {
-					k.yawRate = fs > 0.00050000002f && fs < 0.03f ? 0.03f / k.turnRadius : fs / k.turnRadius;
-					yaw = k.yawRate;
-				}
-				yawImpulse(yaw, YawKickMs);
-			}
-		}
-		else {
-			addForce(k.lateralVelocity * ((p.mass * -0.0020000001f) * grip));
-		}
+		groundForces(align);
 	}
 
 	const Wheel* w = k.wheels;
@@ -237,9 +201,78 @@ void Body::accumulateForces()
 	}
 }
 
+// On the ground: the slope, the wheels' support (no tipping), the slide's friction, the grip, the thrust or the engine
+// brake, and the turn's pull and yaw. (align: the heading against the velocity's direction, steering.)
+void Body::groundForces(float align)
+{
+	const float gm = Gravity * p.massScale;
+	const Basis& r = k.rotation;
+	const Wheel* w = k.wheels;
+	const float slopeHold = (w[0].slopeHold + w[1].slopeHold + w[2].slopeHold + w[3].slopeHold) * 0.25f;
+	const float friction = (w[0].friction + w[1].friction + w[2].friction + w[3].friction) * 0.25f;
+	// Gravity along the ground, unless the surface holds the kart on the slope.
+	if (length(k.slopeForce) > gm * slopeHold) {
+		addForce(k.slopeForce);
+	}
+	if (k.flags & KartHover) {
+		// The two axle probes: no tipping over the other axle.
+		for (int i = 0; i < 2; i++) {
+			if (w[i].contact) {
+				cancelPositiveAbout(k.groundNormal, k.axles[1 - i]);
+			}
+		}
+	}
+	else if (k.pitchMs == 0) {
+		for (int i = 0; i < 4; i++) {
+			if (w[i].contact) {
+				if (k.contacts < 3) {
+					addForceAt(w[i].force, w[i].position);
+				}
+				cancelPositiveAbout(k.groundNormal, w[3 - i].position); // the diagonal wheel: no tipping over it
+			}
+		}
+	}
+	float grip = 1;
+	if (k.flags & (KartSteering | KartSpinning)) {
+		addForce(k.velocityDirection * -((gm * friction) * k.slipRatio));
+		grip = 1 - k.slipRatio;
+	}
+	if (!(k.flags & (KartSpinning | KartYawLock))) {
+		addForce(k.lateralVelocity * ((p.mass * -LateralGrip) * grip));
+		if (k.thrust != 0) {
+			const Vec3 along = k.contacts >= 3 && !(k.flags & KartSteering) ? r.f : k.heading;
+			addForce(along * (k.thrust * p.massScale));
+		}
+		else {
+			addForce(k.forwardVelocity * (p.mass * -EngineBrake)); // engine brake
+		}
+		if (k.turnRadius != 0) {
+			const Vec3 left = normalize(Vec3{-k.heading.y, k.heading.x, 0});
+			const float fs = k.headingSpeed;
+			addForce(left * (((p.mass * fs) * fs) / k.turnRadius));
+			float yaw;
+			if (k.flags & KartSteering) {
+				yaw = 0;
+				if (align >= k.steerAlignMin) {
+					k.yawRate = fs / k.turnRadius;
+					yaw = k.steerGain * k.yawRate;
+				}
+			}
+			else {
+				k.yawRate = fs > CreepSpeed && fs < SlowYawSpeed ? SlowYawSpeed / k.turnRadius : fs / k.turnRadius;
+				yaw = k.yawRate;
+			}
+			yawImpulse(yaw, YawKickMs);
+		}
+	}
+	else {
+		addForce(k.lateralVelocity * ((p.mass * -LockedLateralGrip) * grip));
+	}
+}
+
 void Body::integrate(float dt)
 {
-	k.angularVelocity = timesRows(k.invInertiaWorld, k.angularMomentum);
+	k.angularVelocity = toLocal(k.invInertiaWorld, k.angularMomentum);
 	const Vec3 dv = {m_forceSum.x * dt * p.invMass, m_forceSum.y * dt * p.invMass, m_forceSum.z * dt * p.invMass};
 	k.position += k.velocity * dt + dv * (dt * 0.5f);
 	if (isZero(dv)) {
@@ -256,7 +289,7 @@ void Body::integrate(float dt)
 	const Vec3 u = k.rotation.u + cross(turn, k.rotation.u);
 	k.rotation = basisFromForwardUp(f, u);
 	k.angularMomentum += m_torqueSum * dt;
-	if (isZero(m_torqueSum) && lengthSquared(turn) < 0.00060000003f) {
+	if (isZero(m_torqueSum) && lengthSquared(turn) < RestingTurn) {
 		k.angularVelocity = {};
 		k.angularMomentum = {};
 	}
@@ -267,10 +300,10 @@ void Body::integrate(float dt)
 void Body::limitTilt()
 {
 	const Vec3 up = k.rotation.u;
-	if (up.z < 0.70710677f) {
+	if (up.z < MaxTiltCos) {
 		// Keep the direction of the tilt, clamp it to 45 degrees.
 		const Vec3 a = normalize(Vec3{up.y, -up.x, 0});
-		const float s = sinf64(0.78539819f), c = cosf64(0.78539819f);
+		const float s = sinf64(MaxTilt), c = cosf64(MaxTilt);
 		k.rotation = basisFromUpForward({-s * a.y, s * a.x, c}, k.rotation.f);
 	}
 }
@@ -343,39 +376,20 @@ void Body::insertPlane(int wheel, const SegmentHit& hit)
 	k.wheels[wheel].cacheSlot = int8_t(index);
 }
 
-void Body::probeGround(int32_t dt)
+// The deepest touching wheel so far (on a tie the first considered).
+void Body::consider(int i, int& best, float& bestDepth2) const
 {
-	if ((k.flags & KartAtRest) && isZero(k.velocity) && isZero(k.angularVelocity)) {
-		return;
+	if (k.wheels[i].depth2 > bestDepth2) {
+		bestDepth2 = k.wheels[i].depth2;
+		best = i;
 	}
-	k.flags &= ~KartAtRest;
-	for (RecentPlanes::Slot& s : k.cache.slots) {
-		s.age++;
-	}
-	const int32_t previous = k.contacts;
-	// Rays from above the wheel (the model's size, plus however far the kart fell since the step began) to a little
-	// below it; a kart in the air (or tumbling) looks for landing ground only above the wheel.
-	const float above = k.boundsRadius + std::max(0.0f, k.saved.position.z - k.position.z);
-	const bool landing = previous == 0 || (k.flags & KartSpinOut);
-	const float below = landing ? 0.0f : float(dt) * ProbeDepthPerMs;
-	k.contacts = 0;
-	placeWheels();
-	Wheel* w = k.wheels;
-	for (int i = 0; i < 4; i++) {
-		w[i].contact = w[i].touched = false;
-		w[i].force = {};
-		w[i].depth2 = -FLT_MAX;
-	}
-	int best = -1;
-	float bestDepth2 = -FLT_MAX;
-	auto consider = [&](int i) {
-		if (w[i].depth2 > bestDepth2) {
-			bestDepth2 = w[i].depth2;
-			best = i;
-		}
-	};
+}
 
-	// Other volumes first, in their own frames. (Their rays reach only `below` above the wheel and `above` under it.)
+// The wheels' rays into the other volumes first, in their own frames. (Their rays reach only `below` above the wheel
+// and `above` under it.)
+void Body::probeVolumes(float above, float below, int& best, float& bestDepth2)
+{
+	Wheel* w = k.wheels;
 	for (int32_t slot = 1; slot < k.worldCount; slot++) {
 		const uint32_t volume = uint32_t(k.worlds[slot]);
 		const Track::Volume& v = t.volumes[volume];
@@ -398,10 +412,15 @@ void Body::probeGround(int32_t dt)
 			w[i].hit = toWorld(o, hit.point) + v.position;
 			w[i].force = toWorld(o, hit.normal);
 			w[i].depth2 = lengthSquared(b - hit.point);
-			consider(i);
+			consider(i, best, bestDepth2);
 		}
 	}
-	// The track, in world space (its volume sits at the origin).
+}
+
+// Then the track, in world space (its volume sits at the origin), through the recent planes.
+void Body::probeTrack(float above, float below, int& best, float& bestDepth2)
+{
+	Wheel* w = k.wheels;
 	for (int i = 0; i < 4; i++) {
 		if (w[i].touched) {
 			continue;
@@ -419,15 +438,15 @@ void Body::probeGround(int32_t dt)
 		w[i].force = k.cache.slots[w[i].cacheSlot].normal;
 		w[i].depth2 = lengthSquared(b - w[i].hit);
 		w[i].touched = true;
-		consider(i);
+		consider(i, best, bestDepth2);
 	}
+}
 
-	if (best < 0) {
-		if (previous != 0) {
-			k.velocity.z -= DropOnLoss;
-		}
-		return;
-	}
+// The wheels within the contact band of the deepest touch it: the ground's normal, the kart snapped onto it, a hard
+// landing's bounce, the slope's pull and each touching wheel's share of the weight.
+void Body::settle(int best, float bestDepth2, bool landing)
+{
+	Wheel* w = k.wheels;
 	const float band = std::max(0.0f, std::sqrt(bestDepth2) - ContactBand);
 	k.groundNormal = {};
 	for (int i = 0; i < 4; i++) {
@@ -477,39 +496,54 @@ void Body::probeGround(int32_t dt)
 	}
 }
 
-void Body::probeHover(int32_t dt)
+void Body::probeGround(int32_t dt)
 {
 	if ((k.flags & KartAtRest) && isZero(k.velocity) && isZero(k.angularVelocity)) {
 		return;
 	}
 	k.flags &= ~KartAtRest;
-	// The lift and the bank ease toward their targets first.
-	const float fdt = float(dt);
-	const float lift = (k.liftRate * fdt) * 0.001f, bank = fdt * 0.005f;
-	k.lift = k.lift < k.liftTarget ? std::min(k.lift + lift, k.liftTarget) : std::max(k.lift - lift, k.liftTarget);
-	k.bank = k.bank < k.bankTarget ? std::min(k.bank + bank, k.bankTarget) : std::max(k.bank - bank, k.bankTarget);
 	for (RecentPlanes::Slot& s : k.cache.slots) {
 		s.age++;
 	}
-	placeWheels();
 	const int32_t previous = k.contacts;
+	// Rays from above the wheel (the model's size, plus however far the kart fell since the step began) to a little
+	// below it; a kart in the air (or tumbling) looks for landing ground only above the wheel.
 	const float above = k.boundsRadius + std::max(0.0f, k.saved.position.z - k.position.z);
-	const bool landing = previous == 0;
-	const float below = (landing ? 0.0f : fdt * 0.01f) + k.lift;
+	const bool landing = previous == 0 || (k.flags & KartSpinOut);
+	const float below = landing ? 0.0f : float(dt) * ProbeDepthPerMs;
 	k.contacts = 0;
-	// Two probes, at the front and rear axles' middles, kept in wheels 0 and 1. (Wheels 2 and 3 keep what they had.)
+	placeWheels();
 	Wheel* w = k.wheels;
-	for (int i = 0; i < 2; i++) {
+	for (int i = 0; i < 4; i++) {
 		w[i].contact = w[i].touched = false;
 		w[i].force = {};
 		w[i].depth2 = -FLT_MAX;
 	}
 	int best = -1;
 	float bestDepth2 = -FLT_MAX;
-	auto surfaceOn = [&](int probe, int16_t surface) {
-		w[probe * 2].surface = surface;
-		w[probe * 2 + 1].surface = surface;
-	};
+	probeVolumes(above, below, best, bestDepth2);
+	probeTrack(above, below, best, bestDepth2);
+
+	if (best < 0) {
+		if (previous != 0) {
+			k.velocity.z -= DropOnLoss;
+		}
+		return;
+	}
+	settle(best, bestDepth2, landing);
+}
+
+// A hover probe's surface, on both its wheels.
+void Body::probeSurface(int probe, int16_t surface)
+{
+	k.wheels[probe * 2].surface = surface;
+	k.wheels[probe * 2 + 1].surface = surface;
+}
+
+// The two hover probes into the other volumes first, in their own frames.
+void Body::hoverVolumes(float above, float below)
+{
+	Wheel* w = k.wheels;
 	for (int32_t slot = 1; slot < k.worldCount; slot++) {
 		const uint32_t volume = uint32_t(k.worlds[slot]);
 		const Track::Volume& v = t.volumes[volume];
@@ -523,13 +557,19 @@ void Body::probeHover(int32_t dt)
 			if (!t.query(volume, a, b, hit)) {
 				continue;
 			}
-			surfaceOn(i, hit.surface);
+			probeSurface(i, hit.surface);
 			w[i].touched = true;
 			w[i].hit = toWorld(v.rotation, hit.point) + v.position;
 			w[i].force = toWorld(v.rotation, hit.normal);
 			w[i].depth2 = lengthSquared(b - hit.point);
 		}
 	}
+}
+
+// Then the track, through the recent planes.
+void Body::hoverTrack(float above, float below)
+{
+	Wheel* w = k.wheels;
 	for (int i = 0; i < 2; i++) {
 		if (!w[i].touched) {
 			const Vec3 a = k.axles[i] + Vec3{0, 0, above}, b = k.axles[i] - Vec3{0, 0, below};
@@ -539,7 +579,7 @@ void Body::probeHover(int32_t dt)
 					continue;
 				}
 				w[i].hit = hit.point;
-				surfaceOn(i, hit.surface);
+				probeSurface(i, hit.surface);
 				insertPlane(i, hit);
 			}
 			w[i].force = k.cache.slots[w[i].cacheSlot].normal;
@@ -547,18 +587,13 @@ void Body::probeHover(int32_t dt)
 			w[i].touched = true;
 		}
 	}
-	for (int i = 0; i < 2; i++) {
-		if (w[i].touched && w[i].depth2 > bestDepth2) {
-			bestDepth2 = w[i].depth2;
-			best = i;
-		}
-	}
-	if (best < 0) {
-		if (previous != 0) {
-			k.velocity.z -= DropOnLoss;
-		}
-		return;
-	}
+}
+
+// The probes within the contact band of the deepest: the heading along the axles, the lift over the ground, a hard
+// landing's bounce, the slope's pull and each probe's half of the weight.
+void Body::settleHover(int best, float bestDepth2, bool landing)
+{
+	Wheel* w = k.wheels;
 	const float band = std::max(0.0f, std::sqrt(bestDepth2) - ContactBand);
 	k.groundNormal = {};
 	for (int i = 0; i < 2; i++) {
@@ -605,6 +640,52 @@ void Body::probeHover(int32_t dt)
 	}
 }
 
+void Body::probeHover(int32_t dt)
+{
+	if ((k.flags & KartAtRest) && isZero(k.velocity) && isZero(k.angularVelocity)) {
+		return;
+	}
+	k.flags &= ~KartAtRest;
+	// The lift and the bank ease toward their targets first.
+	const float fdt = float(dt);
+	const float lift = (k.liftRate * fdt) * 0.001f, bank = fdt * 0.005f;
+	k.lift = k.lift < k.liftTarget ? std::min(k.lift + lift, k.liftTarget) : std::max(k.lift - lift, k.liftTarget);
+	k.bank = k.bank < k.bankTarget ? std::min(k.bank + bank, k.bankTarget) : std::max(k.bank - bank, k.bankTarget);
+	for (RecentPlanes::Slot& s : k.cache.slots) {
+		s.age++;
+	}
+	placeWheels();
+	const int32_t previous = k.contacts;
+	const float above = k.boundsRadius + std::max(0.0f, k.saved.position.z - k.position.z);
+	const bool landing = previous == 0;
+	const float below = (landing ? 0.0f : fdt * 0.01f) + k.lift;
+	k.contacts = 0;
+	// Two probes, at the front and rear axles' middles, kept in wheels 0 and 1. (Wheels 2 and 3 keep what they had.)
+	Wheel* w = k.wheels;
+	for (int i = 0; i < 2; i++) {
+		w[i].contact = w[i].touched = false;
+		w[i].force = {};
+		w[i].depth2 = -FLT_MAX;
+	}
+	int best = -1;
+	float bestDepth2 = -FLT_MAX;
+	hoverVolumes(above, below);
+	hoverTrack(above, below);
+	for (int i = 0; i < 2; i++) {
+		if (w[i].touched && w[i].depth2 > bestDepth2) {
+			bestDepth2 = w[i].depth2;
+			best = i;
+		}
+	}
+	if (best < 0) {
+		if (previous != 0) {
+			k.velocity.z -= DropOnLoss;
+		}
+		return;
+	}
+	settleHover(best, bestDepth2, landing);
+}
+
 void Body::snapToGround(int best)
 {
 	Wheel* w = k.wheels;
@@ -626,11 +707,11 @@ void Body::snapToGround(int best)
 void Body::turnHeadingToward(Vec3 target, float dt)
 {
 	const float d = dot(k.heading, target);
-	if (d > 0.98000002f) {
+	if (d > HeadingSnap) {
 		k.heading = target;
 		return;
 	}
-	const float step = dt * 0.0025f;
+	const float step = dt * HeadingTurnRate;
 	if (step > tableAcos(d)) {
 		k.heading = target;
 		return;
@@ -675,7 +756,7 @@ void Body::updateWheelSurfaces()
 	// going forward.
 	if (m_surfaces) {
 		std::array<int16_t, 4>& s = m_surfaces->emplace_back();
-		const bool rolling = !(k.flags & (KartHover | KartSpinOut)) && k.headingSpeed > 0.0080000004f;
+		const bool rolling = !(k.flags & (KartHover | KartSpinOut)) && k.headingSpeed > RollingSpeed;
 		for (size_t i = 0; i < 4; i++) {
 			s[i] = rolling && k.wheels[i].contact && k.wheels[i].surface >= 0 ? k.wheels[i].surface : int16_t(-1);
 		}
@@ -683,9 +764,7 @@ void Body::updateWheelSurfaces()
 	const bool ignore = k.flags & KartIgnoreSurfaces;
 	for (Wheel& w : k.wheels) {
 		const Surface* s = w.surface >= 0 && w.contact ? &t.surfaces[w.surface] : nullptr;
-		auto pick = [&](uint32_t has, float value, float fallback) {
-			return s && (s->flags & has) && !ignore ? value : fallback;
-		};
+		auto pick = [&](uint32_t has, float value, float fallback) { return s && (s->flags & has) && !ignore ? value : fallback; };
 		w.rolling = pick(SurfaceHasRolling, s ? s->rolling : 0, PlainRolling);
 		w.slopeHold = pick(SurfaceHasSlopeHold, s ? s->slopeHold : 0, PlainSlopeHold);
 		w.friction = pick(SurfaceHasFriction, s ? s->friction : 0, PlainFriction);
@@ -853,18 +932,18 @@ void Body::bounceOffWall()
 	if (!(k.flags & KartSpinning) && dot(k.rotation.f, n) < 0) {
 		// Nose into the wall: a yaw kick away from it, harder the more head-on.
 		const float q = dot(k.rotation.s, n);
-		const float rate = q < 0 ? -0.0040000002f * (((q + 1) * 0.5f) + 0.5f) : (((1 - q) * 0.5f) + 0.5f) * 0.0040000002f;
+		const float rate = q < 0 ? -WallYawKick * (((q + 1) * 0.5f) + 0.5f) : (((1 - q) * 0.5f) + 0.5f) * WallYawKick;
 		yawImpulse(rate, YawKickMs);
 		k.flags |= KartYawLock;
 	}
 	if (into < 0) {
-		k.velocity.x -= n.x * (0.30000001f * into);
-		k.velocity.y -= n.y * (0.30000001f * into);
-		k.velocity.z -= (0.15000001f * into) * n.z;
+		k.velocity.x -= n.x * (WallRebound * into);
+		k.velocity.y -= n.y * (WallRebound * into);
+		k.velocity.z -= (WallReboundUp * into) * n.z;
 	}
-	k.velocity += n * 0.0040000002f;
-	if (!(k.velocity.z < 0.30000001f)) {
-		k.velocity.z = 0.30000001f;
+	k.velocity += n * WallPush;
+	if (!(k.velocity.z < WallMaxRise)) {
+		k.velocity.z = WallMaxRise;
 	}
 }
 
@@ -909,9 +988,10 @@ void Body::runPieces(int32_t time)
 	}
 }
 
-void Body::step(int32_t dt, Pose* drawn)
+// A step's timers: the spin-out, the spin (its last piece cuts the step short: the ms the step runs, returned) or
+// the yaw lock, the spin alignment and the pitch lock.
+int32_t stepTimers(Kart& k, int32_t dt)
 {
-	k.wallHits = 0;
 	if (k.flags & KartSpinOut) {
 		if (dt >= k.spinOutMs) {
 			k.flags &= ~KartSpinOut;
@@ -957,6 +1037,13 @@ void Body::step(int32_t dt, Pose* drawn)
 			k.pitchMs -= e;
 		}
 	}
+	return e;
+}
+
+void Body::step(int32_t dt, Pose* drawn)
+{
+	k.wallHits = 0;
+	const int32_t e = stepTimers(k, dt);
 	if (k.flags & KartHover) {
 		// The hover banks into the turn: by up to 45 degrees for the tightest.
 		const float r = k.turnRadius;
@@ -1001,10 +1088,7 @@ KartParams makeKartParams(const KartSource& src)
 	p.mass = src.mass;
 	p.invMass = 1 / p.mass;
 	p.massScale = (p.mass * 0.001f) * 0.001f;
-	const Vec3 b = BoxSize;
-	// Each mass is divided by a box size, as the game does (not the textbook box).
-	p.inertia = {((p.mass / b.x) * (b.z * b.z + b.y * b.y)) * 0.083333336f, ((p.mass / b.y) * (b.z * b.z + b.x * b.x)) * 0.083333336f,
-		((p.mass / b.z) * (b.y * b.y + b.x * b.x)) * 0.083333336f};
+	p.inertia = boxInertia(p.mass, BoxSize);
 	p.invInertia = {1 / p.inertia.x, 1 / p.inertia.y, 1 / p.inertia.z};
 	p.centerOfMass = src.centerOfMass;
 	p.anchor = src.frontLeftWheel;
@@ -1015,7 +1099,7 @@ KartParams makeKartParams(const KartSource& src)
 	p.bodyPoints[1] = {hl, hw, 3.5f};
 	p.bodyPoints[2] = {-hl, -hw, 3.5f};
 	p.bodyPoints[3] = {-hl, hw, 3.5f};
-	const int weight = int(float(src.pieceWeight) * 0.050000001f);
+	const int32_t weight = int32_t(float(src.pieceWeight) * 0.050000001f);
 	p.handling = std::min(100, src.handling + weight);
 	p.topSpeed = std::min(100, src.topSpeed + weight);
 	p.acceleration = std::max(0, src.acceleration - weight);
@@ -1054,8 +1138,7 @@ void placeKart(Kart& k, const KartParams& p, Vec3 position, Basis rotation)
 	k.slideFactor = 0.2f;
 }
 
-void stepBody(Kart& kart, const KartParams& params, const Track& track, int32_t dt, std::vector<SweepHit>* hits, Pose* drawn,
-	std::vector<std::array<int16_t, 4>>* surfaces)
+void stepBody(Kart& kart, const KartParams& params, const Track& track, int32_t dt, std::vector<SweepHit>* hits, Pose* drawn, std::vector<std::array<int16_t, 4>>* surfaces)
 {
 	Body(kart, params, track, hits, surfaces).step(dt, drawn);
 }
@@ -1078,7 +1161,7 @@ void startSpin(Kart& k, const KartParams& p, float turns, float rate, float alig
 		return;
 	}
 	cancelAlong(k, k.rotation.u);
-	const int32_t period = int32_t(6.2831855f / rate);
+	const int32_t period = int32_t(Tau / rate);
 	yawKick(k, p, rate, int32_t(float(period) * turns));
 	k.flags = (k.flags & ~KartSteering) | KartSpinning | KartSpinFresh; // (no steering stop: its limits are kept)
 	if (align > 0) {

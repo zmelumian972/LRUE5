@@ -7,7 +7,7 @@ namespace lr {
 namespace {
 
 constexpr uint32_t NameSize = 12;
-constexpr uint32_t FileRecord = NameSize + 8;   // name, offset, size
+constexpr uint32_t FileRecord = NameSize + 8; // name, offset, size
 constexpr uint32_t FolderRecord = NameSize + 4; // name, offset of its listing
 
 std::string nameAt(std::span<const uint8_t> bytes, uint32_t at)
@@ -17,20 +17,6 @@ std::string nameAt(std::span<const uint8_t> bytes, uint32_t at)
 		name += char(bytes[at + i]);
 	}
 	return name;
-}
-
-bool equalsIgnoreCase(std::string_view a, std::string_view b)
-{
-	if (a.size() != b.size()) {
-		return false;
-	}
-	auto lower = [](char c) { return c >= 'A' && c <= 'Z' ? char(c + 32) : c; };
-	for (size_t i = 0; i < a.size(); i++) {
-		if (lower(a[i]) != lower(b[i])) {
-			return false;
-		}
-	}
-	return true;
 }
 
 } // namespace

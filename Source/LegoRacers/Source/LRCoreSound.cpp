@@ -1,6 +1,7 @@
 // The race's voices mixed into one stereo stream (LRCoreSound.h).
 
 #include "LRCoreSound.h"
+#include "LRCoreLog.h"
 
 #include "LRCore/Show/ShowState.h"
 #include "LRData/Cache.h"
@@ -16,7 +17,10 @@ namespace
 class FLRMixerGenerator : public ISoundGenerator
 {
 public:
-	explicit FLRMixerGenerator(TSharedPtr<ULRRaceMixer::FVoices, ESPMode::ThreadSafe> InShared) : Shared(MoveTemp(InShared)) {}
+	explicit FLRMixerGenerator(TSharedPtr<ULRRaceMixer::FVoices, ESPMode::ThreadSafe> InShared)
+		: Shared(MoveTemp(InShared))
+	{
+	}
 	virtual int32 OnGenerateAudio(float* OutAudio, int32 NumSamples) override
 	{
 		FMemory::Memzero(OutAudio, sizeof(float) * NumSamples);
@@ -77,7 +81,7 @@ const ULRRaceMixer::FSample* ULRRaceMixer::SampleOf(const FString& Path, const l
 	FSample& Made = Samples.Add(Path);
 	lr::Sound Sound;
 	if (!Cache.get(TCHAR_TO_UTF8(*Path), Sound) || Sound.samples.empty() || Sound.channels == 0 || Sound.rate == 0) {
-		UE_LOG(LogTemp, Warning, TEXT("LRCore: no race sound %s in the data cache"), *Path);
+		UE_LOG(LogLRCore, Warning, TEXT("no race sound %s in the data cache"), *Path);
 		return nullptr;
 	}
 	TSharedPtr<TArray<int16>, ESPMode::ThreadSafe> Pcm = MakeShared<TArray<int16>, ESPMode::ThreadSafe>();

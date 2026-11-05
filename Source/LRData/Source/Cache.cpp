@@ -10,9 +10,9 @@ namespace lr {
 
 enum class Cache::Type : uint32_t {
 	Directory = 1, // LEGO.JAM's paths
-	Sizes,         // and its files' sizes
-	Languages,     // the languages' folders
-	Tunes,         // the tunes' names
+	Sizes, // and its files' sizes
+	Languages, // the languages' folders
+	Tunes, // the tunes' names
 	Executable,
 	Animation,
 	BoundingVolume,
@@ -84,15 +84,6 @@ CacheKind kindOf(Type type)
 	}
 }
 
-std::string upper(std::string_view s)
-{
-	std::string u(s);
-	for (char& c : u) {
-		c = c >= 'a' && c <= 'z' ? char(c - 32) : c;
-	}
-	return u;
-}
-
 std::string key(Type type, std::string_view path) { return std::to_string(uint32_t(type)) + ":" + upper(path); }
 
 std::string extensionOf(std::string_view path)
@@ -114,8 +105,7 @@ struct KindFile {
 	std::vector<Item> items;
 	std::vector<uint8_t> records;
 
-	template <class T>
-	void add(Type type, std::string_view path, T& value)
+	template <class T> void add(Type type, std::string_view path, T& value)
 	{
 		const size_t start = records.size();
 		RecordWriter w{records};
@@ -168,10 +158,155 @@ std::vector<std::string> languageFolders(const Archive& archive, const Executabl
 	return folders;
 }
 
+using KindFiles = std::array<KindFile, size_t(CacheKind::Count)>;
+
+template <class T> void addTo(KindFiles& kinds, Type type, std::string_view path, T& value) { kinds[size_t(kindOf(type))].add(type, path, value); }
+
+template <class T> void addIf(KindFiles& kinds, Type type, std::string_view path, T& value, bool decoded)
+{
+	if (decoded) {
+		addTo(kinds, type, path, value);
+	}
+}
+
+// The files that decode on their own, by extension.
+template <class T, Type type> void addDecoded(KindFiles& kinds, const std::string& path, std::span<const uint8_t> bytes)
+{
+	T value;
+	addIf(kinds, type, path, value, value.decode(bytes));
+}
+
+struct PlainFile {
+	const char* ext;
+	void (*add)(KindFiles& kinds, const std::string& path, std::span<const uint8_t> bytes);
+};
+constexpr PlainFile PlainFiles[] = {
+	{"GDB", addDecoded<Model, Type::Model>},
+	{"GCB", addDecoded<HeadLibrary, Type::Heads>},
+	{"ADB", addDecoded<AnimationFile, Type::Animation>},
+	{"SDB", addDecoded<SkeletonFile, Type::Skeleton>},
+	{"BVB", addDecoded<BoundingVolume, Type::BoundingVolume>},
+	{"TMB", addDecoded<SurfaceFile, Type::Surfaces>},
+	{"RAB", addDecoded<RaceFile, Type::Race>},
+	{"SPB", addDecoded<StartGrid, Type::Grid>},
+	{"RRB", addDecoded<RouteFile, Type::Route>},
+	{"CPB", addDecoded<CheckpointFile, Type::Checkpoints>},
+	{"TRB", addDecoded<TouchFile, Type::Touch>},
+	{"EVB", addDecoded<EventFile, Type::Events>},
+	{"PWB", addDecoded<PowerupFile, Type::Powerups>},
+	{"TGB", addDecoded<TargetFile, Type::Targets>},
+	{"TIB", addDecoded<TimerFile, Type::Timers>},
+	{"HZB", addDecoded<HazardFile, Type::Hazards>},
+	{"LSB", addDecoded<LoadingScreen, Type::Loading>},
+	{"MAB", addDecoded<MaterialAnimationFile, Type::MaterialAnimation>},
+	{"EMB", addDecoded<EmitterFile, Type::Emitters>},
+	{"SKB", addDecoded<SkyFile, Type::Sky>},
+	{"CMB", addDecoded<ChassisTable, Type::Chassis>},
+	{"CCB", addDecoded<ChampionTable, Type::Champions>},
+	{"DDB", addDecoded<DriverTable, Type::Drivers>},
+	{"SRF", addDecoded<StringTable, Type::Strings>},
+	{"", addDecoded<NameList, Type::NameList>},
+	{"SBK", addDecoded<NameList, Type::NameList>},
+	{"IDB", addDecoded<ImageList, Type::ImageList>},
+	{"FDB", addDecoded<FontList, Type::Fonts>},
+	{"MSB", addDecoded<MenuStyles, Type::Styles>},
+	{"MIB", addDecoded<MenuLayout, Type::Layout>},
+	{"PCB", addDecoded<PartCatalog, Type::Parts>},
+	{"MDB", addDecoded<MaterialLibrary, Type::Materials>},
+};
+
+// A texture list and each entry's texture: its file in the list's folder, else in GAMEDATA/COMMON/, else (two menu
+// cars' tyres: decided from the data) in MENUDATA/PIECEDB/.
+void addTextures(KindFiles& kinds, const std::string& p, std::span<const uint8_t> bytes, const std::map<std::string, Image>& images)
+{
+	TextureList list;
+	if (!list.decode(bytes)) {
+		return;
+	}
+	addTo(kinds, Type::TextureList, p, list);
+	for (const TextureList::Entry& e : list.textures) {
+		const std::string file = upper(e.file);
+		auto image = images.find(upper(folderOf(p)) + file);
+		for (const char* other : {"GAMEDATA/COMMON/", "MENUDATA/PIECEDB/"}) {
+			image = image == images.end() ? images.find(other + file) : image;
+		}
+		if (image != images.end()) {
+			Texture t;
+			t.make(image->second, e);
+			addTo(kinds, Type::Texture, p + "#" + e.name, t);
+		}
+	}
+}
+
+// A race table decodes against its circuit table and completes it: both as the pair leaves them.
+void addCircuitsOrRaces(KindFiles& kinds, const Archive& archive, const std::string& ext, const std::string& p, std::span<const uint8_t> bytes)
+{
+	const Archive::File* races = archive.find(stemOf(p) + ".RCB");
+	const Archive::File* circuitFile = archive.find(stemOf(p) + ".CRB");
+	CircuitTable circuits;
+	const bool ok = circuitFile && circuits.decode(archive.read(*circuitFile));
+	if (ext == "RCB") {
+		RaceTable r;
+		addIf(kinds, Type::Races, p, r, ok && r.decode(bytes, circuits));
+	}
+	else {
+		RaceTable r;
+		addIf(kinds, Type::Circuits, p, circuits, ok && (!races || r.decode(archive.read(*races), circuits)));
+	}
+}
+
+// An archive file's records, if it decodes (a file the cache doesn't keep has none).
+void addFile(KindFiles& kinds, const Archive& archive, const Archive::File& f, const std::map<std::string, Image>& images)
+{
+	const std::string ext = extensionOf(f.path);
+	const std::span<const uint8_t> bytes = archive.read(f);
+	const std::string& p = f.path;
+	for (const PlainFile& plain : PlainFiles) {
+		if (ext == plain.ext) {
+			plain.add(kinds, p, bytes);
+			return;
+		}
+	}
+	if (ext == "WDB") {
+		SceneFile s;
+		addIf(kinds, Type::Scene, p, s, s.decode(bytes));
+		CollisionDatabase c;
+		addIf(kinds, Type::Collision, p, c, c.decode(bytes));
+	}
+	else if (ext == "GHB") {
+		GhostFile g, m;
+		addIf(kinds, Type::Ghost, p, g, g.decode(bytes, false));
+		addIf(kinds, Type::GhostMirrored, p, m, m.decode(bytes, true));
+	}
+	else if (ext == "CDB") {
+		CinemaFile c;
+		const Archive::File* effects = archive.find(stemOf(p) + ".CEB");
+		addIf(kinds, Type::Cinema, p, c, c.decode(bytes) && (!effects || c.decodeEffects(archive.read(*effects))));
+	}
+	else if (ext == "CRB" || ext == "RCB") {
+		addCircuitsOrRaces(kinds, archive, ext, p, bytes);
+	}
+	else if (ext == "LEB") {
+		PieceLibrary l;
+		const Archive::File* materials = archive.find(stemOf(p) + ".MDB");
+		addIf(kinds, Type::Pieces, p, l, materials && l.decode(bytes, archive.read(*materials)));
+	}
+	else if (ext == "LRS") {
+		OriginalSave s;
+		addIf(kinds, Type::Save, p, s, s.decodeFile(bytes));
+	}
+	else if (ext == "TDB") {
+		addTextures(kinds, p, bytes, images);
+	}
+	else if (ext == "PCM") {
+		Sound s;
+		addIf(kinds, Type::Sound, p, s, s.decode(bytes, false));
+	}
+}
+
 } // namespace
 
-bool buildCache(const CacheSource& source, std::array<std::vector<uint8_t>, size_t(CacheKind::Count)>& files, std::string& error,
-	const std::function<void(float)>& progress)
+bool buildCache(const CacheSource& source, std::array<std::vector<uint8_t>, size_t(CacheKind::Count)>& files, std::string& error, const std::function<void(float)>& progress)
 {
 	Archive archive;
 	if (!archive.open(source.jam)) {
@@ -183,13 +318,8 @@ bool buildCache(const CacheSource& source, std::array<std::vector<uint8_t>, size
 		return false;
 	}
 	const Digest jam = sha256(source.jam), exe = sha256(source.exe);
-	std::array<KindFile, size_t(CacheKind::Count)> kinds;
-	const auto add = [&](Type type, std::string_view path, auto& value) { kinds[size_t(kindOf(type))].add(type, path, value); };
-	const auto tryAdd = [&](Type type, std::string_view path, auto& value, bool decoded) {
-		if (decoded) {
-			add(type, path, value);
-		}
-	};
+	KindFiles kinds;
+	const auto add = [&](Type type, std::string_view path, auto& value) { addTo(kinds, type, path, value); };
 
 	std::vector<std::string> paths;
 	std::vector<uint32_t> sizes;
@@ -226,199 +356,8 @@ bool buildCache(const CacheSource& source, std::array<std::vector<uint8_t>, size
 		step();
 	}
 	for (const Archive::File& f : archive.files()) {
-		const std::string ext = extensionOf(f.path);
-		const std::span<const uint8_t> bytes = archive.read(f);
-		const std::string& p = f.path;
 		step();
-		if (ext == "GDB") {
-			Model m;
-			tryAdd(Type::Model, p, m, m.decode(bytes));
-		}
-		else if (ext == "GCB") {
-			HeadLibrary h;
-			tryAdd(Type::Heads, p, h, h.decode(bytes));
-		}
-		else if (ext == "ADB") {
-			AnimationFile a;
-			tryAdd(Type::Animation, p, a, a.decode(bytes));
-		}
-		else if (ext == "SDB") {
-			SkeletonFile s;
-			tryAdd(Type::Skeleton, p, s, s.decode(bytes));
-		}
-		else if (ext == "WDB") {
-			SceneFile s;
-			tryAdd(Type::Scene, p, s, s.decode(bytes));
-			CollisionDatabase c;
-			tryAdd(Type::Collision, p, c, c.decode(bytes));
-		}
-		else if (ext == "BVB") {
-			BoundingVolume b;
-			tryAdd(Type::BoundingVolume, p, b, b.decode(bytes));
-		}
-		else if (ext == "TMB") {
-			SurfaceFile s;
-			tryAdd(Type::Surfaces, p, s, s.decode(bytes));
-		}
-		else if (ext == "RAB") {
-			RaceFile r;
-			tryAdd(Type::Race, p, r, r.decode(bytes));
-		}
-		else if (ext == "SPB") {
-			StartGrid g;
-			tryAdd(Type::Grid, p, g, g.decode(bytes));
-		}
-		else if (ext == "RRB") {
-			RouteFile r;
-			tryAdd(Type::Route, p, r, r.decode(bytes));
-		}
-		else if (ext == "CPB") {
-			CheckpointFile c;
-			tryAdd(Type::Checkpoints, p, c, c.decode(bytes));
-		}
-		else if (ext == "TRB") {
-			TouchFile t;
-			tryAdd(Type::Touch, p, t, t.decode(bytes));
-		}
-		else if (ext == "EVB") {
-			EventFile e;
-			tryAdd(Type::Events, p, e, e.decode(bytes));
-		}
-		else if (ext == "PWB") {
-			PowerupFile w;
-			tryAdd(Type::Powerups, p, w, w.decode(bytes));
-		}
-		else if (ext == "TGB") {
-			TargetFile t;
-			tryAdd(Type::Targets, p, t, t.decode(bytes));
-		}
-		else if (ext == "TIB") {
-			TimerFile t;
-			tryAdd(Type::Timers, p, t, t.decode(bytes));
-		}
-		else if (ext == "HZB") {
-			HazardFile h;
-			tryAdd(Type::Hazards, p, h, h.decode(bytes));
-		}
-		else if (ext == "GHB") {
-			GhostFile g, m;
-			tryAdd(Type::Ghost, p, g, g.decode(bytes, false));
-			tryAdd(Type::GhostMirrored, p, m, m.decode(bytes, true));
-		}
-		else if (ext == "LSB") {
-			LoadingScreen l;
-			tryAdd(Type::Loading, p, l, l.decode(bytes));
-		}
-		else if (ext == "MAB") {
-			MaterialAnimationFile m;
-			tryAdd(Type::MaterialAnimation, p, m, m.decode(bytes));
-		}
-		else if (ext == "EMB") {
-			EmitterFile e;
-			tryAdd(Type::Emitters, p, e, e.decode(bytes));
-		}
-		else if (ext == "SKB") {
-			SkyFile k;
-			tryAdd(Type::Sky, p, k, k.decode(bytes));
-		}
-		else if (ext == "CMB") {
-			ChassisTable c;
-			tryAdd(Type::Chassis, p, c, c.decode(bytes));
-		}
-		else if (ext == "CCB") {
-			ChampionTable c;
-			tryAdd(Type::Champions, p, c, c.decode(bytes));
-		}
-		else if (ext == "DDB") {
-			DriverTable d;
-			tryAdd(Type::Drivers, p, d, d.decode(bytes));
-		}
-		else if (ext == "SRF") {
-			StringTable s;
-			tryAdd(Type::Strings, p, s, s.decode(bytes));
-		}
-		else if (ext.empty() || ext == "SBK") {
-			NameList n;
-			tryAdd(Type::NameList, p, n, n.decode(bytes));
-		}
-		else if (ext == "IDB") {
-			ImageList l;
-			tryAdd(Type::ImageList, p, l, l.decode(bytes));
-		}
-		else if (ext == "FDB") {
-			FontList l;
-			tryAdd(Type::Fonts, p, l, l.decode(bytes));
-		}
-		else if (ext == "MSB") {
-			MenuStyles s;
-			tryAdd(Type::Styles, p, s, s.decode(bytes));
-		}
-		else if (ext == "MIB") {
-			MenuLayout l;
-			tryAdd(Type::Layout, p, l, l.decode(bytes));
-		}
-		else if (ext == "CDB") {
-			CinemaFile c;
-			const Archive::File* effects = archive.find(stemOf(p) + ".CEB");
-			tryAdd(Type::Cinema, p, c, c.decode(bytes) && (!effects || c.decodeEffects(archive.read(*effects))));
-		}
-		else if (ext == "CRB" || ext == "RCB") {
-			// A race table decodes against its circuit table and completes it: both as the pair leaves them.
-			const Archive::File* races = archive.find(stemOf(p) + ".RCB");
-			const Archive::File* circuitFile = archive.find(stemOf(p) + ".CRB");
-			CircuitTable circuits;
-			const bool ok = circuitFile && circuits.decode(archive.read(*circuitFile));
-			if (ext == "RCB") {
-				RaceTable r;
-				tryAdd(Type::Races, p, r, ok && r.decode(bytes, circuits));
-			}
-			else {
-				RaceTable r;
-				tryAdd(Type::Circuits, p, circuits, ok && (!races || r.decode(archive.read(*races), circuits)));
-			}
-		}
-		else if (ext == "LEB") {
-			PieceLibrary l;
-			const Archive::File* materials = archive.find(stemOf(p) + ".MDB");
-			tryAdd(Type::Pieces, p, l, materials && l.decode(bytes, archive.read(*materials)));
-		}
-		else if (ext == "PCB") {
-			PartCatalog c;
-			tryAdd(Type::Parts, p, c, c.decode(bytes));
-		}
-		else if (ext == "LRS") {
-			OriginalSave s;
-			tryAdd(Type::Save, p, s, s.decodeFile(bytes));
-		}
-		else if (ext == "MDB") {
-			MaterialLibrary m;
-			tryAdd(Type::Materials, p, m, m.decode(bytes));
-		}
-		else if (ext == "TDB") {
-			TextureList list;
-			if (!list.decode(bytes)) {
-				continue;
-			}
-			add(Type::TextureList, p, list);
-			// Each entry's texture: its file in the list's folder, else in GAMEDATA/COMMON/, else (two menu cars' tyres:
-			// decided from the data) in MENUDATA/PIECEDB/.
-			for (const TextureList::Entry& e : list.textures) {
-				const std::string file = upper(e.file);
-				auto image = images.find(upper(folderOf(p)) + file);
-				for (const char* other : {"GAMEDATA/COMMON/", "MENUDATA/PIECEDB/"}) {
-					image = image == images.end() ? images.find(other + file) : image;
-				}
-				if (image != images.end()) {
-					Texture t;
-					t.make(image->second, e);
-					add(Type::Texture, p + "#" + e.name, t);
-				}
-			}
-		}
-		else if (ext == "PCM") {
-			Sound s;
-			tryAdd(Type::Sound, p, s, s.decode(bytes, false));
-		}
+		addFile(kinds, archive, f, images);
 	}
 	// The car sets, against the piece library.
 	PieceLibrary library;
@@ -485,8 +424,8 @@ bool Cache::open(const std::array<std::span<const uint8_t>, size_t(CacheKind::Co
 	}
 	m_files = files;
 	std::vector<uint32_t> sizes;
-	if (!read(Type::Directory, "", m_paths) || !read(Type::Sizes, "", sizes) || sizes.size() != m_paths.size() ||
-		!read(Type::Languages, "", m_languages) || !read(Type::Tunes, "", m_tunes) || !read(Type::Executable, "", m_executable)) {
+	if (!read(Type::Directory, "", m_paths) || !read(Type::Sizes, "", sizes) || sizes.size() != m_paths.size() || !read(Type::Languages, "", m_languages) ||
+		!read(Type::Tunes, "", m_tunes) || !read(Type::Executable, "", m_executable)) {
 		return false;
 	}
 	for (size_t i = 0; i < m_paths.size(); i++) {
@@ -503,8 +442,7 @@ uint32_t Cache::size(std::string_view path) const
 	return it == m_sizes.end() ? 0 : it->second;
 }
 
-template <class T>
-bool Cache::read(Type type, std::string_view path, T& out) const
+template <class T> bool Cache::read(Type type, std::string_view path, T& out) const
 {
 	const auto it = m_index.find(key(type, path));
 	out = {};

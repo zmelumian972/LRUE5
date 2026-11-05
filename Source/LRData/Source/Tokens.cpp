@@ -23,20 +23,24 @@ enum : uint16_t {
 	TagInt16 = 0x0d,
 	TagUInt16 = 0x0e,
 	TagReal16_4096 = 0x0f, // reals as int16 / 4096
-	TagReal16_32 = 0x10,   // int16 / 32
-	TagReal16 = 0x11,      // int16
-	TagReal8_127 = 0x12,   // uint8 / 127
-	TagWide = 0x13,        // the next two bytes are the tag
-	TagRepeat = 0x14,      // count (uint16), a tag: that tag, count times (each with its own payload)
-	TagCount = 0x15,       // "[ int32 ]" and one more "]", in four tags
-	TagDefine = 0x16,      // a template tag, a field count, the field tags
+	TagReal16_32 = 0x10, // int16 / 32
+	TagReal16 = 0x11, // int16
+	TagReal8_127 = 0x12, // uint8 / 127
+	TagWide = 0x13, // the next two bytes are the tag
+	TagRepeat = 0x14, // count (uint16), a tag: that tag, count times (each with its own payload)
+	TagCount = 0x15, // "[ int32 ]" and one more "]", in four tags
+	TagDefine = 0x16, // a template tag, a field count, the field tags
 	TagFirstTemplate = 0x17, // ..0x26: a defined template, expanding to its field tags
 	TagLastTemplate = 0x26,
 };
 
 class Decoder {
 public:
-	Decoder(std::span<const uint8_t> bytes, Tokens& out) : m_bytes(bytes), m_out(out) {}
+	Decoder(std::span<const uint8_t> bytes, Tokens& out)
+		: m_bytes(bytes)
+		, m_out(out)
+	{
+	}
 
 	bool run()
 	{
@@ -82,19 +86,7 @@ private:
 			return;
 		}
 		switch (tag) {
-		case TagText: {
-			const uint8_t* start = m_bytes.data() + m_at;
-			const void* end = std::memchr(start, 0, m_bytes.size() - m_at);
-			if (!end) {
-				m_ok = false;
-				return;
-			}
-			const size_t length = static_cast<const uint8_t*>(end) - start;
-			push(Token::Text, uint32_t(m_out.text.size()));
-			m_out.text.insert(m_out.text.end(), start, start + length + 1);
-			m_at += length + 1;
-			return;
-		}
+		case TagText: emitText(); return;
 		case TagReal:
 		case TagInt32:
 			if (need(4)) {
@@ -146,24 +138,8 @@ private:
 				}
 			}
 			return;
-		case TagCount:
-			emitCount();
-			return;
-		case TagDefine:
-			if (need(2)) {
-				const uint8_t which = m_bytes[m_at], fieldCount = m_bytes[m_at + 1];
-				m_at += 2;
-				if (which < TagFirstTemplate || which > TagLastTemplate) {
-					m_ok = false;
-					return;
-				}
-				std::vector<uint16_t>& fields = m_templates[which - TagFirstTemplate];
-				fields.clear();
-				for (uint32_t i = 0; i < fieldCount && m_ok; i++) {
-					fields.push_back(readTag());
-				}
-			}
-			return;
+		case TagCount: emitCount(); return;
+		case TagDefine: emitDefine(); return;
 		default:
 			if (tag >= TagFirstTemplate && tag <= TagLastTemplate) {
 				for (uint16_t field : m_templates[tag - TagFirstTemplate]) {
@@ -176,6 +152,38 @@ private:
 		}
 	}
 
+	// A zero-ended text: kept with its zero.
+	void emitText()
+	{
+		const uint8_t* start = m_bytes.data() + m_at;
+		const void* end = std::memchr(start, 0, m_bytes.size() - m_at);
+		if (!end) {
+			m_ok = false;
+			return;
+		}
+		const size_t length = static_cast<const uint8_t*>(end) - start;
+		push(Token::Text, uint32_t(m_out.text.size()));
+		m_out.text.insert(m_out.text.end(), start, start + length + 1);
+		m_at += length + 1;
+	}
+	// A template's definition: which template, then its fields' tags (emitted where the template's tag is).
+	void emitDefine()
+	{
+		if (!need(2)) {
+			return;
+		}
+		const uint8_t which = m_bytes[m_at], fieldCount = m_bytes[m_at + 1];
+		m_at += 2;
+		if (which < TagFirstTemplate || which > TagLastTemplate) {
+			m_ok = false;
+			return;
+		}
+		std::vector<uint16_t>& fields = m_templates[which - TagFirstTemplate];
+		fields.clear();
+		for (uint32_t i = 0; i < fieldCount && m_ok; i++) {
+			fields.push_back(readTag());
+		}
+	}
 	void emitCount()
 	{
 		emit(TagOpenCount);
@@ -283,7 +291,13 @@ void TokenReader::skipToClose()
 			m_failed = true;
 			return;
 		}
-		depth += m_tokens.list[m_at].kind == Token::Open ? 1 : m_tokens.list[m_at].kind == Token::Close ? -1 : 0;
+		const Token::Kind kind = m_tokens.list[m_at].kind;
+		if (kind == Token::Open) {
+			depth++;
+		}
+		else if (kind == Token::Close) {
+			depth--;
+		}
 	}
 }
 

@@ -40,44 +40,47 @@ namespace lr {
 // The game's "random" numbers: a fixed table of 1024, read at one index that runs for the whole program.
 LRCORE_API uint16_t randomTable(uint32_t index);
 
+// The HUD gadget's modes, in the order the map key steps them.
+enum Gadget : uint8_t { GadgetNone, GadgetFixedMap, GadgetSpeedometer, GadgetRotatingMap };
+
 // What the menus hand a race.
 struct RaceBrief {
 	enum class Mode : uint8_t { Single, Circuit, TimeRace, TestDrive, Demo };
 	Mode mode = Mode::Single;
-	std::string track;  // the folder: "RACEC0R1"
+	std::string track; // the folder: "RACEC0R1"
 	bool mirrored = false;
 	int32_t laps = 3;
 	bool autopilot = false; // racer 0 is handed to the AI before the race (the attract demo)
 	bool twoPlayers = false;
-	bool firstRace = true;  // a circuit's: its pause dialog restarts the race, not the circuit
+	bool firstRace = true; // a circuit's: its pause dialog restarts the race, not the circuit
 	uint32_t cheats = 0;
 	struct Slot {
 		bool player = false;
-		std::string driver;  // a champion's car (and its power-up habits), else a built car:
+		std::string driver; // a champion's car (and its power-up habits), else a built car:
 		std::string chassis;
-		float pieces = 0;     // the built car's high piece count
+		float pieces = 0; // the built car's high piece count
 		float centroidX = 0, centroidY = 0; // of its pieces
-		std::u16string name;  // as the standings show it
-		int32_t points = 0;   // a circuit's so far
+		std::u16string name; // as the standings show it
+		int32_t points = 0; // a circuit's so far
 		std::vector<CarPiece> car; // the built car's pieces (its body; none: the chassis' sphere stands in)
-		uint8_t face = 0;     // the built driver's face: its voice
+		uint8_t face = 0; // the built driver's face: its voice
 		// A player's slot (no driver): the picked record's looks, face, hat, legs, torso (its own list or DEFAULT.LRS's);
 		// the race draws its driver assembled from them. AI slots: unused.
 		std::array<uint8_t, 4> looks = {};
 		bool built() const { return player && driver.empty(); }
 	};
 	std::vector<Slot> slots; // up to 6
-	uint32_t random = 0;     // the random index before the race's draws
-	GhostFile ghost;         // a time race's record run (no samples: none)
+	uint32_t random = 0; // the random index before the race's draws
+	GhostFile ghost; // a time race's record run (no samples: none)
 	std::array<uint8_t, 2> views = {}; // each player's camera view, as last chosen
-	std::array<uint8_t, 2> maps = {1, 1}; // each player's HUD gadget
+	std::array<uint8_t, 2> maps = {GadgetFixedMap, GadgetFixedMap}; // each player's HUD gadget
 };
 
 enum RacerFlag : uint32_t {
 	RacerShielded = 1u << 0,
 	RacerOnGrid = 1u << 1,
-	RacerHalted = 1u << 3,   // held hovering (a level-2 turbo, a magnet, the grabber)
-	RacerGhost = 1u << 4,    // warping: passes walls and racers, takes nothing
+	RacerHalted = 1u << 3, // held hovering (a level-2 turbo, a magnet, the grabber)
+	RacerGhost = 1u << 4, // warping: passes walls and racers, takes nothing
 	RacerTurbo = 1u << 6,
 	RacerShoved = 1u << 8,
 	RacerEngine = 1u << 10, // holds a physics kart on the grid until the start
@@ -88,39 +91,28 @@ enum RacerFlag : uint32_t {
 	RacerCrossedBackward = 1u << 19, // went back over the line's gate
 	RacerMagnetHeld = 1u << 20, // the rubber band leaves it alone
 	RacerWarping = 1u << 21,
-	RacerBoxRamp = 1u << 28,  // in contact this step
-	RacerGrabbed = 1u << 29,  // the rubber band leaves it alone
+	RacerBoxRamp = 1u << 28, // in contact this step
+	RacerGrabbed = 1u << 29, // the rubber band leaves it alone
 };
 
 // A racer's race: what it took, its laps and times, and its timers.
 struct Racer {
 	uint32_t flags = RacerOnGrid; // RacerFlag
-	bool player = false;  // the slot's kind
-	bool ai = false;      // driven by the AI (an AI's slot, a finished player, racer 0 on autopilot)
+	bool player = false; // the slot's kind
+	bool ai = false; // driven by the AI (an AI's slot, a finished player, racer 0 on autopilot)
 	int16_t checkpoint = -1; // the last gate taken
 	int32_t checkpointCount = -1; // forward passes of the line's gate
-	bool forward = true;  // the last gate's direction
+	bool forward = true; // the last gate's direction
 	LapMark::Zone zones[3] = {LapMark::Open, LapMark::Past, LapMark::Line}; // now, before, before that
 	int32_t laps = 0, lineCrossings = -1;
 	int32_t lapMs[5] = {};
-	int32_t standing = 0;   // 1: leading
-	int32_t place = -1;     // the finishing order, from 0
+	int32_t standing = 0; // 1: leading
+	int32_t place = -1; // the finishing order, from 0
 	int32_t timeBehind = 0, timeBehindMs = 0; // behind the racer ahead at the last lap, and how long it shows
 	int32_t wrongWayMs = 0;
 	int32_t tauntMs = 0; // an AI taunts (an event) a racer close in front when this runs out
 	int32_t boxMs = 0;
-	float boxScale = 1;     // the contact box's: shrinks two AI karts in contact apart
-};
-
-struct Session {
-	enum Phase : uint8_t { Intro = 1, Countdown, Racing, Finished, Results, Over };
-	Phase phase = Intro;
-	int32_t ms = 0;        // since the phase began
-	float flyby = 0;       // the intro camera's animation, in frames
-	bool watchingFlyby = false;
-	int32_t finishers = 0;
-	int32_t paceDelay = 15000; // the rubber band waits this long
-	float paceBonus = 0;   // added to every pace on a mirrored track
+	float boxScale = 1; // the contact box's: shrinks two AI karts in contact apart
 };
 
 // A dialog over the paused race: GAME.SRF's lines; the option chosen holds until its key is
@@ -154,7 +146,7 @@ struct TimeRace {
 	GhostRun record, best, current;
 	bool running = false, recordValid = false, bestValid = false, bestKept = false;
 	int32_t clockMs = 0, countdownMs = 0; // the countdown is never reset (it carries into the next run)
-	bool sampled = false;                 // this step's
+	bool sampled = false; // this step's
 	bool beaten() const { return recordValid && (bestValid || bestKept) && best.total() < record.total(); }
 };
 
@@ -164,6 +156,39 @@ struct RaceTune {
 	int32_t tune = -1;
 	bool loops = false, started = false;
 	std::vector<int32_t> choices;
+};
+
+// The session: its phase and clocks, the standings' pace, and around the simulation (Session.cpp) the brief it was set
+// up from, the dialog, a circuit's points (each racer's this race and so far), the standings' blink and the fade to
+// black, a time race's runs, the tunes, how the race ended and its records.
+struct Session {
+	enum Phase : uint8_t { Intro = 1, Countdown, Racing, Finished, Results, Over };
+	Phase phase = Intro;
+	int32_t ms = 0; // since the phase began
+	float flyby = 0; // the intro camera's animation, in frames
+	bool watchingFlyby = false;
+	int32_t finishers = 0;
+	int32_t paceDelay = 15000; // the rubber band waits this long
+	float paceBonus = 0; // added to every pace on a mirrored track
+	int32_t raceLaps = 3;
+	bool autopilot = false;
+	enum class End : uint8_t { None, Over, Abort, RestartCircuit };
+	RaceBrief brief;
+	RaceDialog dialog;
+	std::array<int32_t, 6> roundPoints = {}, circuitPoints = {};
+	int32_t blinkMs = 0;
+	struct Fade {
+		int32_t ms = 0, left = 0;
+		bool active = false, ended = false;
+	} fade;
+	// The race's opening fade from black: 500 ms from the race's start, its quad's alpha
+	// 255 · left / 500, drawn over the HUDs while any is left.
+	int32_t openingMs = 0;
+	TimeRace timeRace;
+	RaceTune tune;
+	End ending = End::None;
+	bool restarted = false; // this frame (its records were taken first)
+	RaceRecord record; // the best of this race and its restarts'
 };
 
 // Two karts that touched this step (the first is moved out of the second).
@@ -188,85 +213,31 @@ struct Aim {
 	int8_t emplacement = -1; // the hazard that fired it
 };
 
-struct LRCORE_API World {
-	Track track;
-	std::vector<Route> routes; // by slot; no points: the slot has none
-	RoutePlace preview;       // shared by the racers returning to a route
-	Session session;
-	int32_t raceLaps = 3;
-	bool autopilot = false;
-	uint32_t random = 0;
-	// Told before each draw, if set (setup keeps it).
-	void (*drawWatch)(World& world, Draw why, void* context) = nullptr;
-	void* drawContext = nullptr;
-	// If set, a frame's simulation (everything after the session's phase) is this instead: a test replaying a
-	// recorded race sets what the race did (setup keeps it).
-	void (*simulate)(World& world, int32_t frameMs, void* context) = nullptr;
-	void* simulateContext = nullptr;
-	// Told before and after each step's bodies move, if set (setup keeps it): a replay feed puts captured
-	// physics bodies in there.
-	void (*bodiesWatch)(World& world, bool moved, void* context) = nullptr;
-	void* bodiesContext = nullptr;
-	// Told as a race's setup begins, before its draws, if set (setup keeps it): a circuit's next race is set up inside
-	// the frame the last one ends, so a replay feed moves to the new race's setup there.
-	void (*setupWatch)(World& world, void* context) = nullptr;
-	void* setupContext = nullptr;
-	// Told of every event started, ended or fired at a place (-1: none of that half), if set (setup keeps it): the tests
-	// follow the event dispatch by it.
-	void (*eventWatch)(World& world, int32_t start, int32_t end, const Vec3* at, void* context) = nullptr;
-	void* eventContext = nullptr;
-
-	// The session around the simulation (Session.cpp): the brief it was set up from, the dialog, a circuit's points
-	// (each racer's this race and so far), the standings' blink and the fade to black, a time race's runs, the tunes,
-	// how the race ended and its records.
-	enum class End : uint8_t { None, Over, Abort, RestartCircuit };
-	RaceBrief brief;
-	RaceDialog dialog;
-	std::array<int32_t, 6> roundPoints = {}, circuitPoints = {};
-	int32_t blinkMs = 0;
-	struct Fade {
-		int32_t ms = 0, left = 0;
-		bool active = false, ended = false;
-	} fade;
-	// The race's opening fade from black: 500 ms from the race's start, its quad's alpha
-	// 255 · left / 500, drawn over the HUDs while any is left.
-	int32_t openingMs = 0;
-	TimeRace timeRace;
-	bool timeRaceAsked = false; // its end dialog opened
-	int32_t musicCount = 0;     // the track's tunes
-	RaceTune tune;
-	End ending = End::None;
-	bool restarted = false;     // this frame (its records were taken first)
-	bool clockHeld = false;     // the session's clock doesn't run this frame (a dialog just closed)
-	RaceRecord record;          // the best of this race and its restarts'
-	// The touch spheres (Track::touchSpheres): racers inside now and last frame, by bit; their events at their centre.
-	std::vector<uint8_t> touchInside, touchLast;
-	std::vector<PlaceState> touchPlaces, places; // and the positional spheres' (Track::places)
-	std::vector<uint8_t> contactOrder; // racers and active rocks (RockEntry + hazard), by their sphere's lowest x
-	static constexpr uint8_t RockEntry = 128;
-
-	// Per racer.
+// Every racer's parts, in parallel arrays (index = racer), sized together.
+struct LRCORE_API Racers {
+	std::vector<Racer> race;
 	std::vector<KartParams> params;
 	std::vector<Kart> karts;
 	std::vector<Driver> drivers;
 	std::vector<Controls> controls;
 	std::vector<uint16_t> keys; // the players' keys this frame (Key)
-	std::vector<uint16_t> lastKeys; // and last frame's
+	std::vector<uint16_t> lastKeys; // and last frame
 	std::vector<Pose> visible; // the car as drawn; a route kart's is set by its route, the body follows
 	std::vector<Playback> playback;
-	std::vector<Racer> racers;
-	std::vector<Sphere> carBounds;   // in the car's frame: the visible car's bounds
-	std::vector<Sphere> groups;      // the whole racer's (body, car, driver), world, as its visible models last updated
-	bool groupsStale = false;        // not yet updated since the setup
-	std::vector<Sphere> bodyBounds;  // in the car's frame: its body model's (what lightning strikes)
-	std::vector<int32_t> worldMs;    // racers x volumes: a dynamic world's time left
-	std::vector<SweepHit> hits;      // scratch
-	std::vector<std::array<int16_t, 4>> wheelSurfaces; // scratch: a body step's wheel surfaces, substep by substep
-	std::vector<Contact> contacts;   // this step's (that had a response)
 	std::vector<Power> powers;
+	std::vector<Sphere> carBounds; // in the car's frame: the visible car's bounds
+	std::vector<Sphere> bodyBounds; // in the car's frame: its body model's (what lightning strikes)
+	std::vector<Sphere> groups; // the whole racer's (body, car, driver), world, as its visible models last updated
+	bool groupsStale = false; // not yet updated since the setup
+	std::vector<int32_t> worldMs; // racers x volumes: a dynamic world's time left
+	// n racers on a track of so many volumes (what an array has keeps).
+	void resize(size_t n, size_t volumes);
+};
 
-	// The power-ups: the bricks (Track::bricks), every pool's actions (kind by kind) with the active list (newest
-	// first) and each kind's free list (its head first), the two explosion pools likewise, the effect slots.
+// The power-ups: the bricks (Track::bricks), every pool's actions (kind by kind) with the active list (newest first)
+// and each kind's free list (its head first), the two explosion pools likewise, the effect slots; the bricks' clocks
+// (Track::brickModels': advanced in the power-ups' update).
+struct PowerUps {
 	std::vector<Brick> bricks;
 	std::vector<Action> actions;
 	std::vector<uint8_t> actionList;
@@ -276,35 +247,45 @@ struct LRCORE_API World {
 	uint32_t effectMask = 0;
 	int32_t effectsUsed = 0;
 	std::vector<uint8_t> targetsOn; // Track::targets still enabled
-	Pose grapple;                   // the one grapple model every hook moves
-	// The trigger list: members in stable slots, the list's order, and the step queue's waits (newest first).
+	Pose grapple; // the one grapple model every hook moves
+	std::array<Clock, 4> brickClocks;
+};
+
+// The trigger list: members in stable slots, the list's order, and the step queue's waits (newest first); the touch
+// spheres (Track::touchSpheres): racers inside now and last frame, by bit, their events at their centre.
+struct Triggers {
 	std::vector<Member> members;
 	std::vector<uint16_t> memberOrder, freeMembers;
 	std::vector<Wait> waits;
 	size_t waitsWalked = 0; // scratch: those still in this step's walk
-	// The track's moving parts.
-	std::vector<Clock> clocks;       // Track::animated's
-	std::array<Clock, 4> brickClocks; // Track::brickModels' (advanced in the power-ups' update)
-	// The draw distances as they are now, squared, per level of detail: the animated entities' and the
-	// plain models' (Track::models). Hazards and the event table's model distances hide a model (-1) and show it.
-	std::vector<std::array<float, 3>> animatedDistances, modelDistances;
-	std::vector<Hazard> hazards;     // Track::hazards'
-	std::vector<EventState> events;  // Track::events'
-	std::vector<TrackTimerState> timers;
-	float blowup = -1;               // a sphinx's blow-up track's cursor while it plays
+	std::vector<uint8_t> touchInside, touchLast;
+	std::vector<PlaceState> touchPlaces, places; // and the positional spheres' (Track::places)
+};
 
-	// The race view: the racers' shapes and looks, the drivers' and chassis' animations and skeletons
-	// ([0] the driver's, then each chassis' and variant's by name), the look draws' index (tests set lookWatch to
-	// follow a captured run), the players' cameras and HUD gadgets, which cameras drew each animated entity this frame
-	// (bits), the material tracks' cursors and shown frames, the texture scrolls' offsets (1/65536 UV).
+// The track's moving parts: the animated scenery's clocks (Track::animated's), the hazards (Track::hazards'), the event
+// table's states (Track::events') and timers, a sphinx's blow-up track's cursor while it plays (else -1). The draw
+// distances as they are now, squared, per level of detail: the animated entities' and the plain
+// models' (Track::models); hazards and the event table's model distances hide a model (-1) and show it.
+struct Scenery {
+	std::vector<Clock> clocks;
+	std::vector<std::array<float, 3>> animatedDistances, modelDistances;
+	std::vector<Hazard> hazards;
+	std::vector<EventState> events;
+	std::vector<TrackTimerState> timers;
+	float blowup = -1;
+};
+
+// The race view: the racers' shapes and looks, the drivers' and chassis' animations and skeletons
+// ([0] the driver's, then each chassis' and variant's by name), the look draws' index (an observer's onLook
+// follows a captured run), the players' cameras and HUD gadgets, which cameras drew each animated entity this frame
+// (bits), the material tracks' cursors and shown frames, the texture scrolls' offsets (1/65536 UV).
+struct RaceView {
 	std::vector<RacerShape> shapes;
 	std::vector<RacerLook> looks;
 	std::vector<Animation> figures;
 	std::vector<std::vector<SkeletonNode>> skeletons;
 	std::vector<std::string> figureNames; // the part files' names, by figure
 	uint32_t lookRandom = 0;
-	void (*lookWatch)(World& world, size_t racer, bool cooldown, void* context) = nullptr;
-	void* lookContext = nullptr;
 	std::vector<PlayerCamera> cameras;
 	std::vector<uint8_t> mapModes;
 	std::vector<uint8_t> drawnBy;
@@ -324,23 +305,70 @@ struct LRCORE_API World {
 	int32_t demoMs = 0;
 	std::vector<RaceEvent> raceEvents;
 	RaceEvent::Stage stage = RaceEvent::Setup;
+};
+
+struct World;
+
+// What a test or a replay feed follows of a race (World::observer), each told as it happens; by default nothing.
+struct LRCORE_API WorldObserver {
+	virtual ~WorldObserver() = default;
+	// As a race's setup begins, before its draws: a circuit's next race is set up inside the frame the last one ends,
+	// so a replay feed moves to the new race's setup there.
+	virtual void onSetup(World&) {}
+	// Before each draw (and each look draw).
+	virtual void onDraw(World&, Draw) {}
+	virtual void onLook(World&, size_t /*racer*/, bool /*cooldown*/) {}
+	// Before and after each step's bodies move: a replay feed puts captured physics bodies in there.
+	virtual void onBodies(World&, bool /*moved*/) {}
+	// Every event started, ended or fired at a place (-1: none of that half): the tests follow the event dispatch by it.
+	virtual void onEvent(World&, int32_t /*start*/, int32_t /*end*/, const Vec3* /*at*/) {}
+	// If replaying, a frame's simulation (everything after the session's phase) is simulate instead: a test replaying
+	// a recorded race sets what the race did.
+	virtual bool replaying() const { return false; }
+	virtual void simulate(World&, int32_t /*frameMs*/) {}
+};
+
+struct LRCORE_API World {
+	Track track;
+	std::vector<Route> routes; // by slot; no points: the slot has none
+	RoutePlace preview; // shared by the racers returning to a route
+	Session session;
+	uint32_t random = 0;
+	// The observer, if any (`observer.to`). It belongs to this world, not to its value: a copy of the world starts
+	// without one, a world assigned over this one keeps this one's (so setup keeps it).
+	struct Observer {
+		WorldObserver* to = nullptr;
+		Observer() = default;
+		Observer(const Observer&) {}
+		Observer& operator=(const Observer&) { return *this; }
+	} observer;
+	bool replaying() const { return observer.to && observer.to->replaying(); }
+
+	Triggers triggers;
+	Scenery scenery;
+	std::vector<uint8_t> contactOrder; // racers and active rocks (RockEntry + hazard), by their sphere's lowest x
+	static constexpr uint8_t RockEntry = 128;
+
+	Racers racers;
+	std::vector<SweepHit> hits; // scratch
+	std::vector<Contact> contacts; // this step's (that had a response)
+
+	PowerUps powerUps;
+	RaceView raceView;
 
 	// The track, the routes, every racer at its start place; the session in its intro. False if a file is missing.
-	bool setup(const Cache& cache, const RaceBrief& race);
+	[[nodiscard]] bool setup(const Cache& cache, const RaceBrief& race);
 	// The session's part of it (the brief, the racers' kinds, a time race's record ghost, the tunes), what a replayed
 	// race needs.
-	bool setupSession(const Cache& cache, const RaceBrief& race);
+	[[nodiscard]] bool setupSession(const Cache& cache, const RaceBrief& race);
 	// One frame of the program in the race: the dialog's keys (menu keys: Menus.h), then, unless paused, the frame;
 	// the fade and the standings' blink. In the demo any key ends the race.
 	// A restart sets the race up again from the cache (none: a replayed race, its session alone).
 	void update(int32_t frameMs, std::span<const uint32_t> pressed, std::span<const uint32_t> released, const Cache* cache);
-	// Back to the intro (the pause dialog's restart, a time race's TRY AGAIN), its records taken first: set up again
-	// from the brief, keeping the session's points, records and time race runs.
-	void restart(const Cache* cache);
 	// Where a time race's ghost is shown at the run's clock: its first pose before the start, then between its
 	// samples; false once it has passed its last (it is finished) or the clock passed what a ghost shows.
 	bool ghostAt(const GhostRun& run, Vec3& position, Quat& rotation) const;
-	bool paused() const { return dialog.kind != RaceDialog::None; }
+	bool paused() const { return session.dialog.kind != RaceDialog::None; }
 	// Each racer's final place (0 first) once the race is over; the standings table showing (0 none, 1 the race's, 2
 	// the circuit's).
 	int32_t standingsTable() const;
@@ -354,14 +382,6 @@ struct LRCORE_API World {
 	// then the event table, the hazards and the track timers; the players' controls come after it, the warp's shrinking
 	// after the steps.
 	void beginFrame(int32_t frameMs, int32_t sessionMs = -1);
-	void advanceSession(int32_t frameMs, int32_t sessionMs); // the session's clock, then its phase; the flyby (the race's ms)
-	void updateSession();
-	void advanceClocks(int32_t frameMs);
-	void powerFrame(int32_t frameMs);
-	void countDownWorlds(int32_t frameMs);
-	void endTouchFrame();
-	void eventFrame(int32_t frameMs);
-	void playerControls(size_t racer, int32_t frameMs);
 	void endFrame();
 	void driveRacer(size_t racer, int32_t dt);
 	void moveRacer(size_t racer, int32_t dt);
@@ -373,41 +393,32 @@ struct LRCORE_API World {
 	void pace(int32_t dt);
 	void recordRun(int32_t dt); // a time race's current run: its clock and samples (the step's last part)
 	// The race view's parts (Look.cpp, Camera.cpp): each racer's visible models (its look, then its group sphere), the
-	// players' cameras (a dt of 0: only a dirty one, snapped), the drawn rule (after the steps), the material tracks
-	// and scrolls (with the scenery's clocks); a player's camera, map and look-back keys (with its controls).
-	void setupView(const Cache& cache, const RaceBrief& race, const std::vector<std::string>& bodies);
-	void racerTouches(); // the touch spheres against the racers' group spheres
+	// players' cameras (a dt of 0: only a dirty one, snapped), a track's material frame; a player's camera, map and
+	// look-back keys (with its controls).
 	void visuals(int32_t dt);
-	void racerLook(size_t racer, int32_t dt);
 	void updateGroup(size_t racer);
 	void updateCameras(int32_t dt);
 	void updateCamera(size_t player, int32_t dt);
 	void chooseView(size_t player, uint8_t view);
-	void drawScenery();
-	void advanceMaterials(int32_t ms);
 	void showMaterial(size_t track); // a track's slots take its cursor's frame
 	// Whether a model is drawn at a squared distance by its distances now (the first level not nearer).
-	static bool withinDistance(const std::array<float, 3>& distances, float squared)
-	{
-		return distances[0] >= squared || distances[1] >= squared || distances[2] >= squared;
-	}
+	static bool withinDistance(const std::array<float, 3>& distances, float squared) { return distances[0] >= squared || distances[1] >= squared || distances[2] >= squared; }
 	// Whether a plain model (Track::models) is in reach of a camera's eye now: its
 	// position (not its bounds) to the eye, squared, against its stored levels; no scalability factor. The frustum test
 	// with its bounds sphere comes after (the presentation's).
 	bool plainInReach(size_t model, Vec3 eye) const
 	{
-		return model < modelDistances.size() && model < track.models.size() &&
-			withinDistance(modelDistances[model], lengthSquared(track.models[model].second.position - eye));
+		return model < scenery.modelDistances.size() && model < track.models.size() &&
+			withinDistance(scenery.modelDistances[model], lengthSquared(track.models[model].second.position - eye));
 	}
 	// The power-up bricks' entities posed: a brick's cube or streaks at a place and size, every node's
 	// matrix in the world.
 	void brickNodes(Track::BrickModel model, Vec3 at, float size, std::vector<NodeMatrix>& out) const;
 	void viewKeys(size_t racer);
 	uint16_t lookDraw(size_t racer, bool cooldown);
-	void markHit(size_t racer) { looks[racer].marks |= 2; }
+	void markHit(size_t racer) { raceView.looks[racer].marks |= 2; }
 	void carVisuals(size_t racer);
 	void driftMarks(size_t racer); // a powerslide begun or ended: the drift's dust and skid effects
-	void skidEffects(size_t racer, bool on, RaceEvent::Reason why);
 	// A spawn of an emitter (set 0 the race's, 1 the track's, 2 either) for an owner, at a place.
 	void spawn(const char* emitter, uint8_t set, Owner owner, Vec3 at);
 	// The HUDs' update after a frame: their clocks take the frame's real ms (not while paused,
@@ -417,25 +428,14 @@ struct LRCORE_API World {
 	RaceEvent& raise(RaceEvent::Kind kind, Owner owner = {});
 	void playSound(int32_t sound, Owner owner, const Vec3* at, float near = 30, float far = 300);
 	void voice(size_t racer, RaceEvent::VoiceLine line); // a reaction or a taunt (the show draws the line, keeps the cooldown)
-	// A racer's members' poses and bounds (World::shapes' order: body, variant, car, driver), world; false if absent.
+	// A racer's members' poses and bounds (RaceView::shapes' order: body, variant, car, driver), world; false if absent.
 	bool member(size_t racer, RacerShape::Member which, Pose& pose, float& scale) const;
-	// The session's moments (Session.cpp): the start, a racer placed, the racing's end (the first player over the
-	// line), the session's end; the race's records taken; the fade; the dialogs.
-	void racingStarted();
+	// The session's moments (Session.cpp): a racer placed; the fade; the dialogs.
 	void finished(size_t racer);
-	void racingEnded(size_t racer);
-	void sessionEnded();
-	void takeRecord();
-	void prepareRuns();
-	void resetRuns();
 	void startFade();
-	void updateFade(int32_t frameMs);
 	void openDialog(RaceDialog::Kind kind);
-	bool choose(const Cache* cache);
 
 	// The race's rules, called from the steps (and the tests).
-	void handToAi(size_t racer);
-	void applyHits(size_t racer); // what its sweep met (hits)
 	void crossGate(size_t racer, int16_t checkpoint, bool forward);
 	void lapMark(size_t racer, LapMark::Zone zone);
 
@@ -443,10 +443,6 @@ struct LRCORE_API World {
 	void startAt(int32_t event, const Vec3* at);
 	void endAt(int32_t event, const Vec3* at);
 	void fireAt(int32_t start, int32_t end, const Vec3* at);
-	void startFor(int32_t event, size_t racer);
-	void endFor(int32_t event, size_t racer);
-	void fireFor(int32_t start, int32_t end, size_t racer);
-	void forceEnd(int32_t event);
 	// The trigger list's members and the step queue's waits (both share the queue's 100 entries).
 	int16_t addMember(Member member);
 	void killMember(int16_t& member);
@@ -456,14 +452,10 @@ struct LRCORE_API World {
 	void useHeld(size_t racer);
 	void consider(size_t racer);
 	int16_t make(int8_t racer, uint8_t colour, int32_t level, const Aim* aim = nullptr);
-	void touchBrick(size_t brick, size_t racer);
 	void dropWhite(size_t racer);
-	void sendHome(size_t brick);
 	void cancelTurbo(size_t racer);
 	void cancelShield(size_t racer);
 	void cancelMagnetHold(size_t racer);
-	void touchTrap(size_t action, size_t racer);
-	void touchProjectile(size_t action, size_t racer);
 	void blast(size_t explosion, size_t racer);
 	int8_t explode(bool spike, Vec3 at, bool scar, int8_t owner);
 	// A projectile's segment against the track (its surfaces' projectile events fired): true and the hit if it stops.
@@ -477,26 +469,16 @@ struct LRCORE_API World {
 	void turboOn(size_t racer, int32_t level);
 	void turboOff(size_t racer);
 	void shieldOn(size_t racer, int32_t level);
-	void curseOn(size_t racer, int32_t ms);
 	void curseOff(size_t racer);
-	void shove(size_t racer, Vec3 push);
-	void endShove(size_t racer);
 	void magnetHold(size_t racer, bool on);
 	void spin(size_t racer, float turns, float rate, float align);
 	void spinOut(size_t racer);
 	void endSpinOut(size_t racer);
 	void tilt(size_t racer, float rate, int32_t ms);
 	void impulse(size_t racer, Vec3 j);
-	void push(size_t racer, int which, Vec3 q);
-	void endPush(size_t racer, int which);
-	void boost(size_t racer, bool on);
-	void hover(size_t racer, bool on);
+	void push(size_t racer, int32_t which, Vec3 q);
+	void endPush(size_t racer, int32_t which);
 
-	// Hazards (Hazards.cpp): their load steps, frames, what events do to them and what their spheres do to racers.
-	void setupHazards();
-	void hazardFrame(int32_t frameMs);
-	void hazardEvent(int32_t start, int32_t end, const Vec3* at, int racer, bool force);
-	void touchHazard(size_t hazard, size_t racer);
 	// The animated scenery: a node's pose in its parent's frame, sampled at a time of a part (looping or not); a time
 	// below 0 (never drawn) is its rest pose.
 	Pose nodeLocal(const AnimatedModel& model, const Animation* animation, size_t node, int32_t part, float time, bool loop) const;
@@ -504,22 +486,102 @@ struct LRCORE_API World {
 	// The response: the first moved out, both pushed apart (sets the impulse). False if a ghost or a tumbling kart
 	// takes no part.
 	bool contact(Contact& contact);
-	void moveOut(size_t racer, Vec3 move);
-	void hitRock(size_t racer, size_t hazard); // a kart bounces off a rolling rock's box
 	void finish(size_t racer);
-	void setStanding(size_t racer, int32_t standing);
 	float progress(size_t racer) const;
 	Sphere carSphere(size_t racer) const;
-	Sphere groupSphere(size_t racer) const;
 	Sphere bodySphere(size_t racer) const;
 	uint16_t draw(Draw why)
 	{
-		if (drawWatch) {
-			drawWatch(*this, why, drawContext);
+		if (observer.to) {
+			observer.to->onDraw(*this, why);
 		}
 		return randomTable(random = (random + 1) & 1023);
 	}
 
+private:
+	// What only the world's own files use. The session's: its time race's end dialog opened, the track's tunes, the
+	// clock held this frame (a dialog just closed); a body step's wheel surfaces, substep
+	// by substep (scratch).
+	bool timeRaceAsked = false;
+	int32_t musicCount = 0;
+	bool clockHeld = false;
+	std::vector<std::array<int16_t, 4>> wheelSurfaces;
+	// setup's parts.
+	void placeRacer(size_t racer, const RaceBrief& race);
+	// Back to the intro (the pause dialog's restart, a time race's TRY AGAIN), its records taken first: set up again
+	// from the brief, keeping the session's points, records and time race runs.
+	void restart(const Cache* cache);
+	// A frame's parts (see beginFrame): the session's clock, then its phase, and the flyby (the race's ms); the
+	// phase's moments; the scenery's clocks; the power-ups and their parts; the dynamic worlds' timers; the touch
+	// spheres' frame; the event table; a player's controls.
+	void advanceSession(int32_t frameMs, int32_t sessionMs);
+	void updateSession();
+	void startCountdown();
+	void startRacing();
+	void crossLine();
+	void placeTheRest();
+	void advanceClocks(int32_t frameMs);
+	void powerFrame(int32_t frameMs);
+	void brickFrame(size_t brick, int32_t frameMs);
+	void actionsFrame(int32_t frameMs);
+	void releaseDone();
+	void countDownWorlds(int32_t frameMs);
+	void endTouchFrame();
+	void eventFrame(int32_t frameMs);
+	void playerControls(size_t racer, int32_t frameMs);
+	// racerTimers' parts.
+	void tauntNearby(size_t racer);
+	void updateWrongWay(size_t racer, int32_t dt);
+	// The race view's (Look.cpp, Camera.cpp): its setup, the touch spheres against the racers' group spheres, a racer's
+	// look, the drawn rule, the material tracks, the skid effects.
+	void setupView(const Cache& cache, const RaceBrief& race, const std::vector<std::string>& bodies);
+	void racerTouches();
+	void racerLook(size_t racer, int32_t dt);
+	void drawScenery();
+	void advanceMaterials(int32_t ms);
+	void skidEffects(size_t racer, bool on, RaceEvent::Reason why);
+	// The session's moments (Session.cpp): the start, the racing's end, the session's end; the race's records taken, a
+	// time race's runs; the fade; a dialog's choice.
+	void racingStarted();
+	void racingEnded(size_t racer);
+	void sessionEnded();
+	void takeRecord();
+	void prepareRuns();
+	void resetRuns();
+	void updateFade(int32_t frameMs);
+	bool choose(const Cache* cache);
+	// The race's rules: a racer handed to the AI, what its sweep met (hits).
+	void handToAi(size_t racer);
+	void applyHits(size_t racer);
+	// Events for a racer (Events.cpp), an event's resources force-ended.
+	void startFor(int32_t event, size_t racer);
+	void endFor(int32_t event, size_t racer);
+	void fireFor(int32_t start, int32_t end, size_t racer);
+	void forceEnd(int32_t event);
+	void touchSphere(size_t sphere, size_t racer); // (touchRacers': a racer met a touch sphere)
+	// Power-ups (Powers.cpp, Weapons.cpp): a brick touched or sent home, a trap or projectile touched.
+	void touchBrick(size_t brick, size_t racer);
+	void sendHome(size_t brick);
+	void touchTrap(size_t action, size_t racer);
+	void touchProjectile(size_t action, size_t racer);
+	// What happens to a racer (Effects.cpp).
+	void curseOn(size_t racer, int32_t ms);
+	void shove(size_t racer, Vec3 push);
+	void endShove(size_t racer);
+	void boost(size_t racer, bool on);
+	void hover(size_t racer, bool on);
+	// Hazards (Hazards.cpp): their load steps, frames, what events do to them and what their spheres do to racers.
+	void setupHazards();
+	void hazardFrame(int32_t frameMs);
+	void hazardEvent(int32_t start, int32_t end, const Vec3* at, int32_t racer, bool force);
+	void touchHazard(size_t hazard, size_t racer);
+	// The contacts' parts: a racer moved out, a kart bounced off a rolling rock's box; a racer's standing; its group's
+	// sphere.
+	void moveOut(size_t racer, Vec3 move);
+	void contactPowers(size_t first, size_t second, Vec3 point);
+	void hitRock(size_t racer, size_t hazard);
+	void setStanding(size_t racer, int32_t standing);
+	Sphere groupSphere(size_t racer) const;
 	// The contact boxes of two karts: true and the normal (toward the first), penetration and point if they overlap.
 	bool boxContact(size_t first, size_t second, Vec3& normal, float& penetration, Vec3& point) const;
 };

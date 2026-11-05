@@ -72,9 +72,9 @@ struct LRCORE_API MenuData {
 		MenuLayout layout;
 		MenuStyles styles;
 		std::vector<int16_t> images; // its image list's, in images
-		CinemaFile cinema;           // a cinematic screen's (or a setup screen's preview)
+		CinemaFile cinema; // a cinematic screen's (or a setup screen's preview)
 		std::array<std::vector<StringTable>, 9> cinemaText; // its string tables, by language
-		std::string cinemaFolder;    // "MENUDATA/C_AWARD1/"
+		std::string cinemaFolder; // "MENUDATA/C_AWARD1/"
 		std::vector<CinemaWorld> cinemaWorlds; // the cinema's worlds, in its list's order
 		// The material libraries its worlds load (each once), in load order with the texture list beside each (cache
 		// paths): a model's or a .MAB frame's material resolves by name across them, newest first.
@@ -87,11 +87,11 @@ struct LRCORE_API MenuData {
 	};
 	// A menu scene view's world: its first camera, first ambient and directional lights.
 	struct MenuWorld {
-		std::string name;   // upper case, as the layouts name it
+		std::string name; // upper case, as the layouts name it
 		std::string folder; // "MENUDATA/GARAGE/"
 		bool hasCamera = false;
 		SceneFile::Camera camera;
-		bool lit = false;   // any ambient or directional record
+		bool lit = false; // any ambient or directional record
 		uint32_t ambient = 0; // 0xAARRGGBB (alpha 0: none)
 		std::vector<std::pair<Vec3, uint32_t>> lights; // direction (normalised), colour
 	};
@@ -149,16 +149,14 @@ struct LRCORE_API MenuData {
 	// The skeletons the menus' minifigs pose on: each catalog body's (MENUPART's rr, hr, rp, hp,
 	// leg_box) by body index.
 	std::array<std::vector<SkeletonNode>, 5> bodySkeletons;
-	// The piece carousel's items: a piece's centring offset (model units) by piece index, made once.
-	std::vector<Vec3> pieceCentres;
 	std::array<Sphere, 5> ringBounds;
 	std::vector<Sphere> hatBounds; // the hat ring's items' (the hat-only entries of BODYPART's hat names)
 	Sphere seatedBounds;
 
 	// From the data cache: false if a file is missing or malformed. Hands the core the executable's
 	// tables (Tables.h).
-	bool load(const Cache& cache);
-	bool load3d(const Cache& cache);
+	[[nodiscard]] bool load(const Cache& cache);
+	[[nodiscard]] bool load3d(const Cache& cache);
 	int16_t image(std::string_view name, uint16_t screen) const; // -1 none
 	int16_t font(size_t language, std::string_view name) const;
 	int16_t raceFont(size_t language, std::string_view name) const; // LEGOFNTS'
@@ -181,7 +179,7 @@ enum Screen : uint16_t {
 	ScreenSingleRace = 6,
 	ScreenRacerSelect = 19, // one player's
 	ScreenPlayer2Select = 21,
-	ScreenAward1 = 22,      // 1st..3rd, then lost (25)
+	ScreenAward1 = 22, // 1st..3rd, then lost (25)
 	ScreenWinCar = 26,
 	ScreenRocketCar = 27,
 	ScreenVeronicaCar = 28,
@@ -208,7 +206,7 @@ struct MenuKey {
 enum : uint32_t {
 	SourceKeyboard = 1u << 28,
 	SourceMouse = 2u << 28,
-	SourcePad = 3u << 28,  // every pad button is code 4 in the menus
+	SourcePad = 3u << 28, // every pad button is code 4 in the menus
 	SourceAxis = 4u << 28, // 0 right, 1 left, 2 down, 3 up
 	SourceCharacter = 7u << 28, // a typed character (for a text field), before its key
 	// The keys the menus give a meaning.
@@ -238,20 +236,20 @@ LRCORE_API char16_t menuCharacter(uint32_t usb);
 struct MenuElement {
 	enum Kind : uint8_t { Image, Glyphs, Quad, View3D, Triangle };
 	Kind kind = Image;
-	int16_t image = -1;    // MenuData::images; a Glyphs' font (the language's)
-	uint32_t colour = 0;   // 0xAARRGGBB: an image's and the text's tint (alpha ignored), a quad's top-left
-	std::array<float, 4> dest = {};   // x0 y0 x1 y1
+	int16_t image = -1; // MenuData::images; a Glyphs' font (the language's)
+	uint32_t colour = 0; // 0xAARRGGBB: an image's and the text's tint (alpha ignored), a quad's top-left
+	std::array<float, 4> dest = {}; // x0 y0 x1 y1
 	std::array<float, 4> source = {}; // u0 v0 u1 v1 in image pixels
 	std::array<uint32_t, 3> corners = {}; // a quad's other colours: top-right, bottom-left, bottom-right
-	int32_t alpha = -1;    // a quad blended at this alpha (0..255); -1 opaque
+	int32_t alpha = -1; // a quad blended at this alpha (0..255); -1 opaque
 	// Glyphs: the glyph quads (dest, source) and the text with its box, for a renderer that lays text out itself.
 	uint32_t firstGlyph = 0, glyphCount = 0;
 	std::u16string text;
 	std::array<int32_t, 4> box = {}; // x y w h
 	bool wrapped = false;
-	bool scaled = false;                 // drawn at its own size times `scale` from (x, y), not fitted to the box
+	bool scaled = false; // drawn at its own size times `scale` from (x, y), not fitted to the box
 	std::array<float, 2> scale = {1, 1};
-	int32_t widget = -1;   // View3D: the scene view's (or ring's) widget id, and its scene in Menus::scenes
+	int32_t widget = -1; // View3D: the scene view's (or ring's) widget id, and its scene in Menus::scenes
 	int32_t scene = -1;
 	// Triangle: its corners (x, y, u, v; u and v 0..1 of the image, or -1: flat), coloured `colour`, corners[0] and
 	// corners[1] (blended by their alpha, in between interpolated), drawn inside the clip rect (left, top, right,
@@ -289,21 +287,21 @@ struct MenuScene {
 	bool sliding = false; // a ring's items sliding between slots (it scrolls)
 	struct Thing {
 		enum Kind : uint8_t {
-			Car,     // Menus::carMesh, its chassis and the seated driver (at the chassis' driver mount)
-			Piece,   // a library piece: a ring's item (in its slot, spun), or the builder's held piece
+			Car, // Menus::carMesh, its chassis and the seated driver (at the chassis' driver mount)
+			Piece, // a library piece: a ring's item (in its slot, spun), or the builder's held piece
 			Minifig, // looks and expression; standing or seated; an animation part (CBANIM's, CMAMAN's) and its frame
-			Part,    // a driver ring's item: the ring (hat, face, torso, legs) and the part
-			Mark,    // a cell under the held piece where it hits something (one 1x1 quad, car frame)
+			Part, // a driver ring's item: the ring (hat, face, torso, legs) and the part
+			Mark, // a cell under the held piece where it hits something (one 1x1 quad, car frame)
 			Chassis, // the menus' chassis model (`model`) under a car, playing its first part at `frame`
-			Entity,  // a cinematic's entity (cinema world `entity[0]`, animated `entity[1]` 1 or plain 0, index
-			         // `entity[2]`) at its cue's place, playing `animation` at `frame` (-1 at rest); `cue` its model cue
+			Entity, // a cinematic's entity (cinema world `entity[0]`, animated `entity[1]` 1 or plain 0, index
+			// `entity[2]`) at its cue's place, playing `animation` at `frame` (-1 at rest); `cue` its model cue
 		};
 		Kind kind = Car;
 		std::array<float, 3> at = {};
-		float angle = 0;     // about z; a ring's item: its spin about the tilted axis
+		float angle = 0; // about z; a ring's item: its spin about the tilted axis
 		int32_t type = 0, colour = 0, rotation = 0, slot = 0; // a piece's; a ring item's slot; a part's ring
 		uint8_t alpha = 255;
-		bool lit = false;    // brighter (hovered)
+		bool lit = false; // brighter (hovered)
 		std::array<uint8_t, 5> looks = {}; // face, hat, legs, torso, expression
 		bool seated = false;
 		int32_t animation = -1;
@@ -321,7 +319,6 @@ struct MenuScene {
 		int32_t body = 0;
 		std::array<int32_t, 3> entity = {-1, -1, -1};
 		int32_t cue = -1, cueMs = 0; // a cinematic thing's model cue and the ms it has run
-		bool translucent = false;
 		// A cinematic entity's model's shared material table as the material tracks left it (slot, material; the other
 		// slots the model's own), and its colour transform while a colour effect runs on the
 		// model (per channel red, green, blue: (byte >> shift) + offset, capped at 255).
@@ -356,8 +353,8 @@ struct Widget {
 		Options,
 		SceneView,
 		SceneReference,
-		Ring,      // a 3D carousel: its items are models the scene draws
-		Hotspot,   // an image button with regions
+		Ring, // a 3D carousel: its items are models the scene draws
+		Hotspot, // an image button with regions
 		TextField,
 	};
 	enum Flag : uint8_t { Visible = 1, Focused = 2, DrawsItself = 4 };
@@ -372,27 +369,27 @@ struct Widget {
 	int16_t parent = -1, first = -1, last = -1, next = -1, focus = -1; // the tree; focus: the child on the focus path
 	// An icon's (buttons, selectors, options rows, the root).
 	bool icon = false;
-	uint8_t state = 0;  // IconState
+	uint8_t state = 0; // IconState
 	int16_t iconParent = -1, iconFirst = -1, iconLast = -1, iconNext = -1, selected = -1;
 	uint32_t holding = 0; // the key holding it pressed
 	std::array<int32_t, 5> sounds = {}; // selected, deselected, pressed, released (the bank's numbers)
 	std::array<uint32_t, 6> stateColours = {0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff};
 	// The kind's own.
-	int16_t image = -1;   // an image's (MenuData::images)
+	int16_t image = -1; // an image's (MenuData::images)
 	std::array<int16_t, 6> images = {-1, -1, -1, -1, -1, -1}; // a button's state images
 	std::array<uint32_t, 6> imageColours = {0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff};
-	std::array<int16_t, 6> fonts = {-1, -1, -1, -1, -1, -1};  // a text button's
-	std::u16string text;  // a label's (upper case)
+	std::array<int16_t, 6> fonts = {-1, -1, -1, -1, -1, -1}; // a text button's
+	std::u16string text; // a label's (upper case)
 	int16_t font = -1;
 	int32_t wrap = 0, maxWidth = 0;
 	bool wrapping = false, centred = false; // the dialog's message wraps
-	int16_t child = -1, label = -1;         // a button's image; a text button's label
+	int16_t child = -1, label = -1; // a button's image; a text button's label
 	std::array<int16_t, 2> buttons = {-1, -1}; // a selector's or options row's previous and next
-	int16_t carousel = -1;                  // a selector's
+	int16_t carousel = -1; // a selector's
 	bool unselectedInput = false;
 	std::array<uint32_t, 8> itemColours = {}; // a selector's style's item and focused-item colours (a 3D ring's lights)
 	// A carousel's.
-	int32_t index = 0;  // the selection; an options row's value
+	int32_t index = 0; // the selection; an options row's value
 	int32_t scrollMs = 0, scrollLeft = 0;
 	float scrollSpeed = 0, scrollAt = 0;
 	bool pageMode = false, wrapAround = false, scrolled = false;
@@ -436,15 +433,17 @@ struct WidgetTree {
 	Widget& operator[](int16_t i) { return widgets[size_t(i)]; }
 	const Widget& operator[](int16_t i) const { return widgets[size_t(i)]; }
 	int16_t find(int32_t id) const; // the first widget with that id; -1 none
-	int16_t focused() const;        // the end of the focus path (the root if it alone has it); -1 none
+	int16_t focused() const; // the end of the focus path (the root if it alone has it); -1 none
 };
 
 struct MenuDialog {
 	enum Phase : uint8_t { Opening, Open, Closing, Closed };
+	enum Kind : uint8_t { TimedNotice, OneButton, YesNo };
+	enum Result : uint8_t { Pending, TimedOut, Pressed, Yes, No }; // Pressed: a one-button dialog's button
 	WidgetTree tree;
-	uint8_t kind = 0;      // 0 timed notice, 1 one button, 2 yes/no
-	int32_t message = 0;   // MENUTEXT's
-	int32_t result = 0;    // 1 timed out, 2 the button, 3 yes, 4 no
+	Kind kind = TimedNotice;
+	int32_t message = 0; // MENUTEXT's
+	int32_t result = Pending;
 	int32_t ageMs = 0, animMs = 0;
 	Phase phase = Opening;
 	float halfWidth = 0, halfHeight = 0;
@@ -459,12 +458,12 @@ struct MenuDialog {
 struct CinemaPlayer {
 	std::vector<uint16_t> byStart, byEnd;
 	size_t starts = 0, ends = 0;
-	std::vector<uint8_t> active;  // per cue
-	std::vector<uint16_t> begun;  // the active cues, newest first
+	std::vector<uint8_t> active; // per cue
+	std::vector<uint16_t> begun; // the active cues, newest first
 	struct Overlay {
 		bool shown = false, pending = false, disabled = false;
 		std::array<float, 4> place = {}; // left, top, width, height: fractions of the screen
-		int32_t width = 0, height = 0;   // its content's
+		int32_t width = 0, height = 0; // its content's
 	};
 	std::vector<Overlay> overlays; // per effect
 	struct Fade {
@@ -499,8 +498,8 @@ struct CinemaPlayer {
 	std::vector<std::array<int16_t, 3>> entityOf;
 	std::vector<int32_t> cueMs;
 	std::vector<std::array<std::vector<Placed>, 2>> placed; // per world: plain, animated
-	std::vector<std::vector<Clock>> clocks;                 // per world, per animated entity
-	std::vector<std::vector<View>> views;                   // per world, per camera
+	std::vector<std::vector<Clock>> clocks; // per world, per animated entity
+	std::vector<std::vector<View>> views; // per world, per camera
 	std::vector<std::array<int16_t, 2>> cameras;
 	int32_t ambient = -1;
 	std::vector<uint16_t> lights;
@@ -579,7 +578,7 @@ struct CarBuilder {
 
 struct LRCORE_API Menus {
 	const MenuData* data = nullptr; // the files, shared
-	Game* game = nullptr;           // only during start() and frame(): what the screens change
+	Game* game = nullptr; // only during start() and frame(): what the screens change
 
 	// The stack and the screen on top.
 	std::array<uint16_t, 10> stack = {};
@@ -588,7 +587,6 @@ struct LRCORE_API Menus {
 	WidgetTree tree;
 	uint8_t language = 0; // the loaded one
 	// Navigation: the destination chosen (-1 none: the screen's own rule; -2 a race).
-	bool pending = false;
 	int32_t destination = -1;
 	// What the program does next: quit, start the race the menus describe, show the presentation's video settings.
 	bool quit = false, raceStart = false, videoSettings = false;
@@ -648,21 +646,15 @@ struct LRCORE_API Menus {
 	} state;
 	// The car on edit car and the builder, as drawn (rebuilt when it changes); the builder's held piece (each frame).
 	CarMesh carMesh, heldMesh;
-	bool spinKept = false;
-	float editSpin = 0;   // where edit car's car starts turning (the builder's angle when it came back from it)
-	float editFacing = 0; // edit car's car's facing on its last frame (the builder's opening group sphere takes it)
 	// Dialogs over the screen.
 	std::array<MenuDialog, 2> dialogs;
 	uint8_t dialogCount = 0;
 	// Input.
-	std::array<MenuKey, 32> queue;
 	uint8_t queued = 0;
-	std::array<int32_t, 2> repeatMs = {500, 500}; // keyboard, mouse
-	std::vector<uint32_t> held;                     // keys held down
+	std::vector<uint32_t> held; // keys held down
 	bool shift = false, ctrl = false;
 	int32_t cursorX = 0, cursorY = 0, mouseX = 0, mouseY = 0;
 	uint32_t mouseButtons = 0;
-	bool cursorOn = false; // drawn (item screens)
 	// Fades.
 	struct Fade {
 		int32_t durationMs = 0, leftMs = 0;
@@ -690,53 +682,22 @@ struct LRCORE_API Menus {
 	// One frame: dt ms, the frame's key events in order, the mouse's position (640x480) and buttons.
 	void frame(Game& game, int32_t dt, std::span<const MenuKey> keys, int32_t mouseX, int32_t mouseY, uint32_t buttons);
 
-	// Making widgets (Widgets.cpp): from a binding (by name, or MENUNAME's numbers) and a style.
+	// Making widgets (Widgets.cpp): from a binding (by name) and a style; shown or hidden; an icon released; the icon
+	// walk's first, last and next; a widget's rect on the screen.
 	int16_t make(WidgetTree& t, const MenuLayout& layout, std::string_view binding, std::string_view style, int16_t parent, int32_t text = -1);
-	int16_t makeNamed(WidgetTree& t, uint32_t binding, uint32_t style, int16_t parent, int32_t text = -1);
-	int16_t makeRoot(WidgetTree& t);
-	void setText(WidgetTree& t, int16_t w, std::u16string_view text);
-	void setString(WidgetTree& t, int16_t w, int32_t text); // MENUTEXT's
-	void relabel(WidgetTree& t, int16_t w, int32_t text);   // and measured again
-	void alignRight(WidgetTree& t, int16_t w, int32_t margin);
-	void addItem(WidgetTree& t, int16_t carousel, int16_t item);
-	void selectItem(WidgetTree& t, int16_t carousel, int32_t index); // at once
-	void layoutCarousel(WidgetTree& t, int16_t carousel);
-	void layoutFrame(WidgetTree& t, int16_t frame);
-	void setValue(WidgetTree& t, int16_t row, int32_t value);
-	void setCharset(WidgetTree& t, int16_t field, int32_t text); // a text field's (MENUTEXT's)
 	void show(WidgetTree& t, int16_t w, bool visible);
-	// The icons: enabling, selecting, pressing; the selection's walk; keys and the cursor on widgets; the timers.
-	void enable(WidgetTree& t, int16_t w, bool on);
-	bool select(WidgetTree& t, int16_t w, bool quiet, bool local, bool silent);
-	void deselect(WidgetTree& t, int16_t w, bool local, bool silent);
-	void press(WidgetTree& t, int16_t w, bool local, bool quiet, bool silent);
 	void release(WidgetTree& t, int16_t w, bool local, bool quiet, bool silent);
-	void recompute(WidgetTree& t, int16_t w);
-	void focusOn(WidgetTree& t, int16_t w);
-	void unfocus(WidgetTree& t, int16_t w);
 	int16_t first(WidgetTree& t, int16_t icon);
 	int16_t last(WidgetTree& t, int16_t icon);
 	int16_t next(WidgetTree& t, int16_t icon);
-	int16_t previous(WidgetTree& t, int16_t icon);
-	void moveSelection(WidgetTree& t, bool forward);
-	bool keyDown(WidgetTree& t, int16_t w, const MenuKey& key, int32_t x, int32_t y);
-	bool keyUp(WidgetTree& t, int16_t w, const MenuKey& key, int32_t x, int32_t y);
-	bool routeKey(WidgetTree& t, int16_t w, const MenuKey& key, int32_t x, int32_t y);
-	bool routeCursor(WidgetTree& t, int16_t w, int32_t x, int32_t y);
-	bool cursorOver(WidgetTree& t, int16_t w, int32_t dx); // the mouse over an icon (dx: its motion, dragging a thumb)
-	void stepSelector(WidgetTree& t, int16_t selector, bool forward);
-	void stepRow(WidgetTree& t, int16_t row, bool forward);
-	void tick(WidgetTree& t, int16_t w, int32_t dt);
 	MenuRect global(const WidgetTree& t, int16_t w) const;
-	// Drawing (Draw.cpp).
+	// Drawing (Draw.cpp): the frame, a widget and what it holds, an image, a line of text and its width, a text's box.
 	void drawFrame();
 	void draw(WidgetTree& t, int16_t w, MenuRect view, MenuRect screen);
 	void drawImage(int16_t image, MenuRect dest, MenuRect source, const MenuRect* clip, uint32_t colour);
-	void drawText(int16_t font, std::u16string_view text, MenuRect box, MenuRect clip, uint32_t colour);
-	void drawScaled(int16_t font, std::u16string_view text, int32_t x, int32_t y, float sx, float sy, uint32_t colour);
-	void drawWrapped(int16_t font, std::u16string_view text, int32_t x, int32_t y, int32_t wrap, bool centred, MenuRect clip, uint32_t colour);
-	void drawQuad(MenuRect rect, uint32_t colour, int32_t alpha);
 	void drawLine(int16_t font, std::u16string_view text, int32_t x, int32_t y, uint32_t colour);
+	int32_t lineWidth(int16_t font, std::u16string_view line) const;
+	MenuRect measure(int16_t font, std::u16string_view text, int32_t wrap) const;
 	// The race's 2D (drawn by the menus' rules): its loading screen, and while it runs the standings, the fade
 	// and the dialog.
 	void drawLoading(std::string_view track);
@@ -744,15 +705,9 @@ struct LRCORE_API Menus {
 	// The HUDs, one layer per player's viewport: [first, end) of elements each.
 	void drawHud(const World& world);
 	std::array<std::pair<uint32_t, uint32_t>, 2> hudLayers = {};
-	void drawTriangle(int16_t image, const std::array<std::array<float, 4>, 3>& corners, const std::array<uint32_t, 3>& colours, MenuRect clip);
-	int32_t lineWidth(int16_t font, std::u16string_view line) const;
-	MenuRect measure(int16_t font, std::u16string_view text, int32_t wrap) const;
-	// Dialogs (Menus.cpp): opened by a screen, handed its buttons, then shown.
-	void openDialog(uint8_t kind, int32_t message);
-	void giveButton(uint32_t binding, uint32_t style, int32_t text);
-	void showDialog(int32_t defaultButton);
-	void updateDialog(int32_t dt);
-	void closeDialog(); // the top one's
+	struct HudColumns; // the HUD's racing rows' columns (Draw.cpp)
+	// Dialogs (Menus.cpp): opened by a screen, handed its buttons, then shown; the top one's tree, else the screen's.
+	void openDialog(MenuDialog::Kind kind, int32_t message);
 	WidgetTree& active() { return dialogCount ? dialogs[dialogCount - 1].tree : tree; }
 	// The flow (Menus.cpp, Screens.cpp).
 	void push(uint16_t n)
@@ -762,14 +717,160 @@ struct LRCORE_API Menus {
 		}
 	}
 	uint16_t top() const { return depth ? stack[depth - 1] : 0; }
-	void navigate(int32_t where);
 	void build(Game& game);
 	void leave(Game& game);
+	// The cinematic screens (Cinema.cpp): the player started from the screen's scene, its update, an effect started or
+	// stopped. The cinema's 3D (CinemaView.cpp): what the scene shows, an entity's nodes, the device's lighting.
+	void startCinema(Game& game);
+	void updateCinema(int32_t dt);
+	void describeCinema(const CinemaPlayer& c, const MenuData::Screen& s, MenuScene& scene, const std::array<uint8_t, 5>* looks, const RacerRecord* car) const;
+	void entityNodes(const MenuScene& scene, const MenuScene::Thing& t, std::vector<NodeMatrix>& out) const;
+	MenuLighting lighting; // the device's, as the screens and views leave it
+	CarMesh cinemaCar; // the car a cinematic swaps in for "carbody"
+	void effect(size_t effect, bool start, int32_t cue = -1); // cue: the model cue whose link starts it (channels 0x54/0x55)
+	// The builders (Builders.cpp): a scene view's scene; the builder's camera (shared by its draw and its mouse areas).
+	void describeScene(const Widget& view, MenuScene& scene) const;
+	void builderCamera(MenuScene& scene) const;
+	struct RingSlots; // a ring's items' places (describeRing)
+	// A piece carousel's item: the piece in its colour, centred; made once each.
+	const CarMesh& carouselItem(int32_t type, int32_t colour) const;
+	mutable std::vector<std::pair<uint32_t, CarMesh>> carouselItems;
+	void play(int32_t sound)
+	{
+		if (sound > 0) {
+			sounds.push_back(sound);
+		}
+	}
+	int32_t startFade(int32_t ms, bool in, uint32_t colour, MenuRect rect = {0, 0, 640, 480}); // its slot (-1 none free)
+	std::u16string_view text(int32_t index) const { return data->languages[language].text.at(size_t(index)); }
+
+	// The input queue and its handling, the root widget, the selection's walk and the fades: the frame's parts the
+	// data-free tests drive on their own.
+	std::array<MenuKey, 32> queue;
+	void queueInput(std::span<const MenuKey> keys, uint32_t buttons, int32_t dt);
+	void stepFades(int32_t dt);
+	int16_t makeRoot(WidgetTree& t);
+	void moveSelection(WidgetTree& t, bool forward);
+
+private:
+	// What only the menus' own files use (Menus.cpp, Widgets.cpp, Draw.cpp, Screens.cpp, Cinema.cpp, CinemaView.cpp,
+	// RaceScreens.cpp, Builders.cpp). Their state: a navigation pending (to destination), edit car's spin, the input
+	// queue (queued: its length) and the key repeats, whether the cursor is drawn.
+	bool pending = false;
+	bool spinKept = false;
+	float editSpin = 0; // where edit car's car starts turning (the builder's angle when it came back from it)
+	float editFacing = 0; // edit car's car's facing on its last frame (the builder's opening group sphere takes it)
+	std::array<int32_t, 2> repeatMs = {500, 500}; // keyboard, mouse
+	bool cursorOn = false; // drawn (item screens)
+	// The frame's parts: the frame's key and button events queued, then the repeats; the queue handled; the mouse's
+	// motion; the fades.
+	void queueKey(MenuKey k);
+	void holdKey(uint32_t key, bool down);
+	void dispatchKeys(Game& game);
+	void moveMouse(int32_t dx, int32_t dy);
+	// Making widgets: from MENUNAME's numbers; make's kinds (each widget w, its id, rect and colour set, made from its
+	// binding and style, and its own children); their texts, items, layouts and values.
+	int16_t makeNamed(WidgetTree& t, uint32_t binding, uint32_t style, int16_t parent, int32_t text = -1);
+	int16_t makeImage(WidgetTree& t, Widget& w, const MenuLayout::Binding& b, const MenuStyles::Style& st, int16_t attachTo, bool styleColour);
+	int16_t makeLabel(WidgetTree& t, Widget& w, const MenuLayout::Binding& b, const MenuStyles::Style& st, int16_t attachTo, int32_t text);
+	int16_t makeFrame(WidgetTree& t, Widget& w, const MenuLayout::Binding& b, const MenuStyles::Style& st, int16_t attachTo);
+	int16_t makeImageButton(WidgetTree& t, Widget& w, const MenuLayout::Binding& b, const MenuStyles::Style& st, int16_t attachTo);
+	int16_t makeTextButton(WidgetTree& t, Widget& w, const MenuLayout::Binding& b, const MenuStyles::Style& st, int16_t attachTo, int32_t text);
+	int16_t makeSelector(WidgetTree& t, const MenuLayout& layout, Widget& w, const MenuLayout::Binding& b, const MenuStyles::Style& st, int16_t attachTo);
+	int16_t makeOptions(WidgetTree& t, const MenuLayout& layout, Widget& w, const MenuLayout::Binding& b, const MenuStyles::Style& st, int16_t attachTo);
+	int16_t makeSceneView(WidgetTree& t, const MenuLayout& layout, Widget& w, const MenuLayout::Binding& b, int16_t parent, int16_t attachTo);
+	int16_t makeRing(WidgetTree& t, Widget& w, const MenuLayout::Binding& b, const MenuStyles::Style& st, int16_t attachTo);
+	int16_t makeHotspot(WidgetTree& t, Widget& w, const MenuLayout::Binding& b, const MenuStyles::Style& st, int16_t attachTo);
+	int16_t makeTextField(WidgetTree& t, Widget& w, const MenuLayout::Binding& b, const MenuStyles::Style& st, int16_t attachTo);
+	void setText(WidgetTree& t, int16_t w, std::u16string_view text);
+	void setString(WidgetTree& t, int16_t w, int32_t text); // MENUTEXT's
+	void relabel(WidgetTree& t, int16_t w, int32_t text); // and measured again
+	void alignRight(WidgetTree& t, int16_t w, int32_t margin);
+	void addItem(WidgetTree& t, int16_t carousel, int16_t item);
+	void selectItem(WidgetTree& t, int16_t carousel, int32_t index); // at once
+	void layoutCarousel(WidgetTree& t, int16_t carousel);
+	void layoutFrame(WidgetTree& t, int16_t frame);
+	void setValue(WidgetTree& t, int16_t row, int32_t value);
+	void setCharset(WidgetTree& t, int16_t field, int32_t text); // a text field's (MENUTEXT's)
+	// The icons: enabling, selecting, pressing; the selection's walk; keys and the cursor on widgets; the timers.
+	void enable(WidgetTree& t, int16_t w, bool on);
+	bool select(WidgetTree& t, int16_t w, bool quiet, bool local, bool silent);
+	void deselect(WidgetTree& t, int16_t w, bool local, bool silent);
+	void press(WidgetTree& t, int16_t w, bool local, bool quiet, bool silent);
+	void recompute(WidgetTree& t, int16_t w);
+	void focusOn(WidgetTree& t, int16_t w);
+	void unfocus(WidgetTree& t, int16_t w);
+	int16_t previous(WidgetTree& t, int16_t icon);
+	bool keyDown(WidgetTree& t, int16_t w, const MenuKey& key, int32_t x, int32_t y);
+	bool stepperKeyDown(WidgetTree& t, int16_t w, const MenuKey& key, int32_t x, int32_t y); // selectors, option rows
+	bool ringKeyDown(WidgetTree& t, int16_t w, const MenuKey& key, int32_t x, int32_t y);
+	bool textFieldKeyDown(WidgetTree& t, int16_t w, const MenuKey& key);
+	bool hotspotKeyDown(WidgetTree& t, int16_t w, const MenuKey& key, int32_t x, int32_t y);
+	bool keyUp(WidgetTree& t, int16_t w, const MenuKey& key, int32_t x, int32_t y);
+	bool routeKey(WidgetTree& t, int16_t w, const MenuKey& key, int32_t x, int32_t y);
+	bool routeCursor(WidgetTree& t, int16_t w, int32_t x, int32_t y);
+	bool cursorOver(WidgetTree& t, int16_t w, int32_t dx); // the mouse over an icon (dx: its motion, dragging a thumb)
+	void stepSelector(WidgetTree& t, int16_t selector, bool forward);
+	void stepRow(WidgetTree& t, int16_t row, bool forward);
+	void tick(WidgetTree& t, int16_t w, int32_t dt);
+	// Drawing's parts: an image stretched to its rect, a hotspot's lit region, a text field, a label, a wrapping
+	// carousel's items again, the 3D views and a 3D view's element; text, quads.
+	void drawStretched(Widget& n, MenuRect view, MenuRect screen);
+	void drawLitRegion(const Widget& n, MenuRect view, MenuRect screen);
+	void drawTextField(WidgetTree& t, const Widget& n, MenuRect view, MenuRect screen);
+	void drawLabel(const Widget& n, MenuRect view, MenuRect screen);
+	void drawWrapAround(WidgetTree& t, const Widget& n, MenuRect view, MenuRect screen);
+	void drawView(WidgetTree& t, int16_t w);
+	void addView(const Widget& n, std::array<float, 4> dest, const Widget* ring);
+	void drawText(int16_t font, std::u16string_view text, MenuRect box, MenuRect clip, uint32_t colour);
+	void drawScaled(int16_t font, std::u16string_view text, int32_t x, int32_t y, float sx, float sy, uint32_t colour);
+	void drawWrapped(int16_t font, std::u16string_view text, int32_t x, int32_t y, int32_t wrap, bool centred, MenuRect clip, uint32_t colour);
+	void drawQuad(MenuRect rect, uint32_t colour, int32_t alpha);
+	// drawRace's parts: the race's standings, the circuit's, the dialog.
+	void drawRaceStandings(const World& world);
+	void drawCircuitStandings(const World& world);
+	void drawRaceDialog(const World& world);
+	// drawHud's parts: player p's banner (centred at x on row y), the racer's power-up frame, the speedometer, a map's dot, the
+	// whole map and the rotating one, each in p's viewport.
+	void drawHudBanner(const World& world, size_t p, int32_t x, int32_t y);
+	void drawPowerFrame(const World& world, size_t racer, MenuRect view);
+	void drawSpeedometer(const World& world, size_t p, MenuRect view);
+	void drawMapDot(const World& world, int32_t x, int32_t y, bool red, MenuRect view);
+	void drawFixedMap(const World& world, size_t p, const MenuData::Loading& track, MenuRect view);
+	void drawRotatingMap(const World& world, size_t p, const MenuData::Loading& track, MenuRect view);
+	// And the HUD's racing rows, at a player's columns, and a time drawn in them.
+	void drawHudTimes(const World& world, size_t p, const HudColumns& at);
+	int32_t hudTime(const HudColumns& at, int32_t t, int32_t y);
+	void drawTriangle(int16_t image, const std::array<std::array<float, 4>, 3>& corners, const std::array<uint32_t, 3>& colours, MenuRect clip);
+	// The dialogs' buttons, their showing, update and close (the top one's).
+	void giveButton(uint32_t binding, uint32_t style, int32_t text);
+	void showDialog(int32_t defaultButton);
+	void updateDialog(int32_t dt);
+	void closeDialog();
+	// The flow (Menus.cpp, Screens.cpp): the navigation; build's parts (a screen item by MENUNAME's numbers, the banner, a
+	// selector over a carousel and a label in it, and the screens built here); the screens' updates, keys and notices.
+	void navigate(int32_t where);
+	int16_t screenItem(uint32_t binding, uint32_t style, int32_t text);
+	int16_t makeBanner(int32_t text);
+	int16_t makeLabelSelector(uint32_t binding, uint32_t style, uint32_t box);
+	int16_t addLabel(int16_t selector, std::u16string_view text);
+	void buildStorage(Game& game);
+	void buildMainMenu(Game& game);
+	void buildOptions(Game& game);
+	void buildControls(Game& game);
+	void buildPickLanguage(Game& game);
 	void leaveScreen();
 	void tickScreen(int32_t dt);
 	void updateScreen(Game& game, int32_t dt);
+	void updateMainMenu(Game& game, int32_t dt);
+	void updateGarage(Game& game);
+	void leaveGarage(Game& game);
 	bool screenKey(Game& game, const MenuKey& key);
 	void notice(Game& game, WidgetTree& t, int16_t w, int32_t what);
+	void mainMenuNotice(Game& game, int16_t w, int32_t what);
+	void optionsNotice(Game& game, WidgetTree& t, int16_t w, int32_t what);
+	void controlsNotice(Game& game, WidgetTree& t, int16_t w, int32_t what);
+	void garageNotice(Game& game, WidgetTree& t, int16_t w, int32_t what);
 	void dialogNotice(Game& game, MenuDialog& d);
 	void showPage(int32_t page);
 	void refreshControls(Game& game);
@@ -778,28 +879,19 @@ struct LRCORE_API Menus {
 	void garagePage(int32_t page);
 	void newRacerStep(Game& game);
 	void idleAnimation(Game& game);
-	// The cinematic screens (Cinema.cpp): the player started from the screen's scene, its update, a cue begun or
-	// ended (its links fired), an effect started or stopped, the overlays drawn; the award screens' flow.
+	// The cinematic screens: a cue begun or ended (its links fired), the overlays drawn, the award screens' flow. Their
+	// 3D: the player made ready for a scene of a screen's cinema, a cue begun or ended and the cues' ticks, a preview's
+	// update (looping, no links), a scene's lights.
 	bool cinematicScreen() const;
-	void startCinema(Game& game);
-	void updateCinema(int32_t dt);
 	void cueChanged(size_t cue, bool begins);
-	// The cinema's 3D (CinemaView.cpp): the player made ready for a scene of a screen's cinema, a cue begun or ended
-	// and the cues' ticks, a preview's update (looping, no links), what the scene shows.
 	void cinemaStart3d(CinemaPlayer& c, const MenuData::Screen& s, size_t scene) const;
 	void cue3d(CinemaPlayer& c, const MenuData::Screen& s, size_t cue, bool begins) const;
 	void cueTicks(CinemaPlayer& c, const MenuData::Screen& s, int32_t ms) const;
 	void playScene(CinemaPlayer& c, const MenuData::Screen& s, int32_t ms, int32_t ticks, bool loop, bool links);
 	void cueWindow(CinemaPlayer& c, int32_t a, int32_t b);
 	void updatePreview(int32_t dt);
-	void describeCinema(const CinemaPlayer& c, const MenuData::Screen& s, MenuScene& scene, const std::array<uint8_t, 5>* looks,
-		const RacerRecord* car) const;
 	void lightScene(MenuScene& scene, const Widget* ring);
-	void entityNodes(const MenuScene& scene, const MenuScene::Thing& t, std::vector<NodeMatrix>& out) const;
 	void openLighting();
-	MenuLighting lighting; // the device's, as the screens and views leave it
-	CarMesh cinemaCar;     // the car a cinematic swaps in for "carbody"
-	void effect(size_t effect, bool start, int32_t cue = -1); // cue: the model cue whose link starts it (channels 0x54/0x55)
 	void drawCinema();
 	void leaveCinema(Game& game);
 	// The race setup screens and racer select (RaceScreens.cpp).
@@ -824,10 +916,18 @@ struct LRCORE_API Menus {
 	void buildEditCar(Game& game);
 	void buildCarBuilder(Game& game);
 	void tickBuilders(int32_t dt);
-	void describeScene(const Widget& view, MenuScene& scene) const;
+	void tickDrop(int32_t dt); // the car builder's held piece dropping or rising
 	void updateBuilders(Game& game);
 	bool builderKey(Game& game, const MenuKey& key);
 	void builderNotice(Game& game, WidgetTree& t, int16_t w, int32_t what);
+	// Its parts: whether w is the screen's item i, a yes/no question, each builder's notices, a car builder pad's region.
+	bool isItem(int16_t w, size_t i) const;
+	void ask(int32_t message, int32_t yes, int32_t no);
+	void driverNotice(Game& game, WidgetTree& t, int16_t w, int32_t what);
+	void licenseNotice(Game& game, WidgetTree& t, int16_t w, int32_t what);
+	void editCarNotice(Game& game, WidgetTree& t, int16_t w, int32_t what);
+	void carBuilderNotice(Game& game, WidgetTree& t, int16_t w, int32_t what);
+	void builderPad(bool movePad, int32_t region);
 	void builderDialog(Game& game, MenuDialog& d);
 	void leaveBuilder();
 	void driverPick(Game& game);
@@ -851,9 +951,18 @@ struct LRCORE_API Menus {
 	bool builderMotion(int32_t dx, int32_t dy);
 	void enterView(CarBuilder::Mode mode);
 	void leaveView();
-	// The builder's scene (shared by its draw and its mouse areas): the camera's eye and the things' poses.
-	void builderCamera(MenuScene& scene) const;
 	void carGroup(MenuScene& scene, Vec3 at, float angle, bool lit, const RacerRecord* racer = nullptr) const;
+	// describeScene's parts: a ring's items (by its slots' places: the piece carousel's pieces, the driver builder's
+	// parts), the world's camera, a minifig, the showcase, the main menu's champion, the car builder's car and piece.
+	void describeRing(const Widget& view, const std::array<float, 9>& camera, MenuScene& scene) const;
+	void pieceRing(const Widget& view, const RingSlots& slots, const CarSets::Set& set, MenuScene& scene) const;
+	void partRing(const Widget& view, const RingSlots& slots, MenuScene& scene) const;
+	void worldCamera(const MenuLayout::Binding& binding, MenuScene& scene) const;
+	void sceneMinifig(MenuScene& scene, Vec3 at, Vec3 forward, Vec3 up, const std::array<uint8_t, 5>& looks, MenuScene::Thing::PartFile parts, int32_t animation,
+		float frame) const;
+	void showcaseScene(MenuScene& scene) const;
+	void mainMenuScene(MenuScene& scene) const;
+	void carBuilderScene(MenuScene& scene) const;
 	const ChassisTable::Chassis* chassisOf(const std::vector<CarPiece>* pieces) const; // the builders' car's when null
 	float chassisScale(const ChassisTable::Chassis* c) const;
 	// The car group's cached sphere taken again: at the opening every member's afresh, the car and chassis at
@@ -861,28 +970,17 @@ struct LRCORE_API Menus {
 	void takeGroupSphere(bool opening);
 	// A minifig's catalog body (MENUPART's 0..3 by the torso's and legs' variants; 4 seated).
 	int32_t bodyOf(const std::array<uint8_t, 5>& looks, bool seated) const;
-	// A piece carousel's item: the piece in its colour, centred; made once each.
-	const CarMesh& carouselItem(int32_t type, int32_t colour) const;
-	mutable std::vector<std::pair<uint32_t, CarMesh>> carouselItems;
-	void play(int32_t sound)
-	{
-		if (sound > 0) {
-			sounds.push_back(sound);
-		}
-	}
+	// The menus' tune, the save files.
 	void playTune(int32_t number, bool loops);
 	void stopTune() { tune = -1; }
-	int32_t startFade(int32_t ms, bool in, uint32_t colour, MenuRect rect = {0, 0, 640, 480}); // its slot (-1 none free)
 	void saveSlots(Game& game, bool both);
-	std::u16string_view text(int32_t index) const { return data->languages[language].text.at(size_t(index)); }
 };
 
 // The draw list's 2D elements painted into a 640x480 target (0xAARRGGBB, rows top first) as the original's device
 // draws them: pixel centres at +0.5, the top and left edges in, point sampling, keyed texels left
 // out, texels times the colour; quads opaque or blended at their alpha. A pixel painted is opaque; one blended over a
 // clear pixel keeps the quad's alpha (a layer over a 3D view). View3D elements paint nothing.
-LRCORE_API void paint(const MenuData& data, size_t language, std::span<const MenuElement> elements, std::span<const MenuGlyph> glyphs,
-	uint32_t* target);
+LRCORE_API void paint(const MenuData& data, size_t language, std::span<const MenuElement> elements, std::span<const MenuGlyph> glyphs, uint32_t* target);
 
 // A driver table entry's minifig looks in a MenuScene::Thing's order (face, hat, legs, torso, expression).
 LRCORE_API std::array<uint8_t, 5> driverLooks(const DriverTable::Driver& d);

@@ -92,6 +92,56 @@ struct Reader {
 	}
 };
 
+// A save's settings (Game::loadSlot's), each value kept in its range.
+void readSettings(Reader& r, Settings& s)
+{
+	s.opponents = uint8_t(r.below(r.u8(), 6));
+	s.laps = uint8_t(r.u8());
+	r.below(s.laps - 1u, 5);
+	s.music = uint8_t(r.u8()), s.sound = uint8_t(r.u8());
+	s.stereo = uint8_t(r.below(r.u8(), 2));
+	s.language = uint8_t(r.below(r.u8(), 9));
+	s.kept = {uint8_t(r.u8()), uint8_t(r.u8())};
+	for (uint8_t& v : s.device) {
+		v = uint8_t(r.u8());
+	}
+	s.parts = uint8_t(r.u8()), s.circuits = uint8_t(r.u8()), s.races = uint16_t(r.u16());
+	for (BestTime& b : s.best) {
+		b.lapMs = r.u32(), b.lapHolder = r.text(14), b.raceMs = r.u32(), b.raceHolder = r.text(14);
+	}
+	for (size_t p = 0; p < 2; p++) {
+		const uint32_t l = r.below(r.u8(), 4);
+		s.picks[p] = {l == 1 ? RacerList::Card0 : l == 2 ? RacerList::Card1 : l == 3 ? RacerList::Defaults : RacerList::None, uint16_t(r.u16())};
+		s.layout[p] = uint8_t(r.below(r.u8(), 5));
+	}
+	for (KeyLayout& k : s.layouts) {
+		k.kind = uint8_t(r.u8()), k.subKind = uint8_t(r.u8()), k.device = uint8_t(r.u8());
+		for (uint32_t& b : k.bindings) {
+			b = r.u32();
+		}
+	}
+}
+
+// A save's racer (Game::loadSlot's), each value kept in its range.
+void readRacer(Reader& r, RacerRecord& rec)
+{
+	rec.name = r.text(14);
+	for (uint8_t& v : rec.looks) {
+		v = uint8_t(r.u8());
+	}
+	rec.expression = uint8_t(r.below(r.u8(), 128));
+	rec.stockCar = r.below(r.u8(), 2) != 0;
+	rec.chassis = r.narrow(8);
+	rec.pieces.resize(r.below(r.u8(), 65));
+	for (CarPiece& p : rec.pieces) {
+		p.type = uint16_t(r.u16()), p.x = uint8_t(r.u8()), p.y = uint8_t(r.u8()), p.rotation = uint8_t(r.u8());
+		p.colour = uint8_t(r.u8()), p.part = uint16_t(r.u16());
+	}
+	for (uint8_t& t : rec.trophies) {
+		t = uint8_t(r.below(r.u8(), 4));
+	}
+}
+
 } // namespace
 
 void Game::reset(uint8_t padCount)
@@ -104,14 +154,14 @@ void Game::reset(uint8_t padCount)
 		KeyLayout& k = settings.layouts[l];
 		if (joystickLayout(l)) {
 			// A present pad: its buttons on slots 2.. (sub-kind 0: no axis buttons).
-			k = {4, uint8_t(l < pads ? 0 : 2), uint8_t(l), {}};
+			k = {KeyLayout::Joystick, uint8_t(l < pads ? 0 : 2), uint8_t(l), {}};
 			for (size_t s = 2; l < pads && s < 9; s++) {
 				k.bindings[s] = 0x30000000u | uint32_t(s - 2);
 			}
 			continue;
 		}
 		// QUIRK: only the last keyboard layout gets the keyboard's sub-kind (0 anyway).
-		k = {3, 0, 0, {}};
+		k = {KeyLayout::Keyboard, 0, 0, {}};
 		for (size_t s = 0; s < 9; s++) {
 			k.bindings[s] = Keyboard | KeyboardDefaults[l - 2][s];
 		}
@@ -121,15 +171,15 @@ void Game::reset(uint8_t padCount)
 
 uint16_t Game::draw() { return randomTable(random = (random + 1) & 1023); }
 
-std::vector<RacerRecord>& Game::list(RacerList which)
-{
-	return which == RacerList::Card0 ? cards[0] : which == RacerList::Card1 ? cards[1] : session;
-}
+std::vector<RacerRecord>& Game::list(RacerList which) { return which == RacerList::Card0 ? cards[0] : which == RacerList::Card1 ? cards[1] : session; }
 
 const RacerRecord* Game::racer(RacerRef ref) const
 {
-	const std::vector<RacerRecord>* l = ref.list == RacerList::Card0 ? &cards[0] : ref.list == RacerList::Card1 ? &cards[1]
-		: ref.list == RacerList::Session ? &session : ref.list == RacerList::Defaults ? &defaults : nullptr;
+	const std::vector<RacerRecord>* l = ref.list == RacerList::Card0 ? &cards[0]
+		: ref.list == RacerList::Card1								 ? &cards[1]
+		: ref.list == RacerList::Session							 ? &session
+		: ref.list == RacerList::Defaults							 ? &defaults
+																	 : nullptr;
 	return l && ref.index < l->size() ? &(*l)[ref.index] : nullptr;
 }
 
@@ -204,9 +254,8 @@ void Game::applyCheat(std::u16string_view name)
 {
 	const std::array<std::string, 13>& Codes = executableTables().cheats;
 	// What turning a code on turns off.
-	static const uint32_t Clears[13] = {0, 0, CheatYellowBricks | CheatGreenBricks | CheatRedOnly,
-		CheatRedBricks | CheatGreenBricks | CheatRedOnly, CheatRedBricks | CheatYellowBricks | CheatRedOnly, 0,
-		CheatRedBricks | CheatYellowBricks | CheatGreenBricks | CheatMaxPower, CheatRedOnly, 0, 0, 0, 0, 0};
+	static const uint32_t Clears[13] = {0, 0, CheatYellowBricks | CheatGreenBricks | CheatRedOnly, CheatRedBricks | CheatGreenBricks | CheatRedOnly,
+		CheatRedBricks | CheatYellowBricks | CheatRedOnly, 0, CheatRedBricks | CheatYellowBricks | CheatGreenBricks | CheatMaxPower, CheatRedOnly, 0, 0, 0, 0, 0};
 	std::string text;
 	for (size_t i = 0; i < name.size() && i < 13; i++) {
 		text += char(name[i] & 255);
@@ -301,52 +350,14 @@ bool Game::loadSlot(size_t slot, std::span<const uint8_t> bytes)
 	Settings s;
 	const bool state = r.below(r.u8(), 2);
 	if (state) {
-		s.opponents = uint8_t(r.below(r.u8(), 6));
-		s.laps = uint8_t(r.u8());
-		r.below(s.laps - 1u, 5);
-		s.music = uint8_t(r.u8()), s.sound = uint8_t(r.u8());
-		s.stereo = uint8_t(r.below(r.u8(), 2));
-		s.language = uint8_t(r.below(r.u8(), 9));
-		s.kept = {uint8_t(r.u8()), uint8_t(r.u8())};
-		for (uint8_t& v : s.device) {
-			v = uint8_t(r.u8());
-		}
-		s.parts = uint8_t(r.u8()), s.circuits = uint8_t(r.u8()), s.races = uint16_t(r.u16());
-		for (BestTime& b : s.best) {
-			b.lapMs = r.u32(), b.lapHolder = r.text(14), b.raceMs = r.u32(), b.raceHolder = r.text(14);
-		}
-		for (size_t p = 0; p < 2; p++) {
-			const uint32_t l = r.below(r.u8(), 4);
-			s.picks[p] = {l == 1 ? RacerList::Card0 : l == 2 ? RacerList::Card1 : l == 3 ? RacerList::Defaults : RacerList::None, uint16_t(r.u16())};
-			s.layout[p] = uint8_t(r.below(r.u8(), 5));
-		}
-		for (KeyLayout& k : s.layouts) {
-			k.kind = uint8_t(r.u8()), k.subKind = uint8_t(r.u8()), k.device = uint8_t(r.u8());
-			for (uint32_t& b : k.bindings) {
-				b = r.u32();
-			}
-		}
+		readSettings(r, s);
 	}
 	std::vector<RacerRecord> racers(r.below(r.u16(), CardCapacity + 1));
 	for (RacerRecord& rec : racers) {
 		if (!r.ok) {
 			break;
 		}
-		rec.name = r.text(14);
-		for (uint8_t& v : rec.looks) {
-			v = uint8_t(r.u8());
-		}
-		rec.expression = uint8_t(r.below(r.u8(), 128));
-		rec.stockCar = r.below(r.u8(), 2) != 0;
-		rec.chassis = r.narrow(8);
-		rec.pieces.resize(r.below(r.u8(), 65));
-		for (CarPiece& p : rec.pieces) {
-			p.type = uint16_t(r.u16()), p.x = uint8_t(r.u8()), p.y = uint8_t(r.u8()), p.rotation = uint8_t(r.u8());
-			p.colour = uint8_t(r.u8()), p.part = uint16_t(r.u16());
-		}
-		for (uint8_t& t : rec.trophies) {
-			t = uint8_t(r.below(r.u8(), 4));
-		}
+		readRacer(r, rec);
 	}
 	if (!r.ok || r.at != r.bytes.size()) {
 		return false;

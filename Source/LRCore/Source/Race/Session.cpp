@@ -18,7 +18,6 @@ namespace lr {
 
 namespace {
 
-
 // GAME.SRF's lines.
 enum : int32_t {
 	LineContinue = 14,
@@ -88,48 +87,29 @@ void keepBest(RaceRecord& into, const RaceRecord& from)
 
 bool World::setupSession(const Cache& cache, const RaceBrief& race)
 {
-	const auto watch = drawWatch;
-	void* const watchContext = drawContext;
-	const auto sim = simulate;
-	void* const simContext = simulateContext;
-	const auto looker = lookWatch;
-	void* const lookerContext = lookContext;
-	const auto bodies = bodiesWatch;
-	void* const bodiesOf = bodiesContext;
-	const auto setups = setupWatch;
-	void* const setupsOf = setupContext;
-	const auto eventsTo = eventWatch;
-	void* const eventsOf = eventContext;
-	*this = {};
-	drawWatch = watch, drawContext = watchContext;
-	simulate = sim, simulateContext = simContext;
-	lookWatch = looker, lookContext = lookerContext;
-	bodiesWatch = bodies, bodiesContext = bodiesOf;
-	setupWatch = setups, setupContext = setupsOf;
-	eventWatch = eventsTo, eventContext = eventsOf;
-	brief = race;
-	openingMs = 500;
-	raceLaps = race.laps;
-	autopilot = race.autopilot;
+	*this = {}; // (the observer stays)
+	session.brief = race;
+	session.openingMs = 500;
+	session.raceLaps = race.laps;
+	session.autopilot = race.autopilot;
 	random = race.random;
 	const size_t n = race.slots.size();
-	racers.resize(n);
+	// Every racer's parts, what the session reads of them before the simulation sets them up (a replayed race has only
+	// these); no track yet, so no dynamic worlds' timers (setup's).
+	racers.resize(n, 0);
 	for (size_t i = 0; i < n; i++) {
-		Racer& r = racers[i];
+		Racer& r = racers.race[i];
 		r.player = race.slots[i].player;
 		r.ai = !r.player;
 		r.standing = int32_t(i) + 1;
-		circuitPoints[i] = race.slots[i].points;
+		session.circuitPoints[i] = race.slots[i].points;
 	}
-	// What the session reads of the racers before the simulation sets them up (a replayed race has only these).
-	params.resize(n), karts.resize(n), drivers.resize(n), controls.resize(n), keys.resize(n), visible.resize(n);
-	playback.resize(n), powers.resize(n);
 	NameList music;
 	if (!cache.get("GAMEDATA/" + race.track + "/LEGOMSC", music)) {
 		return false;
 	}
 	musicCount = int32_t(music.names.size());
-	tune = {0, false, true, {}};
+	session.tune = {0, false, true, {}};
 	// The intro's flyby: the race file's intro camera animation.
 	RaceFile file;
 	if (!cache.get("GAMEDATA/" + race.track + "/" + race.track + ".RAB", file)) {
@@ -152,14 +132,14 @@ bool World::setupSession(const Cache& cache, const RaceBrief& race)
 // a restart from the pause dialog only resets.
 void World::prepareRuns()
 {
-	timeRace.record = runOf(brief.ghost);
-	timeRace.recordValid = !timeRace.record.positions.empty();
+	session.timeRace.record = runOf(session.brief.ghost);
+	session.timeRace.recordValid = !session.timeRace.record.positions.empty();
 	resetRuns();
 }
 
 void World::resetRuns()
 {
-	TimeRace& t = timeRace;
+	TimeRace& t = session.timeRace;
 	t.clockMs = 0;
 	t.running = false;
 	t.current = {};
@@ -171,64 +151,70 @@ void World::restart(const Cache* cache)
 	takeRecord();
 	raise(RaceEvent::StopEffects); // (the show's effects all stop; the rules end their loops)
 	// What the session carries over a restart.
-	const RaceBrief carried = brief;
-	const RaceRecord best = record;
-	const std::array<int32_t, 6> points = circuitPoints;
-	const TimeRace runs = timeRace;
+	const RaceBrief carried = session.brief;
+	const RaceRecord best = session.record;
+	const std::array<int32_t, 6> points = session.circuitPoints;
+	const TimeRace runs = session.timeRace;
 	const uint32_t index = random;
-	const int32_t blink = dialog.blinkMs;
-	const std::vector<Hud> shown = huds; // (each keeps its smoothed speed and its visibility)
+	const int32_t blink = session.dialog.blinkMs;
+	const std::vector<Hud> shown = raceView.huds; // (each keeps its smoothed speed and its visibility)
+	bool ready = true;
 	if (cache) {
-		setup(*cache, carried);
+		ready = setup(*cache, carried);
 	}
 	else {
 		// (A replayed race: the session alone, from the files it read.)
 		const int32_t count = musicCount;
+		// Its phase, clocks and pace start again.
 		const Session fresh;
-		session = fresh;
+		session.phase = fresh.phase, session.ms = fresh.ms, session.flyby = fresh.flyby, session.finishers = fresh.finishers;
+		session.paceDelay = fresh.paceDelay, session.paceBonus = fresh.paceBonus;
 		session.watchingFlyby = track.introFrames > 0;
-		for (size_t i = 0; i < racers.size(); i++) {
-			racers[i] = {};
-			racers[i].player = carried.slots[i].player;
-			racers[i].ai = !racers[i].player;
-			racers[i].standing = int32_t(i) + 1;
+		for (size_t i = 0; i < racers.race.size(); i++) {
+			racers.race[i] = {};
+			racers.race[i].player = carried.slots[i].player;
+			racers.race[i].ai = !racers.race[i].player;
+			racers.race[i].standing = int32_t(i) + 1;
 		}
-		if (autopilot) {
+		if (session.autopilot) {
 			handToAi(0);
 		}
 		musicCount = count;
-		tune = {0, false, true, {}};
-		dialog = {};
-		fade = {};
-		roundPoints = {};
-		ending = End::None;
+		session.tune = {0, false, true, {}};
+		session.dialog = {};
+		session.fade = {};
+		session.roundPoints = {};
+		session.ending = Session::End::None;
 		timeRaceAsked = false;
 	}
-	huds.resize(shown.size());
-	for (size_t p = 0; p < huds.size(); p++) {
-		huds[p] = {};
-		huds[p].speed = shown[p].speed;
-		huds[p].visible = shown[p].visible;
+	raceView.huds.resize(shown.size());
+	for (size_t p = 0; p < raceView.huds.size(); p++) {
+		raceView.huds[p] = {};
+		raceView.huds[p].speed = shown[p].speed;
+		raceView.huds[p].visible = shown[p].visible;
 	}
 	random = index;
-	record = best;
-	circuitPoints = points;
-	timeRace = runs;
-	dialog.blinkMs = blink;
-	restarted = true;
+	session.record = best;
+	session.circuitPoints = points;
+	session.timeRace = runs;
+	session.dialog.blinkMs = blink;
+	session.restarted = true;
+	if (!ready) {
+		session.ending = Session::End::Abort; // (the race's files no longer load: the session ends, back to the menus)
+	}
 }
 
 void World::takeRecord()
 {
 	RaceRecord now;
 	int32_t bestLap = 0, bestLapBy = 0, bestRace = 0;
-	for (size_t i = 0; i < racers.size(); i++) {
-		const Racer& r = racers[i];
-		if (!r.player || r.laps < raceLaps) {
+	for (size_t i = 0; i < racers.race.size(); i++) {
+		const Racer& r = racers.race[i];
+		if (!r.player || r.laps < session.raceLaps) {
 			continue;
 		}
 		int32_t sum = 0;
-		for (int32_t lap = 0; lap < raceLaps; lap++) {
+		for (int32_t lap = 0; lap < session.raceLaps; lap++) {
 			sum += r.lapMs[lap];
 			if (bestLap == 0 || r.lapMs[lap] < bestLap) {
 				bestLap = r.lapMs[lap];
@@ -238,32 +224,32 @@ void World::takeRecord()
 		bestRace = bestRace == 0 || sum < bestRace ? sum : bestRace;
 	}
 	now = {bestLap, bestLapBy, bestRace, bestLapBy};
-	keepBest(record, now);
+	keepBest(session.record, now);
 }
 
 void World::finished(size_t i)
 {
 	// A circuit's points by place; a player's finish ends the racing (its tune: the win or the loss), and a time
 	// race's run.
-	if (brief.mode == RaceBrief::Mode::Circuit) {
-		roundPoints[i] = executableTables().placePoints[size_t(std::min(racers[i].place, 5))];
-		circuitPoints[i] += roundPoints[i];
+	if (session.brief.mode == RaceBrief::Mode::Circuit) {
+		session.roundPoints[i] = executableTables().placePoints[size_t(std::min(racers.race[i].place, 5))];
+		session.circuitPoints[i] += session.roundPoints[i];
 	}
 }
 
 void World::racingEnded(size_t i)
 {
 	// FINISH on the HUD of the player who ended the racing (the demo's: HUD 0), with its place.
-	for (size_t p = 0; p < huds.size() && p < cameras.size(); p++) {
-		if (size_t(cameras[p].racer) == i) {
-			huds[p].banner = -1;
-			huds[p].finalPlace = racers[i].standing - 1;
+	for (size_t p = 0; p < raceView.huds.size() && p < raceView.cameras.size(); p++) {
+		if (size_t(raceView.cameras[p].racer) == i) {
+			raceView.huds[p].banner = -1;
+			raceView.huds[p].finalPlace = racers.race[i].standing - 1;
 		}
 	}
-	if (brief.mode == RaceBrief::Mode::TimeRace) {
-		TimeRace& t = timeRace;
+	if (session.brief.mode == RaceBrief::Mode::TimeRace) {
+		TimeRace& t = session.timeRace;
 		for (size_t lap = 0; lap < 3; lap++) {
-			t.current.laps[lap] = racers[i].lapMs[lap];
+			t.current.laps[lap] = racers.race[i].lapMs[lap];
 		}
 		if (t.current.total() < t.best.total() || t.best.total() == 0) {
 			std::swap(t.current, t.best);
@@ -271,45 +257,45 @@ void World::racingEnded(size_t i)
 		t.bestValid = t.running = false;
 		t.bestKept = true;
 	}
-	tune = {racers[i].standing == 1 ? 3 : 2, false, true, {}};
+	session.tune = {racers.race[i].standing == 1 ? 3 : 2, false, true, {}};
 }
 
 void World::racingStarted()
 {
-	roundPoints = {};
-	if (brief.mode == RaceBrief::Mode::TimeRace) {
-		timeRace.running = true;
-		timeRace.bestValid = timeRace.bestValid || timeRace.bestKept;
+	session.roundPoints = {};
+	if (session.brief.mode == RaceBrief::Mode::TimeRace) {
+		session.timeRace.running = true;
+		session.timeRace.bestValid = session.timeRace.bestValid || session.timeRace.bestKept;
 	}
 	// The racing tune: the track's own in a circuit or with no extras, else the presentation draws among them.
-	tune = {1, true, true, {}};
-	if (brief.mode != RaceBrief::Mode::Circuit && musicCount > 4) {
+	session.tune = {1, true, true, {}};
+	if (session.brief.mode != RaceBrief::Mode::Circuit && musicCount > 4) {
 		static constexpr int32_t Extras[4] = {1, 4, 5, 6};
-		tune.choices.assign(Extras, Extras + std::min(4, musicCount - 3));
+		session.tune.choices.assign(Extras, Extras + std::min(4, musicCount - 3));
 	}
 }
 
 void World::sessionEnded()
 {
 	session.phase = Session::Over;
-	if (ending == End::None) {
-		ending = End::Over;
+	if (session.ending == Session::End::None) {
+		session.ending = Session::End::Over;
 	}
 	takeRecord();
 }
 
 void World::startFade()
 {
-	if (!fade.active) {
-		fade = {1000, 1000, true, false};
+	if (!session.fade.active) {
+		session.fade = {1000, 1000, true, false};
 	}
 }
 
 void World::recordRun(int32_t dt)
 {
-	TimeRace& t = timeRace;
+	TimeRace& t = session.timeRace;
 	t.sampled = false;
-	if (brief.mode != RaceBrief::Mode::TimeRace || !t.running) {
+	if (session.brief.mode != RaceBrief::Mode::TimeRace || !t.running) {
 		return;
 	}
 	// A ghost that has passed its last sample is finished (hidden from then on).
@@ -324,8 +310,8 @@ void World::recordRun(int32_t dt)
 		t.countdownMs += TimeRace::SampleMs - dt;
 		GhostRun& run = t.current;
 		if (int32_t(run.positions.size()) < TimeRace::MostSamples) {
-			const Vec3 p = visible[0].position;
-			const Quat q = rotationOf(visible[0].rotation);
+			const Vec3 p = racers.visible[0].position;
+			const Quat q = rotationOf(racers.visible[0].rotation);
 			if (run.positions.empty()) {
 				run.position = p;
 				run.rotation = q;
@@ -342,7 +328,7 @@ void World::recordRun(int32_t dt)
 
 bool World::ghostAt(const GhostRun& run, Vec3& position, Quat& rotation) const
 {
-	const TimeRace& t = timeRace;
+	const TimeRace& t = session.timeRace;
 	if (run.finished || run.positions.empty() || t.clockMs >= TimeRace::ShownMs) {
 		return false;
 	}
@@ -357,9 +343,7 @@ bool World::ghostAt(const GhostRun& run, Vec3& position, Quat& rotation) const
 		return false;
 	}
 	const auto at = [&](size_t i) { return Vec3{run.positions[i][0] / 32.0f, run.positions[i][1] / 32.0f, run.positions[i][2] / 32.0f}; };
-	const auto turn = [&](size_t i) {
-		return Quat{run.rotations[i][0] / 127.0f, run.rotations[i][1] / 127.0f, run.rotations[i][2] / 127.0f, run.rotations[i][3] / 127.0f};
-	};
+	const auto turn = [&](size_t i) { return Quat{run.rotations[i][0] / 127.0f, run.rotations[i][1] / 127.0f, run.rotations[i][2] / 127.0f, run.rotations[i][3] / 127.0f}; };
 	const Vec3 p0 = at(k), p1 = at(k + 1);
 	position = p0 + (p1 - p0) * a;
 	// The rotation blended, to unit length.
@@ -371,7 +355,7 @@ bool World::ghostAt(const GhostRun& run, Vec3& position, Quat& rotation) const
 
 int32_t World::standingsTable() const
 {
-	if (brief.mode != RaceBrief::Mode::Circuit || paused() || ending != End::None) {
+	if (session.brief.mode != RaceBrief::Mode::Circuit || paused() || session.ending != Session::End::None) {
 		return 0;
 	}
 	return session.phase == Session::Finished && session.ms > 5000 ? 1 : session.phase == Session::Results ? 2 : 0;
@@ -382,18 +366,18 @@ int32_t World::standingsTable() const
 void World::openDialog(RaceDialog::Kind kind)
 {
 	// (The blink runs on from dialog to dialog.)
-	RaceDialog& d = dialog;
+	RaceDialog& d = session.dialog;
 	const int32_t blink = d.blinkMs;
 	d = {};
 	d.blinkMs = blink;
 	d.kind = kind;
-	for (Hud& h : huds) {
+	for (Hud& h : raceView.huds) {
 		h.visible = false; // (only the banner, the time behind's '-' and WRONG WAY hide)
 	}
 	switch (kind) {
 	case RaceDialog::Pause:
 		d.prompt = LinePaused;
-		d.options = {LineContinue, brief.mode == RaceBrief::Mode::Circuit ? LineRestartCircuit : LineRestartRace, LineExit};
+		d.options = {LineContinue, session.brief.mode == RaceBrief::Mode::Circuit ? LineRestartCircuit : LineRestartRace, LineExit};
 		d.count = 3;
 		break;
 	case RaceDialog::Confirm:
@@ -403,7 +387,7 @@ void World::openDialog(RaceDialog::Kind kind)
 		d.selection = 1;
 		break;
 	case RaceDialog::TimeRaceEnd: {
-		const bool beaten = timeRace.beaten();
+		const bool beaten = session.timeRace.beaten();
 		d.prompt = beaten ? LineBeaten : LineNotBeaten;
 		d.second = d.prompt + 1;
 		d.options = {LineYes, LineNo, 0};
@@ -417,9 +401,9 @@ void World::openDialog(RaceDialog::Kind kind)
 // What a chosen option does once its key is released; true if the race runs this frame.
 bool World::choose(const Cache* cache)
 {
-	RaceDialog& d = dialog;
+	RaceDialog& d = session.dialog;
 	const int32_t s = d.selection;
-	for (Hud& h : huds) {
+	for (Hud& h : raceView.huds) {
 		h.visible = true;
 	}
 	switch (d.kind) {
@@ -441,24 +425,24 @@ bool World::choose(const Cache* cache)
 		}
 		if (d.confirming == RaceDialog::Exit) {
 			d.kind = RaceDialog::None;
-			ending = End::Abort;
+			session.ending = Session::End::Abort;
 			sessionEnded();
 			return false;
 		}
 		d.kind = RaceDialog::None;
-		if (brief.mode == RaceBrief::Mode::Circuit && !brief.firstRace) {
-			ending = End::RestartCircuit;
+		if (session.brief.mode == RaceBrief::Mode::Circuit && !session.brief.firstRace) {
+			session.ending = Session::End::RestartCircuit;
 			sessionEnded();
 			return false;
 		}
-		if (brief.mode == RaceBrief::Mode::Circuit) {
-			for (RaceBrief::Slot& slot : brief.slots) {
+		if (session.brief.mode == RaceBrief::Mode::Circuit) {
+			for (RaceBrief::Slot& slot : session.brief.slots) {
 				slot.points = 0;
 			}
-			circuitPoints = {};
-			roundPoints = {};
+			session.circuitPoints = {};
+			session.roundPoints = {};
 		}
-		if (brief.mode == RaceBrief::Mode::TimeRace) {
+		if (session.brief.mode == RaceBrief::Mode::TimeRace) {
 			resetRuns();
 		}
 		restart(cache);
@@ -479,17 +463,17 @@ bool World::choose(const Cache* cache)
 
 void World::update(int32_t frameMs, std::span<const uint32_t> pressed, std::span<const uint32_t> released, const Cache* cache)
 {
-	tune.started = false;
-	restarted = false;
-	raceEvents.clear();
-	if (ending != End::None) {
+	session.tune.started = false;
+	session.restarted = false;
+	raceView.raceEvents.clear();
+	if (session.ending != Session::End::None) {
 		return;
 	}
 	// The demo: any key (but a pad's axis) ends it at once.
-	if (brief.mode == RaceBrief::Mode::Demo) {
+	if (session.brief.mode == RaceBrief::Mode::Demo) {
 		for (uint32_t k : pressed) {
 			if ((k >> 28) <= 3) {
-				ending = End::Abort;
+				session.ending = Session::End::Abort;
 				sessionEnded();
 				return;
 			}
@@ -500,7 +484,7 @@ void World::update(int32_t frameMs, std::span<const uint32_t> pressed, std::span
 	// frame, its clock held.
 	if (!paused()) {
 		for (uint32_t k : pressed) {
-			if (k == MenuEscape && brief.mode != RaceBrief::Mode::Demo) {
+			if (k == MenuEscape && session.brief.mode != RaceBrief::Mode::Demo) {
 				openDialog(RaceDialog::Pause);
 				break;
 			}
@@ -509,12 +493,12 @@ void World::update(int32_t frameMs, std::span<const uint32_t> pressed, std::span
 	bool ran = false;
 	const auto run = [&](bool held) {
 		clockHeld = held;
-		const int32_t raceMs = brief.cheats & CheatFastForward ? int32_t(float(frameMs) * 1.75f) : frameMs;
+		const int32_t raceMs = session.brief.cheats & CheatFastForward ? int32_t(float(frameMs) * 1.75f) : frameMs;
 		frame(raceMs, frameMs);
 		clockHeld = false;
 		updateFade(raceMs);
 		if (standingsTable()) {
-			blinkMs = frameMs > blinkMs ? 400 : blinkMs - frameMs;
+			session.blinkMs = frameMs > session.blinkMs ? 400 : session.blinkMs - frameMs;
 		}
 		ran = true;
 	};
@@ -524,7 +508,7 @@ void World::update(int32_t frameMs, std::span<const uint32_t> pressed, std::span
 	if (!paused()) {
 		return;
 	}
-	RaceDialog& d = dialog;
+	RaceDialog& d = session.dialog;
 	for (uint32_t k : pressed) {
 		if (d.chosen) {
 			continue;
@@ -543,7 +527,7 @@ void World::update(int32_t frameMs, std::span<const uint32_t> pressed, std::span
 			resumed = choose(cache);
 		}
 	}
-	if (ending != End::None) {
+	if (session.ending != Session::End::None) {
 		updateFade(frameMs);
 		return; // (the blink stops with the race)
 	}
@@ -556,17 +540,17 @@ void World::update(int32_t frameMs, std::span<const uint32_t> pressed, std::span
 
 void World::updateFade(int32_t frameMs)
 {
-	if (!fade.active || paused()) {
+	if (!session.fade.active || paused()) {
 		return;
 	}
-	if (fade.left == 0) {
-		if (fade.ended) {
-			fade.active = false;
+	if (session.fade.left == 0) {
+		if (session.fade.ended) {
+			session.fade.active = false;
 			return;
 		}
-		fade.ended = true;
+		session.fade.ended = true;
 	}
-	fade.left = std::max(0, fade.left - frameMs);
+	session.fade.left = std::max(0, session.fade.left - frameMs);
 }
 
 } // namespace lr

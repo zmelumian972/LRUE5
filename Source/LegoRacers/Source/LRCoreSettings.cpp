@@ -27,10 +27,7 @@ std::u16string Text(const FString& S)
 	return Out;
 }
 
-EWindowMode::Type WindowModeOf(int32 Window)
-{
-	return Window == 2 ? EWindowMode::Fullscreen : Window == 1 ? EWindowMode::WindowedFullscreen : EWindowMode::Windowed;
-}
+EWindowMode::Type WindowModeOf(int32 Window) { return Window == 2 ? EWindowMode::Fullscreen : Window == 1 ? EWindowMode::WindowedFullscreen : EWindowMode::Windowed; }
 } // namespace
 
 void FLRSettings::Load()
@@ -89,6 +86,18 @@ void FLRSettings::ApplyVideo() const
 	U->ApplySettings(false);
 }
 
+void FLRSettings::ApplyUnattended() const
+{
+	Scalability::FQualityLevels Levels;
+	Levels.SetFromSingleQualityLevel(Quality);
+	Scalability::SetQualityLevels(Levels);
+	if (GEngine) {
+		GEngine->SetMaxFPS(0);
+	}
+	if (IConsoleVariable* VSync = IConsoleManager::Get().FindConsoleVariable(TEXT("r.VSync"))) {
+		VSync->Set(0, ECVF_SetByCode);
+	}
+}
 
 void FLRSettings::ToScreen(lr::VideoSettings& Screen) const
 {

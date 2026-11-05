@@ -14,6 +14,7 @@
 #include "LRCore/Common/Game.h"
 #include "LRCore/Menus/Menus.h"
 #include "LRCore/Race/Track.h"
+#include "LRData/Archive.h"
 #include "LRData/Cache.h"
 #include "LRData/Image.h"
 #include "LRData/Look.h"
@@ -22,19 +23,10 @@
 #include "Materials/MaterialInstanceDynamic.h"
 #include "ProceduralMeshComponent.h"
 
+using namespace LRUe;
+
 namespace
 {
-constexpr float Cm = 30.48f;
-FVector Ue(const lr::Vec3& V) { return FVector(V.x, -V.y, V.z) * Cm; }
-FVector Along(const lr::Vec3& V) { return FVector(V.x, -V.y, V.z); }
-FTransform FrameOf(const lr::Basis& B, const lr::Vec3& At) { return FTransform(FMatrix(Along(B.f), -Along(B.s), Along(B.u), Ue(At))); }
-std::string Upper(std::string S)
-{
-	for (char& C : S) {
-		C = char(std::toupper(uint8_t(C)));
-	}
-	return S;
-}
 const char* const Expressions[6] = {"DFLT", "ANGRY", "BLINK", "HAPPY", "SAD", "SUPRZ"};
 const char* const PartFiles[5] = {"", "MENUDATA/LEGOMAN.ADB", "MENUDATA/RSANIM.ADB", "MENUDATA/CBANIM.ADB", "MENUDATA/CMAMAN.ADB"};
 TArray<std::pair<std::string, std::string>> Library(const std::string& Base)
@@ -56,12 +48,7 @@ bool ULRRaceView::InitBase(UWorld* World, const lr::Cache& InCache)
 {
 	WorldRef = World;
 	Cache = &InCache;
-	if (!MaskedBase) {
-		MaskedBase = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/LR/Materials/M_ClassicMasked.M_ClassicMasked"));
-		TranslucentBase = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/LR/Materials/M_ClassicTranslucent.M_ClassicTranslucent"));
-		AdditiveBase = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/LR/Materials/M_ClassicAdditive.M_ClassicAdditive"));
-	}
-	return MaskedBase && TranslucentBase && AdditiveBase;
+	return LoadBases();
 }
 
 UTexture2D* ULRRaceView::ImageTexture(const std::string& Path, bool bFlip)
@@ -73,21 +60,16 @@ UTexture2D* ULRRaceView::ImageTexture(const std::string& Path, bool bFlip)
 	lr::Image I;
 	UTexture2D* Made = nullptr;
 	if (Cache->get(Path, I) && I.width && I.height) {
-		Made = UTexture2D::CreateTransient(int32(I.width), int32(I.height), PF_B8G8R8A8);
-		Made->SRGB = true;
-		Made->Filter = TF_Bilinear;
-		Made->NeverStream = true;
-		uint8* Mip = static_cast<uint8*>(Made->GetPlatformData()->Mips[0].BulkData.Lock(LOCK_READ_WRITE));
-		for (uint32 y = 0; y < I.height; y++) {
-			const uint32 Row = bFlip ? I.height - 1 - y : y;
-			for (uint32 x = 0; x < I.width; x++) {
-				const uint8* S = &I.rgba[(size_t(Row) * I.width + x) * 4];
-				uint8* D = &Mip[(size_t(y) * I.width + x) * 4];
-				D[0] = S[2], D[1] = S[1], D[2] = S[0], D[3] = 255;
+		Made = NewTexture(int32(I.width), int32(I.height), TF_Bilinear, TA_Wrap, [&](uint8* Mip) {
+			for (uint32 y = 0; y < I.height; y++) {
+				const uint32 Row = bFlip ? I.height - 1 - y : y;
+				for (uint32 x = 0; x < I.width; x++) {
+					const uint8* S = &I.rgba[(size_t(Row) * I.width + x) * 4];
+					uint8* D = &Mip[(size_t(y) * I.width + x) * 4];
+					D[0] = S[2], D[1] = S[1], D[2] = S[0], D[3] = 255;
+				}
 			}
-		}
-		Made->GetPlatformData()->Mips[0].BulkData.Unlock();
-		Made->UpdateResource();
+		});
 	}
 	Textures.Add(Key, Made);
 	return Made;
@@ -96,16 +78,15 @@ UTexture2D* ULRRaceView::ImageTexture(const std::string& Path, bool bFlip)
 const lr::Animation* ULRRaceView::MenuAnimation(const std::string& Path)
 {
 	const FString Key = UTF8_TO_TCHAR(Path.c_str());
-	if (lr::Animation** Found = MenuAnimations.Find(Key)) {
-		return *Found;
+	if (TUniquePtr<lr::Animation>* Found = MenuAnimations.Find(Key)) {
+		return Found->Get();
 	}
 	lr::AnimationFile F;
-	lr::Animation* A = nullptr;
+	TUniquePtr<lr::Animation> A;
 	if (!Path.empty() && Cache->get(Path, F)) {
-		A = new lr::Animation(lr::animationOf(F, false));
+		A = MakeUnique<lr::Animation>(lr::animationOf(F, false));
 	}
-	MenuAnimations.Add(Key, A);
-	return A;
+	return MenuAnimations.Add(Key, MoveTemp(A)).Get();
 }
 
 // A built mesh (a car, the held piece, a carousel item, the marks) as one component with a section per material: the
@@ -113,16 +94,10 @@ const lr::Animation* ULRRaceView::MenuAnimation(const std::string& Path)
 UProceduralMeshComponent* ULRRaceView::BuiltMesh(AActor* Actor, const lr::CarMesh& Mesh, const TArray<std::pair<std::string, std::string>>& Libraries,
 	const std::vector<std::string>& Names, float Alpha, bool bBright)
 {
-	UProceduralMeshComponent* C = NewObject<UProceduralMeshComponent>(Actor);
-	C->SetMobility(EComponentMobility::Movable);
-	C->SetCastShadow(false);
-	C->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	C->bUseAsyncCooking = false;
-	C->SetupAttachment(Actor->GetRootComponent());
-	C->RegisterComponent();
-	Actor->AddInstanceComponent(C);
-	lr::MaterialLibrary Lib;
-	Cache->get(Libraries.Num() ? Libraries[0].first : std::string(), Lib);
+	UProceduralMeshComponent* C = NewMesh(Actor);
+	static const lr::MaterialLibrary None;
+	const lr::MaterialLibrary* Found = Libraries.Num() ? LibraryAt(Libraries[0].first) : nullptr;
+	const lr::MaterialLibrary& Lib = Found ? *Found : None; // (none: the default colours below)
 	TMap<int32, int32> SectionOf;
 	struct FSection
 	{
@@ -191,14 +166,7 @@ ULRRaceView::FSkin ULRRaceView::BuildSkin(AActor* Actor, const lr::Model& M, con
 {
 	FSkin S;
 	S.Model = M;
-	UProceduralMeshComponent* C = NewObject<UProceduralMeshComponent>(Actor);
-	C->SetMobility(EComponentMobility::Movable);
-	C->SetCastShadow(false);
-	C->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	C->bUseAsyncCooking = false;
-	C->SetupAttachment(Actor->GetRootComponent());
-	C->RegisterComponent();
-	Actor->AddInstanceComponent(C);
+	UProceduralMeshComponent* C = NewMesh(Actor);
 	S.Component = C;
 	// A section per material (the body's "face" group only marks the head's place: left out).
 	TMap<uint16, int32> SectionOf;
@@ -413,23 +381,6 @@ void ULRRaceView::ClearThing(FMenuThing& T)
 	T = {};
 }
 
-namespace
-{
-// A skeleton file's nodes for the sampler.
-std::vector<lr::SkeletonNode> NodesOf(const lr::SkeletonFile& S)
-{
-	std::vector<lr::SkeletonNode> Out;
-	for (const lr::SkeletonFile::Node& N : S.nodes) {
-		int16 Parent = -1;
-		for (size_t k = 0; k < S.nodes.size(); k++) {
-			Parent = !N.parent.empty() && S.nodes[k].name == N.parent ? int16(k) : Parent;
-		}
-		Out.push_back({lr::vec(N.position), lr::basisOf({N.rotation[0], N.rotation[1], N.rotation[2], N.rotation[3]}), Parent});
-	}
-	return Out;
-}
-} // namespace
-
 UMaterialInterface* ULRRaceView::Picture(const std::string& File, bool bFlip, float Alpha)
 {
 	const FString Key = FString::Printf(TEXT("picture#%hs#%d#%g"), File.c_str(), bFlip, Alpha);
@@ -437,7 +388,7 @@ UMaterialInterface* ULRRaceView::Picture(const std::string& File, bool bFlip, fl
 		return Found->Get();
 	}
 	UMaterialInstanceDynamic* Mid = UMaterialInstanceDynamic::Create(Alpha < 1 ? TranslucentBase.Get() : MaskedBase.Get(), this);
-	if (UTexture2D* Tex = ImageTexture("MENUDATA/PARTDB/" + Upper(File) + ".BMP", bFlip)) {
+	if (UTexture2D* Tex = ImageTexture(AssetPath("MENUDATA/PARTDB/", File, ".BMP"), bFlip)) {
 		Mid->SetTextureParameterValue(TEXT("Tex"), Tex);
 	}
 	Mid->SetScalarParameterValue(TEXT("Alpha"), Alpha);
@@ -445,173 +396,190 @@ UMaterialInterface* ULRRaceView::Picture(const std::string& File, bool bFlip, fl
 	return Mid;
 }
 
-void ULRRaceView::BuildThing(FMenuThing& T, AActor* Actor, const lr::MenuScene& Scene, const lr::MenuScene::Thing& Thing, const lr::Menus& Menus,
-	const lr::Game& Game, const lr::MenuData& Data)
+namespace
+{
+// A ring's part name by index (none: empty).
+std::string PartName(const std::vector<lr::PartCatalog::Part>& Ring, int32 i) { return i >= 0 && size_t(i) < Ring.size() ? Ring[size_t(i)].name : std::string(); }
+} // namespace
+
+// A menu scene's thing built: its components, skins, nodes and animation in T.
+void ULRRaceView::BuildThing(FMenuThing& T, AActor* Actor, const lr::MenuScene& Scene, const lr::MenuScene::Thing& Thing, const lr::Menus& Menus, const lr::Game& Game,
+	const lr::MenuData& Data)
 {
 	using Kind = lr::MenuScene::Thing;
-	const lr::PartCatalog& Cat = Data.parts;
-	const TArray<std::pair<std::string, std::string>> BodyParts = Library("MENUDATA/PARTDB/BODYPART");
-	const TArray<std::pair<std::string, std::string>> Pieces = Library("MENUDATA/PIECEDB/LPIECEHI");
-	// A minifig's (or a ring item's) pictures, flipped as the face's: the face's for an expression, the torso's, the legs' (the torso flipped too: decided from the menus shots, its hands and print).
-	TMap<FString, UMaterialInterface*> Overrides;
-	const auto Dress = [&](const TCHAR* Material, const std::string& File, bool bFlip) { Overrides.Add(Material, this->Picture(File, bFlip)); };
-	const auto Name = [](const std::vector<lr::PartCatalog::Part>& Ring, int32 i) { return i >= 0 && size_t(i) < Ring.size() ? Ring[size_t(i)].name : std::string(); };
 	switch (Thing.kind) {
-	case Kind::Minifig: {
-		// The menus' body (the seated leg box in a car) skinned per vertex on the skeleton
-		// the core names, the hat's head from CBBODIES.GCB on the body's face node, the pictures.
-		const uint8 Face = Thing.looks[0], Hat = Thing.looks[1], Legs = Thing.looks[2], Torso = Thing.looks[3];
-		const int32 Body = Thing.seated ? 4 : FMath::Clamp(Thing.body, 0, 4);
-		const std::string Folder = "MENUDATA/PARTDB/MENUPART/";
-		Dress(TEXT("face"), Name(Cat.rings[1], Face) + Expressions[FMath::Min<int32>(Thing.looks[4], 5)], true);
-		Dress(TEXT("torso"), Name(Cat.rings[2], Torso), true);
-		Dress(TEXT("legs"), Name(Cat.rings[3], Legs), true);
-		lr::Model M;
-		if (size_t(Body) < Cat.bodies.size() && Cache->get(Folder + Upper(Cat.bodies[size_t(Body)]) + ".GDB", M)) {
-			for (const lr::Model::Section& Sec : M.sections) {
-				if (Sec.material < M.materials.size() && M.materials[Sec.material] == "face") {
-					T.FacePart = Sec.part;
-				}
-			}
-			T.Skins.Add(BuildSkin(Actor, M, BodyParts, &Overrides, true));
-		}
-		const std::string HatModel = size_t(Hat) < Cat.hatModels.size() ? Cat.hatModels[Hat] : std::string("head");
-		if (const lr::HeadLibrary::Head* H = Data.heads[0].find(HatModel)) {
-			T.Placed.Add(PlaceMesh(Actor, ModelOf(FString::Printf(TEXT("head#0#%hs"), HatModel.c_str()), &H->model, false), BodyParts, true, 1, &Overrides));
-		}
-		lr::SkeletonFile S;
-		if (Cache->get(Thing.skeleton.empty() && size_t(Body) < Cat.bodies.size() ? Folder + Upper(Cat.bodies[size_t(Body)]) + ".SDB" : Thing.skeleton, S)) {
-			T.Nodes = NodesOf(S);
-		}
-		T.Animation = MenuAnimation(!Thing.partFile.empty() ? Thing.partFile : std::string(PartFiles[Thing.parts]));
-		break;
-	}
-	case Kind::Entity: {
-		// A cinematic's entity: its model through the cinematic's folder, then MENUDATA/, its
-		// materials found by name across every library the cinematic's worlds loaded, newest first (the
-		// blended world names none); an animated one skinned on its nodes; its model's colour transform while a colour
-		// effect runs on it.
-		if (Scene.cinemaScreen >= Data.screens.size()) {
-			break;
-		}
-		const lr::MenuData::Screen& Sc = Data.screens[Scene.cinemaScreen];
-		if (Thing.entity[0] < 0 || size_t(Thing.entity[0]) >= Sc.cinemaWorlds.size()) {
-			break;
-		}
-		const auto Path = [&](const std::string& Base, const char* Ext) {
-			const std::string Own = Sc.cinemaFolder + Upper(Base) + Ext;
-			return Cache->has(Own) ? Own : "MENUDATA/" + Upper(Base) + Ext;
-		};
-		T.Libraries.Reset();
-		for (size_t i = Sc.cinemaLibraries.size(); i-- > 0;) {
-			T.Libraries.Add({Sc.cinemaLibraries[i].materials, Sc.cinemaLibraries[i].textures});
-		}
-		lr::Model M;
-		if (!Cache->get(Path(Thing.model, ".GDB"), M)) {
-			break;
-		}
-		if (Thing.entity[1]) {
-			FSkin& S = T.Skins.Add_GetRef(BuildSkin(Actor, M, T.Libraries, nullptr, false));
-			S.bColoured = Thing.coloured && M.kind == lr::Model::Vertices::Colored;
-			for (int32 c = 0; c < 3; c++) {
-				S.Shift[c] = Thing.colourShift[size_t(c)], S.Offset[c] = Thing.colourOffset[size_t(c)];
-			}
-		}
-		else {
-			FPlaced& P = T.Placed.Add_GetRef(PlaceMesh(Actor, ModelOf(UTF8_TO_TCHAR((Path(Thing.model, ".GDB")).c_str()), &M, false), T.Libraries, true, 1, nullptr));
-			if (M.kind == lr::Model::Vertices::Colored) {
-				Recolour(P, Thing);
-			}
-		}
-		break;
-	}
-	case Kind::Part: {
-		// A driver ring's item: a hat's own entry, or the ring's body part model with its picture.
-		const int32 Ring = Thing.colour;
-		if (Ring == 0) {
-			if (const lr::HeadLibrary::Head* H = Data.heads[0].find(Thing.model)) {
-				T.Placed.Add(PlaceMesh(Actor, ModelOf(FString::Printf(TEXT("head#0#%hs"), Thing.model.c_str()), &H->model, false), BodyParts, true, 1, nullptr));
-			}
-			break;
-		}
-		if (Ring == 1) {
-			Dress(TEXT("face"), Name(Cat.rings[1], Thing.type) + "DFLT", true);
-		}
-		else if (Ring == 2) {
-			Dress(TEXT("torso"), Name(Cat.rings[2], Thing.type), true);
-		}
-		else {
-			Dress(TEXT("legs"), Name(Cat.rings[3], Thing.type), true);
-		}
-		const FLRModelMesh* M = Model(UTF8_TO_TCHAR(("MENUDATA/PARTDB/MENUPART/" + Upper(Thing.model) + ".GDB").c_str()), false);
-		T.Placed.Add(PlaceMesh(Actor, M, BodyParts, true, 1, &Overrides));
-		break;
-	}
-	case Kind::Car: {
-		// The builders' and racer select's car is the menus' mesh; a cinematic's its swapped one; the garage's is its
-		// racer's, built here.
-		lr::CarMesh Built;
-		const lr::CarMesh* Mesh = Thing.model == "cinema" ? &Menus.cinemaCar : &Menus.carMesh;
-		if (Menus.screen == lr::ScreenGarage) {
-			const int32 n = int32(Menus.state.racers.size());
-			if (const lr::RacerRecord* R = n && Menus.state.shown >= 0 ? Game.racer(Menus.state.racers[size_t(Menus.state.shown % n)]) : nullptr) {
-				lr::Car Car;
-				Car.load(Data.pieces, R->pieces);
-				Car.chooseOffset(Data.pieces);
-				Built = Car.menuMesh(Data.pieces, Data.sets.materials);
-				Mesh = &Built;
-			}
-		}
-		T.Built.Add(BuiltMesh(Actor, *Mesh, Pieces, Data.pieces.materials, 1, Thing.lit));
-		break;
-	}
-	case Kind::Chassis: {
-		const lr::ChassisTable::Chassis* C = nullptr;
-		for (const lr::ChassisTable::Chassis& Each : Data.menuChassis.chassis) {
-			C = Each.model == Thing.model ? &Each : C;
-		}
-		if (!C) {
-			break;
-		}
-		const std::string Base = "MENUDATA/PIECEDB/";
-		TArray<std::pair<std::string, std::string>> Libs;
-		Libs.Add({Base + Upper(C->materials.empty() ? C->model : C->materials) + ".MDB", Base + Upper(C->textures.empty() ? C->model : C->textures) + ".TDB"});
-		T.Placed.Add(Place(Actor, UTF8_TO_TCHAR((Base + Upper(C->model) + ".GDB").c_str()), Libs, true));
-		lr::SkeletonFile S;
-		if (Cache->get(Base + Upper(C->skeleton.empty() ? C->model : C->skeleton) + ".SDB", S)) {
-			T.Nodes = NodesOf(S);
-		}
-		T.Animation = MenuAnimation(Base + Upper(C->animation.empty() ? C->model : C->animation) + ".ADB");
-		break;
-	}
+	case Kind::Minifig: BuildMinifig(T, Actor, Thing, Data); break;
+	case Kind::Entity: BuildEntity(T, Actor, Scene, Thing, Data); break;
+	case Kind::Part: BuildPart(T, Actor, Thing, Data); break;
+	case Kind::Car: BuildMenuCar(T, Actor, Thing, Menus, Game, Data); break;
+	case Kind::Chassis: BuildChassis(T, Actor, Thing, Data); break;
 	case Kind::Piece:
 		// A piece carousel's item, or the builder's held piece.
-		if (Scene.world.empty()) {
-			T.Built.Add(BuiltMesh(Actor, Menus.carouselItem(Thing.type, Thing.colour), Pieces, Data.pieces.materials, 1, false));
-			break;
-		}
-		T.Built.Add(BuiltMesh(Actor, Menus.heldMesh, Pieces, Data.pieces.materials, float(Thing.alpha) / 255.0f, Thing.lit));
+		T.Built.Add(Scene.world.empty() ? BuiltMesh(Actor, Menus.carouselItem(Thing.type, Thing.colour), Library("MENUDATA/PIECEDB/LPIECEHI"), Data.pieces.materials, 1, false)
+										: BuiltMesh(Actor, Menus.heldMesh, Library("MENUDATA/PIECEDB/LPIECEHI"), Data.pieces.materials, float(Thing.alpha) / 255.0f, Thing.lit));
 		break;
-	case Kind::Mark: {
-		// One 1x1 quad in the car's frame with the overlay's material (BLDRGRID's second), uvs (0.5, 0)-(0.99, 0.49).
-		lr::MaterialLibrary Grid;
-		Cache->get("MENUDATA/PIECEDB/BLDRGRID.MDB", Grid);
-		lr::CarMesh Quad;
-		const float X = Thing.at[0], Y = Thing.at[1], Z = Thing.at[2];
-		const float Corners[4][4] = {{X, Y, 0.5f, 0}, {X + 1, Y, 0.99f, 0}, {X + 1, Y + 1, 0.99f, 0.49f}, {X, Y + 1, 0.5f, 0.49f}};
-		for (const auto& Cn : Corners) {
-			Quad.vertices.push_back({{Cn[0], Cn[1], Z}, {0, 0, 127}, {Cn[2], Cn[3]}});
-		}
-		Quad.triangles.push_back({{0, 1, 2}, 0});
-		Quad.triangles.push_back({{0, 2, 3}, 0});
-		Quad.triangles.push_back({{0, 2, 1}, 0});
-		Quad.triangles.push_back({{0, 3, 2}, 0});
-		std::vector<std::string> Names = {Grid.materials.size() > 1 ? Grid.materials[1].name : std::string()};
-		T.Built.Add(BuiltMesh(Actor, Quad, Library("MENUDATA/PIECEDB/BLDRGRID"), Names, 1, false));
-		break;
-	}
+	case Kind::Mark: BuildMark(T, Actor, Thing); break;
 	default: break;
 	}
+}
+
+// A minifig: the menus' body (the seated leg box in a car) skinned per vertex on the skeleton the core names, the hat's
+// head from CBBODIES.GCB on the body's face node, and its pictures, flipped as the face's: the face's for an expression,
+// the torso's, the legs' (the torso flipped too: decided from the menus shots, its hands and print).
+void ULRRaceView::BuildMinifig(FMenuThing& T, AActor* Actor, const lr::MenuScene::Thing& Thing, const lr::MenuData& Data)
+{
+	const lr::PartCatalog& Cat = Data.parts;
+	const TArray<std::pair<std::string, std::string>> BodyParts = Library("MENUDATA/PARTDB/BODYPART");
+	TMap<FString, UMaterialInterface*> Overrides;
+	const uint8 Face = Thing.looks[0], Hat = Thing.looks[1], Legs = Thing.looks[2], Torso = Thing.looks[3];
+	const int32 Body = Thing.seated ? 4 : FMath::Clamp(Thing.body, 0, 4);
+	const std::string Folder = "MENUDATA/PARTDB/MENUPART/";
+	Overrides.Add(TEXT("face"), Picture(PartName(Cat.rings[1], Face) + Expressions[FMath::Min<int32>(Thing.looks[4], 5)], true));
+	Overrides.Add(TEXT("torso"), Picture(PartName(Cat.rings[2], Torso), true));
+	Overrides.Add(TEXT("legs"), Picture(PartName(Cat.rings[3], Legs), true));
+	lr::Model M;
+	if (size_t(Body) < Cat.bodies.size() && Cache->get(AssetPath(Folder, Cat.bodies[size_t(Body)], ".GDB"), M)) {
+		for (const lr::Model::Section& Sec : M.sections) {
+			if (Sec.material < M.materials.size() && M.materials[Sec.material] == "face") {
+				T.FacePart = Sec.part;
+			}
+		}
+		T.Skins.Add(BuildSkin(Actor, M, BodyParts, &Overrides, true));
+	}
+	const std::string HatModel = size_t(Hat) < Cat.hatModels.size() ? Cat.hatModels[Hat] : std::string("head");
+	if (const lr::HeadLibrary::Head* H = Data.heads[0].find(HatModel)) {
+		T.Placed.Add(PlaceMesh(Actor, ModelOf(FString::Printf(TEXT("head#0#%hs"), HatModel.c_str()), &H->model, false), BodyParts, true, 1, &Overrides));
+	}
+	lr::SkeletonFile S;
+	if (Cache->get(Thing.skeleton.empty() && size_t(Body) < Cat.bodies.size() ? AssetPath(Folder, Cat.bodies[size_t(Body)], ".SDB") : Thing.skeleton, S)) {
+		T.Nodes = lr::nodesOf(S);
+	}
+	T.Animation = MenuAnimation(!Thing.partFile.empty() ? Thing.partFile : std::string(PartFiles[Thing.parts]));
+}
+
+// A cinematic's entity: its model through the cinematic's folder, then MENUDATA/, its materials
+// found by name across every library the cinematic's worlds loaded, newest first (the blended world names
+// none); an animated one skinned on its nodes; its model's colour transform while a colour effect runs on it.
+void ULRRaceView::BuildEntity(FMenuThing& T, AActor* Actor, const lr::MenuScene& Scene, const lr::MenuScene::Thing& Thing, const lr::MenuData& Data)
+{
+	if (Scene.cinemaScreen >= Data.screens.size()) {
+		return;
+	}
+	const lr::MenuData::Screen& Sc = Data.screens[Scene.cinemaScreen];
+	if (Thing.entity[0] < 0 || size_t(Thing.entity[0]) >= Sc.cinemaWorlds.size()) {
+		return;
+	}
+	const auto Path = [&](const std::string& Base, const char* Ext) {
+		const std::string Own = Sc.cinemaFolder + lr::upper(Base) + Ext;
+		return Cache->has(Own) ? Own : "MENUDATA/" + lr::upper(Base) + Ext;
+	};
+	T.Libraries.Reset();
+	for (size_t i = Sc.cinemaLibraries.size(); i-- > 0;) {
+		T.Libraries.Add({Sc.cinemaLibraries[i].materials, Sc.cinemaLibraries[i].textures});
+	}
+	lr::Model M;
+	if (!Cache->get(Path(Thing.model, ".GDB"), M)) {
+		return;
+	}
+	if (Thing.entity[1]) {
+		FSkin& S = T.Skins.Add_GetRef(BuildSkin(Actor, M, T.Libraries, nullptr, false));
+		S.bColoured = Thing.coloured && M.kind == lr::Model::Vertices::Colored;
+		for (int32 c = 0; c < 3; c++) {
+			S.Shift[c] = Thing.colourShift[size_t(c)], S.Offset[c] = Thing.colourOffset[size_t(c)];
+		}
+	}
+	else {
+		FPlaced& P = T.Placed.Add_GetRef(PlaceMesh(Actor, ModelOf(UTF8_TO_TCHAR((Path(Thing.model, ".GDB")).c_str()), &M, false), T.Libraries, true, 1, nullptr));
+		if (M.kind == lr::Model::Vertices::Colored) {
+			Recolour(P, Thing);
+		}
+	}
+}
+
+// A driver ring's item: a hat's own entry, or the ring's body part model with its picture.
+void ULRRaceView::BuildPart(FMenuThing& T, AActor* Actor, const lr::MenuScene::Thing& Thing, const lr::MenuData& Data)
+{
+	const lr::PartCatalog& Cat = Data.parts;
+	const TArray<std::pair<std::string, std::string>> BodyParts = Library("MENUDATA/PARTDB/BODYPART");
+	TMap<FString, UMaterialInterface*> Overrides;
+	const int32 Ring = Thing.colour;
+	if (Ring == 0) {
+		if (const lr::HeadLibrary::Head* H = Data.heads[0].find(Thing.model)) {
+			T.Placed.Add(PlaceMesh(Actor, ModelOf(FString::Printf(TEXT("head#0#%hs"), Thing.model.c_str()), &H->model, false), BodyParts, true, 1, nullptr));
+		}
+		return;
+	}
+	if (Ring == 1) {
+		Overrides.Add(TEXT("face"), Picture(PartName(Cat.rings[1], Thing.type) + "DFLT", true));
+	}
+	else if (Ring == 2) {
+		Overrides.Add(TEXT("torso"), Picture(PartName(Cat.rings[2], Thing.type), true));
+	}
+	else {
+		Overrides.Add(TEXT("legs"), Picture(PartName(Cat.rings[3], Thing.type), true));
+	}
+	const FLRModelMesh* M = Model(UTF8_TO_TCHAR((AssetPath("MENUDATA/PARTDB/MENUPART/", Thing.model, ".GDB")).c_str()), false);
+	T.Placed.Add(PlaceMesh(Actor, M, BodyParts, true, 1, &Overrides));
+}
+
+// The builders' and racer select's car is the menus' mesh; a cinematic's its swapped one; the garage's is its racer's,
+// built here.
+void ULRRaceView::BuildMenuCar(FMenuThing& T, AActor* Actor, const lr::MenuScene::Thing& Thing, const lr::Menus& Menus, const lr::Game& Game, const lr::MenuData& Data)
+{
+	lr::CarMesh Built;
+	const lr::CarMesh* Mesh = Thing.model == "cinema" ? &Menus.cinemaCar : &Menus.carMesh;
+	if (Menus.screen == lr::ScreenGarage) {
+		const int32 n = int32(Menus.state.racers.size());
+		if (const lr::RacerRecord* R = n && Menus.state.shown >= 0 ? Game.racer(Menus.state.racers[size_t(Menus.state.shown % n)]) : nullptr) {
+			lr::Car Car;
+			Car.load(Data.pieces, R->pieces);
+			Car.chooseOffset(Data.pieces);
+			Built = Car.menuMesh(Data.pieces, Data.sets.materials);
+			Mesh = &Built;
+		}
+	}
+	T.Built.Add(BuiltMesh(Actor, *Mesh, Library("MENUDATA/PIECEDB/LPIECEHI"), Data.pieces.materials, 1, Thing.lit));
+}
+
+// A chassis on its own skeleton and animation (MENUDATA/PIECEDB/).
+void ULRRaceView::BuildChassis(FMenuThing& T, AActor* Actor, const lr::MenuScene::Thing& Thing, const lr::MenuData& Data)
+{
+	const lr::ChassisTable::Chassis* C = nullptr;
+	for (const lr::ChassisTable::Chassis& Each : Data.menuChassis.chassis) {
+		C = Each.model == Thing.model ? &Each : C;
+	}
+	if (!C) {
+		return;
+	}
+	const std::string Base = "MENUDATA/PIECEDB/";
+	TArray<std::pair<std::string, std::string>> Libs;
+	Libs.Add({AssetPath(Base, C->materials.empty() ? C->model : C->materials, ".MDB"), AssetPath(Base, C->textures.empty() ? C->model : C->textures, ".TDB")});
+	T.Placed.Add(Place(Actor, UTF8_TO_TCHAR((AssetPath(Base, C->model, ".GDB")).c_str()), Libs, true));
+	lr::SkeletonFile S;
+	if (Cache->get(AssetPath(Base, C->skeleton.empty() ? C->model : C->skeleton, ".SDB"), S)) {
+		T.Nodes = lr::nodesOf(S);
+	}
+	T.Animation = MenuAnimation(AssetPath(Base, C->animation.empty() ? C->model : C->animation, ".ADB"));
+}
+
+// A builder's mark: one 1x1 quad in the car's frame with the overlay's material (BLDRGRID's second), uvs (0.5, 0)-(0.99, 0.49).
+void ULRRaceView::BuildMark(FMenuThing& T, AActor* Actor, const lr::MenuScene::Thing& Thing)
+{
+	static const lr::MaterialLibrary None;
+	const lr::MaterialLibrary* Found = LibraryAt("MENUDATA/PIECEDB/BLDRGRID.MDB");
+	const lr::MaterialLibrary& Grid = Found ? *Found : None;
+	lr::CarMesh Quad;
+	const float X = Thing.at[0], Y = Thing.at[1], Z = Thing.at[2];
+	const float Corners[4][4] = {{X, Y, 0.5f, 0}, {X + 1, Y, 0.99f, 0}, {X + 1, Y + 1, 0.99f, 0.49f}, {X, Y + 1, 0.5f, 0.49f}};
+	for (const auto& Cn : Corners) {
+		Quad.vertices.push_back({{Cn[0], Cn[1], Z}, {0, 0, 127}, {Cn[2], Cn[3]}});
+	}
+	Quad.triangles.push_back({{0, 1, 2}, 0});
+	Quad.triangles.push_back({{0, 2, 3}, 0});
+	Quad.triangles.push_back({{0, 2, 1}, 0});
+	Quad.triangles.push_back({{0, 3, 2}, 0});
+	std::vector<std::string> Names = {Grid.materials.size() > 1 ? Grid.materials[1].name : std::string()};
+	T.Built.Add(BuiltMesh(Actor, Quad, Library("MENUDATA/PIECEDB/BLDRGRID"), Names, 1, false));
 }
 
 void ULRRaceView::PoseThing(FMenuThing& T, const lr::MenuScene& Scene, const lr::MenuScene::Thing& Thing, const lr::Menus& Menus, const FVector& At)
@@ -690,13 +658,7 @@ void ULRRaceView::PoseMenuSprites(FMenuView& V, const lr::MenuScene& Scene, cons
 	for (const lr::MenuData::CinemaWorld& World : Sc.cinemaWorlds) {
 		for (const lr::SceneFile::Sprite& File : World.scene.sprites) {
 			if (!V.Sprites.IsValid()) {
-				UProceduralMeshComponent* C = NewObject<UProceduralMeshComponent>(V.Actor.Get());
-				C->SetMobility(EComponentMobility::Movable);
-				C->SetCastShadow(false);
-				C->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-				C->bUseAsyncCooking = false;
-				C->SetupAttachment(V.Actor->GetRootComponent());
-				C->RegisterComponent();
+				UProceduralMeshComponent* C = NewMesh(V.Actor.Get());
 				V.Sprites = C;
 			}
 			const lr::Sprite S = lr::Sprite::of(File, false);
@@ -720,217 +682,254 @@ void ULRRaceView::PoseMenuSprites(FMenuView& V, const lr::MenuScene& Scene, cons
 	}
 }
 
-ULRRaceView::FMenuCamera ULRRaceView::PoseMenuView(UWorld* World, const lr::Cache& InCache, const lr::MenuData& Data, int32 v, const FVector& At,
-	const lr::MenuScene& Scene, const lr::Menus& Menus, const lr::Game& Game, AActor*& OutActor)
+ULRRaceView::FMenuCamera ULRRaceView::PoseMenuView(UWorld* World, const lr::Cache& InCache, const lr::MenuData& Data, int32 v, const FVector& At, const lr::MenuScene& Scene,
+	const lr::Menus& Menus, const lr::Game& Game, AActor*& OutActor)
 {
-	FMenuCamera Out;
 	OutActor = nullptr;
 	if (!InitBase(World, InCache)) {
-		return Out;
+		return {};
 	}
-	while (MenuViews.Num() <= v) {
-		MenuViews.AddDefaulted();
-	}
-	FMenuView& V = MenuViews[v];
-	if (!V.Actor.IsValid()) {
-		AActor* A = World->SpawnActor<AActor>(AActor::StaticClass(), FTransform(At));
-		USceneComponent* Root = NewObject<USceneComponent>(A, TEXT("Root"));
-		Root->SetMobility(EComponentMobility::Movable);
-		A->SetRootComponent(Root);
-		Root->RegisterComponent();
-		A->SetActorLocation(At);
-		V = {};
-		V.Actor = A;
-	}
-	AActor* A = V.Actor.Get();
-	OutActor = A;
+	FMenuView& View = MenuView(World, v, At);
+	AActor* Actor = View.Actor.Get();
+	OutActor = Actor;
 	// The view's lights (from the core).
 	LightMenu(Scene.lighting);
 	// Its world (a menu .WDB of that name: its entities where they stand, at rest), rebuilt when it changes; a
 	// cinematic's or preview's draws only what its cues show.
 	const bool bCinema = Scene.cinemaScreen != 0;
-	if (V.World != Scene.world || V.bCinema != bCinema) {
-		for (FMenuThing& T : V.Things) {
-			ClearThing(T);
-		}
-		V.Things.Reset();
-		TArray<UActorComponent*> Old;
-		A->GetComponents(Old);
-		for (UActorComponent* C : Old) {
-			if (C != A->GetRootComponent()) {
-				C->DestroyComponent();
-			}
-		}
-		V.World = Scene.world;
-		V.bCinema = bCinema;
-		V.Last = {};
-		V.Blended.Reset();
-		const std::string Wanted = "/" + Upper(Scene.world) + ".WDB";
-		for (const std::string& F : bCinema || !Scene.drawWorld ? std::vector<std::string>() : Cache->paths()) {
-			if (Scene.world.empty() || !F.starts_with("MENUDATA/") || !F.ends_with(Wanted)) {
-				continue;
-			}
-			lr::SceneFile S;
-			if (!Cache->get(F, S)) {
-				break;
-			}
-			const std::string Folder = F.substr(0, F.rfind('/') + 1);
-			TArray<std::pair<std::string, std::string>> Libraries;
-			for (size_t i = 0; i < S.materialLibraries.size(); i++) {
-				Libraries.Add({Folder + Upper(S.materialLibraries[i]) + ".MDB",
-					Folder + Upper(i < S.textureLists.size() ? S.textureLists[i] : S.materialLibraries[i]) + ".TDB"});
-			}
-			for (const std::vector<lr::SceneFile::Entity>* List : {&S.entities, &S.animated}) {
-				for (const lr::SceneFile::Entity& E : *List) {
-					if (E.model < 0 || size_t(E.model) >= S.models.size()) {
-						continue;
-					}
-					FPlaced P = Place(A, UTF8_TO_TCHAR((Folder + Upper(S.models[size_t(E.model)]) + ".GDB").c_str()), Libraries, true);
-					if (!P.Mesh) {
-						continue;
-					}
-					const lr::Basis B = lr::basisFromForwardUp(lr::normalize(lr::vec(E.forward)), lr::normalize(lr::vec(E.up)));
-					const float K = E.scale * P.Mesh->Scale;
-					const FTransform T = FrameOf({B.f * K, B.s * K, B.u * K}, lr::vec(E.position)) * FTransform(At);
-					TArray<FQuat> R;
-					for (TWeakObjectPtr<UProceduralMeshComponent>& C : P.Parts) {
-						if (C.IsValid()) {
-							C->SetWorldTransform(T);
-						}
-					}
-					R.Add(T.GetRotation());
-					Relight(P, R);
-				}
-			}
-			// The view's blended world (the driver builder's spotlight cone and the stand's shadow,
-			// racer select's turntable shadows): the folder's BLENDED.WDB drawn after the world and the view's things
-			// (its translucent sort later), its materials found by name in the libraries the world loaded, newest first
-			// (it names none); its animated entities play their part at the scene's frame.
-			lr::SceneFile B;
-			if (Scene.blendedWorld && Cache->get(Folder + "BLENDED.WDB", B)) {
-				TArray<std::pair<std::string, std::string>> Newest;
-				for (int32 i = Libraries.Num(); i-- > 0;) {
-					Newest.Add(Libraries[i]);
-				}
-				for (const std::vector<lr::SceneFile::Entity>* List : {&B.entities, &B.animated}) {
-					for (const lr::SceneFile::Entity& E : *List) {
-						if (E.model < 0 || size_t(E.model) >= B.models.size()) {
-							continue;
-						}
-						FBlended& Bl = V.Blended.AddDefaulted_GetRef();
-						Bl.Placed = Place(A, UTF8_TO_TCHAR((Folder + Upper(B.models[size_t(E.model)]) + ".GDB").c_str()), Newest, true);
-						if (!Bl.Placed.Mesh) {
-							V.Blended.Pop();
-							continue;
-						}
-						for (TWeakObjectPtr<UProceduralMeshComponent>& C : Bl.Placed.Parts) {
-							if (C.IsValid()) {
-								C->SetTranslucentSortPriority(1);
-							}
-						}
-						Bl.Where = {lr::vec(E.position), lr::basisFromForwardUp(lr::normalize(lr::vec(E.forward)), lr::normalize(lr::vec(E.up)))};
-						Bl.Scale = E.scale * Bl.Placed.Mesh->Scale;
-						lr::SkeletonFile Skeleton;
-						if (List == &B.animated && E.skeleton >= 0 && size_t(E.skeleton) < B.skeletons.size() &&
-							Cache->get(Folder + Upper(B.skeletons[size_t(E.skeleton)]) + ".SDB", Skeleton)) {
-							Bl.Nodes = NodesOf(Skeleton);
-							Bl.Animation = E.animation >= 0 && size_t(E.animation) < B.animations.size()
-								? MenuAnimation(Folder + Upper(B.animations[size_t(E.animation)]) + ".ADB")
-								: nullptr;
-							Bl.Part = E.part;
-						}
-					}
-				}
-			}
-			break;
+	if (View.World != Scene.world || View.bCinema != bCinema) {
+		ResetMenuView(View, Scene.world, bCinema);
+		if (!bCinema && Scene.drawWorld) {
+			BuildMenuWorld(View, Scene, At);
 		}
 	}
-	// The blended world's entities posed: plain ones where they stand, animated ones on their nodes at the scene's frame.
-	for (FBlended& Bl : V.Blended) {
-		const lr::Basis& R = Bl.Where.rotation;
-		const FTransform Whole = FrameOf({R.f * Bl.Scale, R.s * Bl.Scale, R.u * Bl.Scale}, Bl.Where.position) * FTransform(At);
+	PoseBlended(View, Scene, At);
+	PoseMenuThings(View, Scene, Menus, Game, Data, At);
+	if (bCinema && Scene.camera) {
+		PoseMenuSprites(View, Scene, Data);
+	}
+	// The camera: the core's (the world's when it has one; a cinematic's stack), else the last.
+	const FVector Ahead = Along({Scene.target[0] - Scene.eye[0], Scene.target[1] - Scene.eye[1], Scene.target[2] - Scene.eye[2]});
+	if (!Scene.camera || Ahead.IsNearlyZero()) {
+		return View.Last;
+	}
+	FMenuCamera Out;
+	Out.Eye = Ue(lr::vec(Scene.eye)) + At;
+	Out.Rotation = FRotationMatrix::MakeFromXZ(Ahead, Along(lr::vec(Scene.up))).Rotator();
+	Out.Fov = Scene.fov;
+	Out.bValid = true;
+	View.Last = Out;
+	return Out;
+}
+
+// Menu view v and its actor, made when first asked for.
+ULRRaceView::FMenuView& ULRRaceView::MenuView(UWorld* World, int32 v, const FVector& At)
+{
+	while (MenuViews.Num() <= v) {
+		MenuViews.AddDefaulted();
+	}
+	FMenuView& View = MenuViews[v];
+	if (!View.Actor.IsValid()) {
+		AActor* Actor = World->SpawnActor<AActor>(AActor::StaticClass(), FTransform(At));
+		USceneComponent* Root = NewObject<USceneComponent>(Actor, TEXT("Root"));
+		Root->SetMobility(EComponentMobility::Movable);
+		Actor->SetRootComponent(Root);
+		Root->RegisterComponent();
+		Actor->SetActorLocation(At);
+		View = {};
+		View.Actor = Actor;
+	}
+	return View;
+}
+
+// Everything the view drew goes; it now shows WorldName (a cinematic's or not).
+void ULRRaceView::ResetMenuView(FMenuView& View, const std::string& WorldName, bool bCinema)
+{
+	for (FMenuThing& Thing : View.Things) {
+		ClearThing(Thing);
+	}
+	View.Things.Reset();
+	AActor* Actor = View.Actor.Get();
+	TArray<UActorComponent*> Old;
+	Actor->GetComponents(Old);
+	for (UActorComponent* Component : Old) {
+		if (Component != Actor->GetRootComponent()) {
+			Component->DestroyComponent();
+		}
+	}
+	View.World = WorldName;
+	View.bCinema = bCinema;
+	View.Last = {};
+	View.Blended.Reset();
+}
+
+// The scene's world: the first MENUDATA folder's .WDB of its name, its entities where they stand, lit once; then its
+// blended world.
+void ULRRaceView::BuildMenuWorld(FMenuView& View, const lr::MenuScene& Scene, const FVector& At)
+{
+	if (Scene.world.empty()) {
+		return;
+	}
+	const std::string Wanted = "/" + lr::upper(Scene.world) + ".WDB";
+	for (const std::string& File : Cache->paths()) {
+		if (!File.starts_with("MENUDATA/") || !File.ends_with(Wanted)) {
+			continue;
+		}
+		lr::SceneFile World;
+		if (!Cache->get(File, World)) {
+			return;
+		}
+		const std::string Folder = FolderOf(File);
+		const TArray<std::pair<std::string, std::string>> Libraries = LibrariesOf(World, Folder);
+		for (const std::vector<lr::SceneFile::Entity>* List : {&World.entities, &World.animated}) {
+			for (const lr::SceneFile::Entity& E : *List) {
+				if (E.model < 0 || size_t(E.model) >= World.models.size()) {
+					continue;
+				}
+				FPlaced Placed = Place(View.Actor.Get(), UTF8_TO_TCHAR((AssetPath(Folder, World.models[size_t(E.model)], ".GDB")).c_str()), Libraries, true);
+				if (!Placed.Mesh) {
+					continue;
+				}
+				const lr::Basis Rows = lr::basisFromForwardUp(lr::normalize(lr::vec(E.forward)), lr::normalize(lr::vec(E.up)));
+				const FTransform T = FrameOf(Rows * (E.scale * Placed.Mesh->Scale), lr::vec(E.position)) * FTransform(At);
+				for (TWeakObjectPtr<UProceduralMeshComponent>& Part : Placed.Parts) {
+					if (Part.IsValid()) {
+						Part->SetWorldTransform(T);
+					}
+				}
+				Relight(Placed, {T.GetRotation()});
+			}
+		}
+		if (Scene.blendedWorld) {
+			AddBlendedWorld(View, Folder, Libraries);
+		}
+		return;
+	}
+}
+
+// The view's blended world (the driver builder's spotlight cone and the stand's shadow, racer select's
+// turntable shadows): the folder's BLENDED.WDB drawn after the world and the view's things (its translucent sort later),
+// its materials found by name in the libraries the world loaded, newest first (it names none); its
+// animated entities play their part at the scene's frame.
+void ULRRaceView::AddBlendedWorld(FMenuView& View, const std::string& Folder, const TArray<std::pair<std::string, std::string>>& Libraries)
+{
+	lr::SceneFile Blended;
+	if (!Cache->get(Folder + "BLENDED.WDB", Blended)) {
+		return;
+	}
+	TArray<std::pair<std::string, std::string>> Newest;
+	for (int32 i = Libraries.Num(); i-- > 0;) {
+		Newest.Add(Libraries[i]);
+	}
+	for (const std::vector<lr::SceneFile::Entity>* List : {&Blended.entities, &Blended.animated}) {
+		for (const lr::SceneFile::Entity& E : *List) {
+			if (E.model < 0 || size_t(E.model) >= Blended.models.size()) {
+				continue;
+			}
+			FBlended& Entry = View.Blended.AddDefaulted_GetRef();
+			Entry.Placed = Place(View.Actor.Get(), UTF8_TO_TCHAR((AssetPath(Folder, Blended.models[size_t(E.model)], ".GDB")).c_str()), Newest, true);
+			if (!Entry.Placed.Mesh) {
+				View.Blended.Pop();
+				continue;
+			}
+			for (TWeakObjectPtr<UProceduralMeshComponent>& Part : Entry.Placed.Parts) {
+				if (Part.IsValid()) {
+					Part->SetTranslucentSortPriority(1);
+				}
+			}
+			Entry.Where = {lr::vec(E.position), lr::basisFromForwardUp(lr::normalize(lr::vec(E.forward)), lr::normalize(lr::vec(E.up)))};
+			Entry.Scale = E.scale * Entry.Placed.Mesh->Scale;
+			lr::SkeletonFile Skeleton;
+			if (List == &Blended.animated && E.skeleton >= 0 && size_t(E.skeleton) < Blended.skeletons.size() &&
+				Cache->get(AssetPath(Folder, Blended.skeletons[size_t(E.skeleton)], ".SDB"), Skeleton)) {
+				Entry.Nodes = lr::nodesOf(Skeleton);
+				Entry.Animation = E.animation >= 0 && size_t(E.animation) < Blended.animations.size()
+					? MenuAnimation(AssetPath(Folder, Blended.animations[size_t(E.animation)], ".ADB"))
+					: nullptr;
+				Entry.Part = E.part;
+			}
+		}
+	}
+}
+
+// The blended world's entities posed: plain ones where they stand, animated ones on their nodes at the scene's frame.
+void ULRRaceView::PoseBlended(FMenuView& View, const lr::MenuScene& Scene, const FVector& At)
+{
+	for (FBlended& Entry : View.Blended) {
+		const FTransform Whole = FrameOf(Entry.Where.rotation * Entry.Scale, Entry.Where.position) * FTransform(At);
 		TArray<FTransform> Nodes;
 		TArray<FQuat> Rotations;
-		if (!Bl.Nodes.empty()) {
-			const lr::Animation* Anim = Bl.Animation && Bl.Part >= 0 && size_t(Bl.Part) < Bl.Animation->parts.size() ? Bl.Animation : nullptr;
+		if (!Entry.Nodes.empty()) {
+			const lr::Animation* Anim = Entry.Animation && Entry.Part >= 0 && size_t(Entry.Part) < Entry.Animation->parts.size() ? Entry.Animation : nullptr;
 			std::vector<lr::NodeMatrix> Posed;
-			lr::poseSkeleton(Bl.Nodes, Anim, {Anim ? Bl.Part : -1, Scene.blendedFrame, true}, Bl.Where, Bl.Scale, Posed);
+			lr::poseSkeleton(Entry.Nodes, Anim, {Anim ? Entry.Part : -1, Scene.blendedFrame, true}, Entry.Where, Entry.Scale, Posed);
 			for (const lr::NodeMatrix& N : Posed) {
 				Nodes.Add(FrameOf(N.rows, N.position) * FTransform(At));
 				Rotations.Add(Nodes.Last().GetRotation());
 			}
 		}
-		PoseNodes(Bl.Placed, Nodes, Whole);
+		PoseNodes(Entry.Placed, Nodes, Whole);
 		if (Rotations.IsEmpty()) {
 			Rotations.Add(Whole.GetRotation());
 		}
-		Relight(Bl.Placed, Rotations);
+		Relight(Entry.Placed, Rotations);
 	}
-	// Its things, rebuilt when what they are changes, posed every frame; a ring's items lit each by its colours
-	// (ambient the primary, the light the secondary along the scene's light).
-	const bool bRing = Scene.world.empty() && !bCinema;
-	V.Things.SetNum(FMath::Max(V.Things.Num(), int32(Scene.things.size())));
-	for (int32 i = 0; i < V.Things.Num(); i++) {
-		FMenuThing& T = V.Things[i];
+}
+
+// What a thing is, as a key: when it changes the thing is built again.
+FString ULRRaceView::ThingKey(const lr::MenuScene::Thing& Th, const lr::Menus& Menus, bool bRing)
+{
+	switch (Th.kind) {
+	case lr::MenuScene::Thing::Minifig:
+		return FString::Printf(TEXT("M%d %d %d %d %d %d %d %d %hs %hs"), Th.seated, Th.body, Th.looks[0], Th.looks[1], Th.looks[2], Th.looks[3], Th.looks[4], int32(Th.parts),
+			Th.skeleton.c_str(), Th.partFile.c_str());
+	case lr::MenuScene::Thing::Entity:
+		// (Built again when a colour effect starts, moves or stops on its model.)
+		return FString::Printf(TEXT("E%d %d %d %hs %d %d %d %d %d %d %d"), Th.entity[0], Th.entity[1], Th.entity[2], Th.model.c_str(), Th.coloured, Th.colourShift[0],
+			Th.colourShift[1], Th.colourShift[2], Th.colourOffset[0], Th.colourOffset[1], Th.colourOffset[2]);
+	case lr::MenuScene::Thing::Part: return FString::Printf(TEXT("P%d %d %hs"), Th.colour, Th.type, Th.model.c_str());
+	case lr::MenuScene::Thing::Car: {
+		const lr::CarMesh& Mesh = Th.model == "cinema" ? Menus.cinemaCar : Menus.carMesh;
+		return FString::Printf(TEXT("C%hs %d %d %u %d"), Th.model.c_str(), int32(Mesh.vertices.size()), Menus.state.shown,
+			FCrc::MemCrc32(Mesh.vertices.data(), int32(Mesh.vertices.size() * sizeof(lr::CarMesh::Vertex))), Th.lit);
+	}
+	case lr::MenuScene::Thing::Chassis: return FString::Printf(TEXT("H%hs"), Th.model.c_str());
+	case lr::MenuScene::Thing::Piece:
+		return bRing
+			? FString::Printf(TEXT("R%d %d %08x %08x"), Th.type, Th.colour, Th.primary, Th.secondary)
+			: FString::Printf(TEXT("K%d %d %d %d %u %d"), Th.type, Th.colour, Th.alpha, Th.lit,
+				  FCrc::MemCrc32(Menus.heldMesh.vertices.data(), int32(Menus.heldMesh.vertices.size() * sizeof(lr::CarMesh::Vertex))), int32(Menus.heldMesh.vertices.size()));
+	case lr::MenuScene::Thing::Mark: return FString::Printf(TEXT("X%g %g %g"), Th.at[0], Th.at[1], Th.at[2]);
+	default: return FString();
+	}
+}
+
+// Its things, rebuilt when what they are changes, posed every frame; a ring's items lit each by its colours (ambient the
+// primary, the light the secondary along the scene's light).
+void ULRRaceView::PoseMenuThings(FMenuView& View, const lr::MenuScene& Scene, const lr::Menus& Menus, const lr::Game& Game, const lr::MenuData& Data, const FVector& At)
+{
+	const bool bRing = Scene.world.empty() && Scene.cinemaScreen == 0;
+	View.Things.SetNum(FMath::Max(View.Things.Num(), int32(Scene.things.size())));
+	for (int32 i = 0; i < View.Things.Num(); i++) {
+		FMenuThing& Thing = View.Things[i];
 		if (size_t(i) >= Scene.things.size()) {
-			if (!T.Key.IsEmpty()) {
-				ClearThing(T);
+			if (!Thing.Key.IsEmpty()) {
+				ClearThing(Thing);
 			}
 			continue;
 		}
 		const lr::MenuScene::Thing& Th = Scene.things[size_t(i)];
 		if (bRing) {
-			lr::MenuLighting Item = {Th.primary | 0xff000000u, {{Scene.lighting.lights.empty() ? lr::normalize(lr::Vec3{-1, -1, -1}) : Scene.lighting.lights[0].first,
-				Th.secondary | 0xff000000u}}};
+			lr::MenuLighting Item = {Th.primary | 0xff000000u,
+				{{Scene.lighting.lights.empty() ? lr::normalize(lr::Vec3{-1, -1, -1}) : Scene.lighting.lights[0].first, Th.secondary | 0xff000000u}}};
 			LightMenu(Item);
 		}
-		FString Key;
-		switch (Th.kind) {
-		case lr::MenuScene::Thing::Minifig:
-			Key = FString::Printf(TEXT("M%d %d %d %d %d %d %d %d %hs %hs"), Th.seated, Th.body, Th.looks[0], Th.looks[1], Th.looks[2], Th.looks[3], Th.looks[4],
-				int32(Th.parts), Th.skeleton.c_str(), Th.partFile.c_str());
-			break;
-		case lr::MenuScene::Thing::Entity:
-			// (Built again when a colour effect starts, moves or stops on its model.)
-			Key = FString::Printf(TEXT("E%d %d %d %hs %d %d %d %d %d %d %d"), Th.entity[0], Th.entity[1], Th.entity[2], Th.model.c_str(), Th.coloured,
-				Th.colourShift[0], Th.colourShift[1], Th.colourShift[2], Th.colourOffset[0], Th.colourOffset[1], Th.colourOffset[2]);
-			break;
-		case lr::MenuScene::Thing::Part: Key = FString::Printf(TEXT("P%d %d %hs"), Th.colour, Th.type, Th.model.c_str()); break;
-		case lr::MenuScene::Thing::Car: {
-			const lr::CarMesh& Mesh = Th.model == "cinema" ? Menus.cinemaCar : Menus.carMesh;
-			Key = FString::Printf(TEXT("C%hs %d %d %u %d"), Th.model.c_str(), int32(Mesh.vertices.size()), Menus.state.shown,
-				FCrc::MemCrc32(Mesh.vertices.data(), int32(Mesh.vertices.size() * sizeof(lr::CarMesh::Vertex))), Th.lit);
-			break;
+		const FString Key = ThingKey(Th, Menus, bRing);
+		if (Key != Thing.Key) {
+			ClearThing(Thing);
+			Thing.Key = Key;
+			BuildThing(Thing, View.Actor.Get(), Scene, Th, Menus, Game, Data);
 		}
-		case lr::MenuScene::Thing::Chassis: Key = FString::Printf(TEXT("H%hs"), Th.model.c_str()); break;
-		case lr::MenuScene::Thing::Piece:
-			Key = bRing ? FString::Printf(TEXT("R%d %d %08x %08x"), Th.type, Th.colour, Th.primary, Th.secondary)
-						: FString::Printf(TEXT("K%d %d %d %d %u %d"), Th.type, Th.colour, Th.alpha, Th.lit,
-							  FCrc::MemCrc32(Menus.heldMesh.vertices.data(), int32(Menus.heldMesh.vertices.size() * sizeof(lr::CarMesh::Vertex))),
-							  int32(Menus.heldMesh.vertices.size()));
-			break;
-		case lr::MenuScene::Thing::Mark: Key = FString::Printf(TEXT("X%g %g %g"), Th.at[0], Th.at[1], Th.at[2]); break;
-		default: break;
-		}
-		if (Key != T.Key) {
-			ClearThing(T);
-			T.Key = Key;
-			BuildThing(T, A, Scene, Th, Menus, Game, Data);
-		}
-		PoseThing(T, Scene, Th, Menus, At);
+		PoseThing(Thing, Scene, Th, Menus, At);
 	}
-	if (bCinema && Scene.camera) {
-		PoseMenuSprites(V, Scene, Data);
-	}
-	// The camera: the core's (the world's when it has one; a cinematic's stack), else the last.
-	const FVector Ahead = Along({Scene.target[0] - Scene.eye[0], Scene.target[1] - Scene.eye[1], Scene.target[2] - Scene.eye[2]});
-	if (!Scene.camera || Ahead.IsNearlyZero()) {
-		return V.Last;
-	}
-	Out.Eye = Ue(lr::vec(Scene.eye)) + At;
-	Out.Rotation = FRotationMatrix::MakeFromXZ(Ahead, Along(lr::vec(Scene.up))).Rotator();
-	Out.Fov = Scene.fov;
-	Out.bValid = true;
-	V.Last = Out;
-	return Out;
 }

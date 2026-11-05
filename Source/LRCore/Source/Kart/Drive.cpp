@@ -12,6 +12,13 @@ namespace {
 
 constexpr float FullThrust = 54.0f;
 constexpr float MaxRadius = 4096.0f, MinRadius = 40.0f;
+// The stick's turn (1 / radius) from the slightest to full lock.
+constexpr float WidestCurvature = 0.00025f, TightestCurvature = 0.025f;
+// Steering starts only with the nose this square to the motion (unless already steering) and below this speed.
+constexpr float SteerAlign = 0.89999998f, SteerMaxSpeed = 0.155f;
+// A powerslide needs the nose this square to the motion and this heading speed.
+constexpr float SlideAlign = 0.85000002f, SlideMinSpeed = 0.050000001f;
+constexpr float MinSlideTightness = 0.050000001f; // a slide's least tightness (its steering gain less one)
 
 // The tightest turn the wheels in contact can hold at this speed.
 float tightestTurn(const Kart& k, const KartParams& p)
@@ -35,14 +42,13 @@ float tightestTurn(const Kart& k, const KartParams& p)
 bool canSteer(const Kart& k, float radius)
 {
 	const float align = dot(k.rotation.f, k.velocityDirection);
-	return !(align <= 0 || (radius < 0 && k.turnRadius > 0) || (radius > 0 && k.turnRadius < 0) ||
-		(!(k.flags & KartSteering) && align < 0.89999998f) || k.wallHits != 0 || k.speed > 0.155f);
+	return !(align <= 0 || (radius < 0 && k.turnRadius > 0) || (radius > 0 && k.turnRadius < 0) || (!(k.flags & KartSteering) && align < SteerAlign) || k.wallHits != 0 ||
+		k.speed > SteerMaxSpeed);
 }
 
 bool canPowerslide(const Kart& k)
 {
-	return !(k.wallHits != 0 || (!(k.flags & KartHover) && k.contacts < 3) || dot(k.rotation.f, k.velocityDirection) <= 0.85000002f ||
-		k.headingSpeed < 0.050000001f);
+	return !(k.wallHits != 0 || (!(k.flags & KartHover) && k.contacts < 3) || dot(k.rotation.f, k.velocityDirection) <= SlideAlign || k.headingSpeed < SlideMinSpeed);
 }
 
 float clampRadius(float r)
@@ -67,8 +73,8 @@ void setThrust(Kart& k, const KartParams& p, float thrust)
 void steerInput(Driver& d, const KartParams& p, float steer)
 {
 	const float x = ((d.flags & DriverCursed) ? -steer : steer) * p.handlingScale;
-	const float q = (0.025f - 0.00025f) * x;
-	d.radius = x > 0 ? 1 / (0.00025f + q) : x < 0 ? 1 / (q - 0.00025f) : 0;
+	const float q = (TightestCurvature - WidestCurvature) * x;
+	d.radius = x > 0 ? 1 / (WidestCurvature + q) : x < 0 ? 1 / (q - WidestCurvature) : 0;
 }
 
 void throttleInput(Driver& d, const Kart& k, float y)
@@ -137,7 +143,7 @@ void applyDriver(Driver& d, Kart& k, const KartParams& p)
 				stopSteering(k);
 			}
 			else {
-				const float j = std::max(0.050000001f, 1 - m / tightest);
+				const float j = std::max(MinSlideTightness, 1 - m / tightest);
 				if (d.tightSlide) {
 					startSteering(k, j + j + 1, 0.25f, Pi);
 				}

@@ -24,7 +24,7 @@ namespace lr {
 struct LRCORE_API CarMesh {
 	struct Vertex {
 		std::array<float, 3> position; // the chassis model's units
-		std::array<int8_t, 3> normal;  // x 1/127
+		std::array<int8_t, 3> normal; // x 1/127
 		std::array<float, 2> uv;
 		bool operator==(const Vertex&) const = default;
 	};

@@ -3,6 +3,7 @@
 // one's car and minifig in a 3D view, the "chosen" animation the screen waits for before it leaves.
 
 #include "LRCore/Menus/Menus.h"
+#include "LRData/Archive.h"
 #include "LRCore/Common/Tables.h"
 
 #include "Show/Animation.h"
@@ -34,13 +35,6 @@ uint32_t frameColour(int32_t theme)
 {
 	const ExecutableTables& t = executableTables();
 	return t.frameColours[t.frameMap[size_t(std::clamp(theme, 0, 24))] % 5];
-}
-
-bool sameName(std::string_view a, std::string_view b, size_t most)
-{
-	a = a.substr(0, std::min(a.size(), most));
-	b = b.substr(0, std::min(b.size(), most));
-	return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) { return std::tolower(uint8_t(x)) == std::tolower(uint8_t(y)); });
 }
 
 // A record time as m:ss:cc.
@@ -99,10 +93,10 @@ void Menus::buildRaceSetup(Game& g)
 		addItem(t, t[state.items[1]].carousel, make(t, data->screens[screen].layout, name, "setimage", -1));
 	}
 	if (circuitScreen) {
-		item(91, StyleMenuFont, 74);                // hosting
+		item(91, StyleMenuFont, 74); // hosting
 		state.items[2] = item(92, StyleMenuFont, -1); // the champion
 		state.items[3] = item(93, StyleMenuFont, -1); // the race's name
-		item(95, StyleMenuFont, 75);                // circuit number
+		item(95, StyleMenuFont, 75); // circuit number
 		state.items[4] = item(96, StyleMenuFont, -1); // its number
 	}
 	else {
@@ -293,7 +287,7 @@ void Menus::buildRacerSelect(Game& g)
 		addItem(t, car, makeNamed(t, NameContext, StyleMenuFont, -1));
 	}
 	alignRight(t, item(StyleBanner, StyleBanner, g.versus ? 21 + g.players : 20), 20);
-	state.items[1] = item(9, StyleNuButton, 185);    // CONFIG
+	state.items[1] = item(9, StyleNuButton, 185); // CONFIG
 	state.items[2] = item(NameGoRace, StyleCheck, TextOk);
 	state.items[3] = item(NameGoNext, StyleCheck, TextOk);
 	state.items[4] = item(NameBack, StyleCancel, TextCancel);
@@ -393,8 +387,7 @@ void Menus::updateRaceScreens(Game& g, int32_t dt)
 				startIdle(g);
 			}
 		}
-		else if (state.animating && state.blendMs < 0 && partEnded(data->showcase, state.driverPart, state.driverFrame) &&
-			g.chosen[0].list == RacerList::None && !leaving) {
+		else if (state.animating && state.blendMs < 0 && partEnded(data->showcase, state.driverPart, state.driverFrame) && g.chosen[0].list == RacerList::None && !leaving) {
 			startIdle(g);
 		}
 		// The leave gate: open unless the minifig is playing a part that hasn't ended; during the chosen blend the old
@@ -438,7 +431,7 @@ void Menus::updateRaceScreens(Game& g, int32_t dt)
 		state.fade = startFade(250, false, 0xff000000, Viewport);
 		state.previewChanged = false;
 	}
-	(void) t;
+	(void)t;
 }
 
 void Menus::raceScreenNotice(Game& g, WidgetTree& t, int16_t w, int32_t what)

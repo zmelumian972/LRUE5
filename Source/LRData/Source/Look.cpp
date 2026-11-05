@@ -1,9 +1,9 @@
 #include "LRData/Look.h"
+#include "LRData/Archive.h"
 
 #include "Bytes.h"
 #include "LRData/Image.h"
 #include "LRData/Tokens.h"
-
 
 namespace lr {
 
@@ -49,20 +49,6 @@ enum : int {
 };
 
 std::string upTo8(std::string_view s) { return std::string(s.substr(0, 8)); }
-
-bool equalsIgnoreCase(std::string_view a, std::string_view b)
-{
-	if (a.size() != b.size()) {
-		return false;
-	}
-	for (size_t i = 0; i < a.size(); i++) {
-		const auto lower = [](char c) { return c >= 'A' && c <= 'Z' ? char(c + 32) : c; };
-		if (lower(a[i]) != lower(b[i])) {
-			return false;
-		}
-	}
-	return true;
-}
 
 std::array<uint8_t, 4> colour(TokenReader& r)
 {
@@ -165,8 +151,7 @@ bool MaterialLibrary::decode(std::span<const uint8_t> bytes)
 			else if (key == KeyRotate) {
 				m.rotate = true;
 			}
-			else if (key == KeyFlat || key == KeyGouraud || key == KeyModulate || key == KeyDecal ||
-				(key >= KeyIgnoredFirst && key <= KeyIgnoredLast)) {
+			else if (key == KeyFlat || key == KeyGouraud || key == KeyModulate || key == KeyDecal || (key >= KeyIgnoredFirst && key <= KeyIgnoredLast)) {
 			}
 			else {
 				return false;

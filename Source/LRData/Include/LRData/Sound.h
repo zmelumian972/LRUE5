@@ -17,7 +17,7 @@ struct LRDATA_API Sound {
 	std::vector<int16_t> samples; // interleaved
 
 	// False on a malformed file. Music has no rate in its header: it plays at 22050 Hz.
-	bool decode(std::span<const uint8_t> bytes, bool music);
+	[[nodiscard]] bool decode(std::span<const uint8_t> bytes, bool music);
 	bool operator==(const Sound&) const = default;
 };
 

@@ -77,8 +77,7 @@ std::span<const uint8_t> find(std::span<const uint8_t> exe, const Place& place, 
 }
 
 // NUL-padded strings, each starting 4-byte aligned, in order.
-template <size_t N>
-void readStrings(std::span<const uint8_t> b, std::array<std::string, N>& out, bool reversed)
+template <size_t N> void readStrings(std::span<const uint8_t> b, std::array<std::string, N>& out, bool reversed)
 {
 	size_t n = 0;
 	for (size_t at = 0; at < b.size() && n < N; n++) {
@@ -91,8 +90,7 @@ void readStrings(std::span<const uint8_t> b, std::array<std::string, N>& out, bo
 	}
 }
 
-template <size_t N>
-void readFloats(std::span<const uint8_t> b, std::array<std::array<float, 3>, N>& out)
+template <size_t N> void readFloats(std::span<const uint8_t> b, std::array<std::array<float, 3>, N>& out)
 {
 	for (size_t i = 0; i < N * 3; i++) {
 		out[i / 3][i % 3] = f32(b, i * 4);
@@ -104,9 +102,9 @@ void readFloats(std::span<const uint8_t> b, std::array<std::array<float, 3>, N>&
 bool ExecutableTables::locate(std::span<const uint8_t> exe, std::string& error)
 {
 	*this = {};
-	const std::span<const uint8_t> r = find(exe, Random, error), c = find(exe, Cheats, error), f = find(exe, Frames, error),
-		p = find(exe, Points, error), cu = find(exe, Curse, error), ls = find(exe, LavaSpots, error), lf = find(exe, LavaFrames, error),
-		e = find(exe, Eyes, error), l = find(exe, Languages, error), s = find(exe, Steps, error);
+	const std::span<const uint8_t> r = find(exe, Random, error), c = find(exe, Cheats, error), f = find(exe, Frames, error), p = find(exe, Points, error),
+								   cu = find(exe, Curse, error), ls = find(exe, LavaSpots, error), lf = find(exe, LavaFrames, error), e = find(exe, Eyes, error),
+								   l = find(exe, Languages, error), s = find(exe, Steps, error);
 	if (r.empty() || c.empty() || l.empty() || f.empty() || p.empty() || cu.empty() || ls.empty() || lf.empty() || e.empty() || s.empty()) {
 		return false;
 	}

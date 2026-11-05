@@ -2,6 +2,7 @@
 
 #include "LRCore/Race/Route.h"
 
+#include "Common/Assert.h"
 #include "Kart/Body.h"
 #include "LRCore/Race/Track.h"
 #include "LRData/Cache.h"
@@ -139,8 +140,8 @@ bool Route::load(const Cache& cache, std::string_view path, bool mirrored)
 		constexpr float Unit = 0.007874016f;
 		const int32_t contacts = f.kind >> 6;
 		points.push_back({{float(f.dx) * 0.00390625f, float(dy) * 0.00390625f, float(f.dz) * 0.0625f},
-			{float(f.rotation[0]) * Unit, float(qy) * Unit, float(f.rotation[2]) * Unit, float(qw) * Unit}, float(left) * 0.125f,
-			float(right) * 0.125f, (f.kind & 63) << 5, contacts == 3 ? 4 : contacts});
+			{float(f.rotation[0]) * Unit, float(qy) * Unit, float(f.rotation[2]) * Unit, float(qw) * Unit}, float(left) * 0.125f, float(right) * 0.125f, (f.kind & 63) << 5,
+			contacts == 3 ? 4 : contacts});
 	}
 	return true;
 }
@@ -160,15 +161,90 @@ void RoutePlace::attachAtLoop(const Route& r)
 	pb = r.loop + r.points[size_t(b)].offset;
 }
 
+namespace {
+
+// RoutePlace::advance's segment: its start and end times and its ends' widths.
+struct AdvanceSpan {
+	int32_t ts, te;
+	float startL, startR, endL, endR;
+};
+
+// Back over earlier segments to the one holding target, but not before the first point.
+void advanceBack(RoutePlace& c, const std::vector<Route::Point>& pts, int32_t& target, AdvanceSpan& s)
+{
+	for (;;) {
+		s.te = s.ts;
+		c.b = c.a;
+		c.pb = c.pa;
+		c.qb = c.qa;
+		s.endL = s.startL;
+		s.endR = s.startR;
+		const Route::Point& was = pts[size_t(c.a)];
+		c.pa -= was.offset;
+		s.ts = c.ta - was.length;
+		c.a -= 1;
+		c.ta = s.ts;
+		const Route::Point& now = pts[size_t(c.a)];
+		c.contacts = now.contacts;
+		s.startL = now.left;
+		s.startR = now.right;
+		c.qa = now.rotation;
+		if (target >= s.ts) {
+			break;
+		}
+		if (c.a == 0) {
+			target = 0;
+			c.time = 0;
+			break;
+		}
+	}
+}
+
+// On over later segments to the one holding target, from the loop past the last point.
+void advanceOn(RoutePlace& c, const Route& r, int32_t& target, AdvanceSpan& s)
+{
+	const std::vector<Route::Point>& pts = r.points;
+	do {
+		c.ta = s.te;
+		c.a = c.b;
+		c.pa = c.pb;
+		c.qa = c.qb;
+		s.startL = s.endL;
+		s.startR = s.endR;
+		c.b += 1;
+		if (size_t(c.b) >= pts.size()) {
+			// Past the last point: on from the loop. (te keeps counting from the old end: the first segment after
+			// the wrap is timed wrong for this one advance.)
+			c.pa = c.pb = r.loop;
+			c.qa = c.qb = r.loopRotation;
+			c.ta = r.loopTime;
+			c.a = r.loopPoint;
+			target += r.loopTime - s.te;
+			c.b = r.loopPoint + 1;
+			c.time = float(target);
+		}
+		const Route::Point& end = pts[size_t(c.b)];
+		c.contacts = end.contacts;
+		s.endL = end.left;
+		s.endR = end.right;
+		c.qb = end.rotation;
+		c.pb += end.offset;
+		s.te += end.length;
+	} while (target >= s.te);
+}
+
+} // namespace
+
 void RoutePlace::advance(const Route& r, float ms)
 {
 	const std::vector<Route::Point>& pts = r.points;
+	LR_ASSERT(a < int32_t(pts.size()) && b >= 0 && size_t(b) < pts.size());
 	time = (rate * ms) + time;
 	int32_t target = int32_t(time);
-	float startL, startR;
+	AdvanceSpan s;
 	if (a < 0) {
 		// The first segment: from the start pose.
-		startL = startR = 0;
+		s.startL = s.startR = 0;
 		pa = r.start;
 		qa = r.startRotation;
 		ta = 0;
@@ -177,102 +253,57 @@ void RoutePlace::advance(const Route& r, float ms)
 		contacts = 4;
 	}
 	else {
-		startL = pts[size_t(a)].left;
-		startR = pts[size_t(a)].right;
+		s.startL = pts[size_t(a)].left;
+		s.startR = pts[size_t(a)].right;
 	}
-	float endL = pts[size_t(b)].left, endR = pts[size_t(b)].right;
-	int32_t ts = ta, te = ts + pts[size_t(b)].length;
-	if (target < ts) {
+	s.endL = pts[size_t(b)].left, s.endR = pts[size_t(b)].right;
+	s.ts = ta, s.te = s.ts + pts[size_t(b)].length;
+	if (target < s.ts) {
 		// Back over earlier segments, but not before the first point. (A cursor on the first segment never goes back.)
 		if (a <= 0) {
 			target = 0;
 			time = 0;
 		}
 		else {
-			for (;;) {
-				te = ts;
-				b = a;
-				pb = pa;
-				qb = qa;
-				endL = startL;
-				endR = startR;
-				const Route::Point& was = pts[size_t(a)];
-				pa -= was.offset;
-				ts = ta - was.length;
-				a -= 1;
-				ta = ts;
-				const Route::Point& now = pts[size_t(a)];
-				contacts = now.contacts;
-				startL = now.left;
-				startR = now.right;
-				qa = now.rotation;
-				if (target >= ts) {
-					break;
-				}
-				if (a == 0) {
-					target = 0;
-					time = 0;
-					break;
-				}
-			}
+			advanceBack(*this, pts, target, s);
 		}
 	}
-	else if (target >= te) {
-		do {
-			ta = te;
-			a = b;
-			pa = pb;
-			qa = qb;
-			startL = endL;
-			startR = endR;
-			b += 1;
-			if (size_t(b) >= pts.size()) {
-				// Past the last point: on from the loop. (te keeps counting from the old end: the first segment after
-				// the wrap is timed wrong for this one advance.)
-				pa = pb = r.loop;
-				qa = qb = r.loopRotation;
-				ta = r.loopTime;
-				a = r.loopPoint;
-				target += r.loopTime - te;
-				b = r.loopPoint + 1;
-				time = float(target);
-			}
-			const Route::Point& end = pts[size_t(b)];
-			contacts = end.contacts;
-			endL = end.left;
-			endR = end.right;
-			qb = end.rotation;
-			pb += end.offset;
-			te += end.length;
-		} while (target >= te);
+	else if (target >= s.te) {
+		advanceOn(*this, r, target, s);
 	}
-	const float u = float(target - ta) / float(te - ta);
-	left = (endL - startL) * u + startL;
-	right = (endR - startR) * u + startR;
+	const float u = float(target - ta) / float(s.te - ta);
+	left = (s.endL - s.startL) * u + s.startL;
+	right = (s.endR - s.startR) * u + s.startR;
 	position = (pb - pa) * u + pa;
 	rotation = blend(qa, qb, u);
 }
 
-bool RoutePlace::seek(const Route& r, Vec3& d)
-{
-	const std::vector<Route::Point>& pts = r.points;
-	const int32_t count = int32_t(pts.size());
-	int32_t sa = a, sb = b, ts = ta, te = ts + pts[size_t(sb)].length;
-	Vec3 spa = pa, spb = pb;
-	auto isShort = [&] { return dotZYX(spb - spa, spb - spa) < 0.001f; };
-	auto forward = [&] {
+namespace {
+
+// RoutePlace::seek's cursor: the segment sa..sb, its ends' times and positions, and its length and direction.
+struct SeekSegment {
+	const std::vector<Route::Point>& pts;
+	int32_t sa, sb, ts, te;
+	Vec3 spa, spb;
+	float len = 0;
+	Vec3 u = {};
+
+	bool isShort() const { return dotZYX(spb - spa, spb - spa) < 0.001f; }
+	bool forward()
+	{
 		spa = spb;
 		ts = te;
 		sa = sb;
 		sb += 1;
-		if (sb >= count) {
+		if (sb >= int32_t(pts.size())) {
 			return false;
 		}
 		te += pts[size_t(sb)].length;
 		spb += pts[size_t(sb)].offset;
 		return true;
-	};
-	auto back = [&] {
+	}
+	bool back()
+	{
 		spb = spa;
 		sb = sa;
 		te = ts;
@@ -283,83 +314,102 @@ bool RoutePlace::seek(const Route& r, Vec3& d)
 		ts -= pts[size_t(sb)].length;
 		spa -= pts[size_t(sb)].offset;
 		return true;
-	};
-	while (isShort()) {
-		if (!forward()) {
+	}
+	void measure()
+	{
+		len = lengthZYX(spb - spa);
+		u = (spb - spa) * (1 / len);
+	}
+	float along(Vec3 d) const { return u.y * d.y + d.z * u.z + u.x * d.x; }
+};
+
+// A move j along the segment, behind the place: back over the segments it passes, d losing what each took. False if it
+// runs off the route's start; else how far into the segment it ends.
+bool seekBack(SeekSegment& g, Vec3 position, Vec3& d, float j, float& amount)
+{
+	float behind = -j, rem = lengthZYX(position - g.spa);
+	if (behind <= rem) {
+		amount = rem - behind;
+		return true;
+	}
+	for (;;) {
+		d = {d.x - (-rem) * g.u.x, d.y - (-rem) * g.u.y, d.z - (-rem) * g.u.z};
+		do {
+			if (!g.back()) {
+				return false;
+			}
+		} while (g.isShort());
+		g.measure();
+		j = g.along(d);
+		if (j > 0) {
+			amount = g.len;
+			return true;
+		}
+		behind = -j;
+		if (behind > g.len) {
+			rem = g.len;
+			continue;
+		}
+		amount = g.len - behind;
+		return true;
+	}
+}
+
+// And ahead of it: on over the segments it passes; false if it runs off the route's end.
+bool seekForward(SeekSegment& g, Vec3 position, Vec3& d, float j, float& amount)
+{
+	float rem = lengthZYX(position - g.spb);
+	if (j <= rem) {
+		amount = j + g.len - rem;
+		return true;
+	}
+	for (;;) {
+		d = {d.x - rem * g.u.x, d.y - rem * g.u.y, d.z - rem * g.u.z};
+		do {
+			if (!g.forward()) {
+				return false;
+			}
+		} while (g.isShort());
+		g.measure();
+		j = g.along(d);
+		if (j < 0) {
+			j = 0;
+		}
+		else if (j > g.len) {
+			rem = g.len;
+			continue;
+		}
+		rem = lengthZYX(position - g.spb);
+		amount = j + g.len - rem;
+		return true;
+	}
+}
+
+} // namespace
+
+bool RoutePlace::seek(const Route& r, Vec3& d)
+{
+	const std::vector<Route::Point>& pts = r.points;
+	SeekSegment g{pts, a, b, ta, ta + pts[size_t(b)].length, pa, pb};
+	while (g.isShort()) {
+		if (!g.forward()) {
 			return false;
 		}
 	}
-	float len = lengthZYX(spb - spa);
-	Vec3 u = (spb - spa) * (1 / len);
-	auto along = [&] { return u.y * d.y + d.z * u.z + u.x * d.x; };
-	float j = along(), amount;
-	if (j < 0) {
-		float behind = -j, rem = lengthZYX(position - spa);
-		if (behind <= rem) {
-			amount = rem - behind;
-		}
-		else {
-			for (;;) {
-				d = {d.x - (-rem) * u.x, d.y - (-rem) * u.y, d.z - (-rem) * u.z};
-				do {
-					if (!back()) {
-						return false;
-					}
-				} while (isShort());
-				len = lengthZYX(spb - spa);
-				u = (spb - spa) * (1 / len);
-				j = along();
-				if (j > 0) {
-					amount = len;
-					break;
-				}
-				behind = -j;
-				if (behind > len) {
-					rem = len;
-					continue;
-				}
-				amount = len - behind;
-				break;
-			}
-		}
+	g.measure();
+	const float j = g.along(d);
+	float amount;
+	if (!(j < 0 ? seekBack(g, position, d, j, amount) : seekForward(g, position, d, j, amount))) {
+		return false;
 	}
-	else {
-		float rem = lengthZYX(position - spb);
-		if (j <= rem) {
-			amount = j + len - rem;
-		}
-		else {
-			for (;;) {
-				d = {d.x - rem * u.x, d.y - rem * u.y, d.z - rem * u.z};
-				do {
-					if (!forward()) {
-						return false;
-					}
-				} while (isShort());
-				len = lengthZYX(spb - spa);
-				u = (spb - spa) * (1 / len);
-				j = along();
-				if (j < 0) {
-					j = 0;
-				}
-				else if (j > len) {
-					rem = len;
-					continue;
-				}
-				rem = lengthZYX(position - spb);
-				amount = j + len - rem;
-				break;
-			}
-		}
-	}
-	ta = ts;
-	pa = spa;
-	pb = spb;
-	time = float(te - ts) * (amount / len) + float(ts);
-	a = sa;
-	b = sb;
-	qa = pts[size_t(sa)].rotation;
-	qb = pts[size_t(sb)].rotation;
+	ta = g.ts;
+	pa = g.spa;
+	pb = g.spb;
+	time = float(g.te - g.ts) * (amount / g.len) + float(g.ts);
+	a = g.sa;
+	b = g.sb;
+	qa = pts[size_t(g.sa)].rotation;
+	qb = pts[size_t(g.sb)].rotation;
 	advance(r, 0);
 	return true;
 }
@@ -381,8 +431,7 @@ void attachAtLoop(Playback& pl, Kart& k, Pose& vis, const KartParams& p, const R
 	attached(k, vis, p, r.loop, r.loopRotation);
 }
 
-void stepPlayback(Playback& pl, Kart& k, Pose& vis, const KartParams& p, const Track& t, const Route& r, int32_t dt,
-	std::vector<SweepHit>* hits)
+void stepPlayback(Playback& pl, Kart& k, Pose& vis, const KartParams& p, const Track& t, const Route& r, int32_t dt, std::vector<SweepHit>* hits)
 {
 	if (dt == 0 || pl.paused) {
 		return;
@@ -472,7 +521,7 @@ void routeMove(Playback& pl, Kart& k, Pose& vis, const KartParams& p, const Rout
 	orient(pl, k, vis, p, 0);
 	// What the line didn't take goes sideways, within the line's widths. (It replaces the offset, not adds to it.)
 	const Vec3 s = vis.rotation.s;
-	const float side = moved.z * s.z + moved.y * s.y + moved.x * s.x;
+	const float side = dotZYX(moved, s);
 	pl.side = side > 0 ? std::min(side, pl.cursor.right) : std::max(side, -pl.cursor.left);
 	place(pl, k, vis, p);
 }
@@ -482,7 +531,7 @@ void routeSpin(Playback& pl, Kart& k, float turns, float rate)
 	if (k.flags & KartSpinning) {
 		return;
 	}
-	k.yawMs = int32_t((turns * 6.2831855f) / rate);
+	k.yawMs = int32_t((turns * Tau) / rate);
 	pl.spinRate = rate;
 	pl.spinAngle = 0;
 	k.flags |= KartSpinning;

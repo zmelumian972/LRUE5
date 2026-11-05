@@ -16,9 +16,9 @@ constexpr int32_t SoundBeep = 0, SoundGo = 15; // the countdown's, in the race's
 
 RaceEvent& World::raise(RaceEvent::Kind kind, Owner owner)
 {
-	RaceEvent& e = raceEvents.emplace_back();
+	RaceEvent& e = raceView.raceEvents.emplace_back();
 	e.kind = kind;
-	e.stage = stage;
+	e.stage = raceView.stage;
 	e.owner = owner;
 	return e;
 }
@@ -27,7 +27,7 @@ void World::voice(size_t racer, RaceEvent::VoiceLine line)
 {
 	RaceEvent& e = raise(RaceEvent::Voice, {Owner::Racer, int16_t(racer)});
 	e.value = line;
-	e.place = visible[racer].position;
+	e.place = racers.visible[racer].position;
 }
 
 void World::spawn(const char* emitter, uint8_t set, Owner owner, Vec3 at)
@@ -52,21 +52,21 @@ void World::playSound(int32_t sound, Owner owner, const Vec3* at, float near, fl
 
 void World::updateHuds(int32_t realMs)
 {
-	openingMs = std::max(0, openingMs - realMs); // (the opening fade runs on through a pause)
+	session.openingMs = std::max(0, session.openingMs - realMs); // (the opening fade runs on through a pause)
 	const Session::Phase phase = session.phase;
 	// The attract demo's DEMO: on for 750 ms, off for 250 (the race's ms).
-	if (brief.mode == RaceBrief::Mode::Demo && !paused()) {
-		const int32_t ms = brief.cheats & CheatFastForward ? int32_t(float(realMs) * 1.75f) : realMs;
-		demoMs = ms > demoMs ? 1000 : demoMs - ms;
+	if (session.brief.mode == RaceBrief::Mode::Demo && !paused()) {
+		const int32_t ms = session.brief.cheats & CheatFastForward ? int32_t(float(realMs) * 1.75f) : realMs;
+		raceView.demoMs = ms > raceView.demoMs ? 1000 : raceView.demoMs - ms;
 	}
 	if (phase != Session::Countdown && phase != Session::Racing && phase != Session::Finished) {
 		return;
 	}
-	const RaceEvent::Stage was = stage;
-	stage = RaceEvent::Hud;
-	for (size_t p = 0; p < huds.size() && p < cameras.size(); p++) {
-		Hud& h = huds[p];
-		const size_t i = size_t(cameras[p].racer);
+	const RaceEvent::Stage was = raceView.stage;
+	raceView.stage = RaceEvent::Hud;
+	for (size_t p = 0; p < raceView.huds.size() && p < raceView.cameras.size(); p++) {
+		Hud& h = raceView.huds[p];
+		const size_t i = size_t(raceView.cameras[p].racer);
 		// A circuit's FINISH goes once the race's standings have been drawn over it.
 		if (h.standings) {
 			h.banner = 0;
@@ -93,16 +93,16 @@ void World::updateHuds(int32_t realMs)
 		else if (h.banner < 0) {
 			h.banner = std::max(-60000, h.banner - e);
 		}
-		if (racers[i].flags & RacerGhost) {
+		if (racers.race[i].flags & RacerGhost) {
 			continue; // (in the warp tube: only the banner)
 		}
-		h.speed = 0.2f * karts[i].headingSpeed + 0.8f * h.speed;
+		h.speed = 0.2f * racers.karts[i].headingSpeed + 0.8f * h.speed;
 		// The best lap: the lap just completed, at each change of the count but the first seen.
-		const Racer& r = racers[i];
+		const Racer& r = racers.race[i];
 		if (r.laps != h.laps) {
 			const int32_t old = h.laps;
 			h.laps = r.laps;
-			if (old >= 0 && old < raceLaps && (r.lapMs[old] <= h.bestMs || h.bestMs == 0)) {
+			if (old >= 0 && old < session.raceLaps && (r.lapMs[old] <= h.bestMs || h.bestMs == 0)) {
 				h.bestMs = r.lapMs[old];
 			}
 		}
@@ -121,7 +121,7 @@ void World::updateHuds(int32_t realMs)
 			}
 		}
 	}
-	stage = was;
+	raceView.stage = was;
 }
 
 } // namespace lr

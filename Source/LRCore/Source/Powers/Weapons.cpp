@@ -5,6 +5,7 @@
 // by the track (whose surfaces may fire events and let it pass) or by a racer its touch entry met in a step. Its
 // state timer carries: the time left past a state's end runs the next state in the same frame.
 
+#include "Common/Assert.h"
 #include "LRCore/Race/World.h"
 #include "Powers/PowerParts.h"
 
@@ -17,8 +18,14 @@ namespace lr {
 namespace {
 
 constexpr float CannonRadius = 3.5355339f; // a 5 x 5 billboard
-constexpr float ScarSlope = 0.70709997f;   // a burst on ground this flat leaves a scar
+constexpr float ScarSlope = 0.70709997f; // a burst on ground this flat leaves a scar
 constexpr float MissileCone = 0.70709997f;
+
+// The weapons' sounds.
+constexpr int32_t CannonFireSound = 6, CannonBlastSound = 5;
+constexpr int32_t MissileLaunchSound = 51, MissileBlastSound = 50;
+constexpr int32_t HookFireSound = 21, HookGrabSound = 18, HookReleaseSound = 20, HookSnapSound = 22, HookReelSound = 73;
+constexpr int32_t BoltHumSound = 68, BoltStrikeSound = 67, ThunderSound = 66;
 
 // A state's timer with the carry: true when it ran out, ms then what is left of the frame.
 bool carriedTimeUp(Action& a, int32_t& ms)
@@ -41,14 +48,12 @@ bool inCone(Vec3 o, Vec3 d, float dmin2, float dmax2, float cosine, Vec3 p, floa
 	return ((d.z * n.z + d.y * n.y) + n.x * d.x) >= cosine;
 }
 
-float squaredXYZ(Vec3 a) { return a.x * a.x + a.y * a.y + a.z * a.z; }
-
 // The lowest racer index in the cone (after `after`), -1 none.
 int8_t firstInCone(const World& w, Vec3 o, Vec3 d, float dmin2, float dmax2, float cosine, int after = -1)
 {
-	for (size_t r = size_t(after + 1); r < w.visible.size(); r++) {
-		const Vec3 p = w.visible[r].position, delta = p - o;
-		const float d2 = after < 0 ? dotZYX(delta, delta) : squaredXYZ(delta);
+	for (size_t r = size_t(after + 1); r < w.racers.visible.size(); r++) {
+		const Vec3 p = w.racers.visible[r].position, delta = p - o;
+		const float d2 = after < 0 ? dotZYX(delta, delta) : lengthSquared(delta);
 		if (inCone(o, d, dmin2, dmax2, cosine, p, d2)) {
 			return int8_t(r);
 		}
@@ -60,9 +65,9 @@ int8_t farthestInCone(const World& w, Vec3 o, Vec3 d, float dmin2, float dmax2, 
 {
 	int8_t best = -1;
 	float most = 0;
-	for (size_t r = 0; r < w.visible.size(); r++) {
-		const Vec3 p = w.visible[r].position;
-		const float d2 = squaredXYZ(p - o);
+	for (size_t r = 0; r < w.racers.visible.size(); r++) {
+		const Vec3 p = w.racers.visible[r].position;
+		const float d2 = lengthSquared(p - o);
 		if (inCone(o, d, dmin2, dmax2, cosine, p, d2) && d2 > most) {
 			most = d2;
 			best = int8_t(r);
@@ -78,7 +83,7 @@ int16_t nearestTarget(const World& w, Vec3 o, Vec3 d, float dmin2, float dmax2, 
 	for (size_t t = 0; t < w.track.targets.size(); t++) {
 		const Vec3 p = w.track.targets[t].position, delta = p - o;
 		const float d2 = dotZYX(delta, delta);
-		if (w.targetsOn[t] && inCone(o, d, dmin2, dmax2, cosine, p, d2) && d2 < least) {
+		if (w.powerUps.targetsOn[t] && inCone(o, d, dmin2, dmax2, cosine, p, d2) && d2 < least) {
 			least = d2;
 			best = int16_t(t);
 		}
@@ -92,8 +97,8 @@ void shooterMotion(const World& w, int8_t shooter, Vec3& direction, float& speed
 	direction = {};
 	speed = 0;
 	if (shooter >= 0) {
-		direction = w.karts[size_t(shooter)].velocityDirection;
-		speed = w.karts[size_t(shooter)].speed;
+		direction = w.racers.karts[size_t(shooter)].velocityDirection;
+		speed = w.racers.karts[size_t(shooter)].speed;
 	}
 }
 
@@ -117,8 +122,8 @@ void deflect(World& w, Projectile& p, size_t by)
 	p.state = Projectile::Flying;
 	Vec3 velocity;
 	if (old >= 0) {
-		p.target = w.visible[size_t(old)].position + Vec3{0, 0, 5};
-		velocity = w.karts[size_t(old)].velocity;
+		p.target = w.racers.visible[size_t(old)].position + Vec3{0, 0, 5};
+		velocity = w.racers.karts[size_t(old)].velocity;
 	}
 	else {
 		p.target = p.start;
@@ -132,8 +137,8 @@ void deflect(World& w, Projectile& p, size_t by)
 	trajectory(p, t);
 }
 
-bool shielded(const World& w, size_t r) { return w.racers[r].flags & RacerShielded; }
-Owner ownerOf(const World& w, const Action& a) { return {Owner::Action, int16_t(&a - w.actions.data())}; }
+bool shielded(const World& w, size_t r) { return w.racers.race[r].flags & RacerShielded; }
+Owner ownerOf(const World& w, const Action& a) { return {Owner::Action, int16_t(&a - w.powerUps.actions.data())}; }
 
 // A hit's reactions (the show's voices): the owner's glad (if any), the struck racer's not.
 void reactions(World& w, const Action& a, size_t struck)
@@ -148,21 +153,21 @@ void reactions(World& w, const Action& a, size_t struck)
 void absorbed(World& w, size_t r)
 {
 	w.voice(r, RaceEvent::Positive);
-	w.raise(RaceEvent::Absorb, {Owner::Racer, int16_t(r)}).place = w.visible[r].position;
+	w.raise(RaceEvent::Absorb, {Owner::Racer, int16_t(r)}).place = w.racers.visible[r].position;
 }
-uint8_t level(const World& w, size_t r) { return w.powers[r].shieldLevel; }
+uint8_t level(const World& w, size_t r) { return w.racers.powers[r].shieldLevel; }
 
 void keepMember(World& w, Action& a, Vec3 centre)
 {
 	if (a.member >= 0) {
-		w.members[size_t(a.member)].centre = centre;
+		w.triggers.members[size_t(a.member)].centre = centre;
 	}
 }
 
 void registerShot(World& w, Action& a, Vec3 centre, float radius)
 {
 	w.killMember(a.member);
-	a.member = w.addMember({centre, radius, Member::Projectile, false, false, uint16_t(&a - w.actions.data())});
+	a.member = w.addMember({centre, radius, Member::Projectile, false, false, uint16_t(&a - w.powerUps.actions.data())});
 }
 
 // --- Cannonball ---
@@ -171,13 +176,13 @@ void fireCannon(World& w, Action& a)
 {
 	Projectile& p = a.shot;
 	if (a.emplacement >= 0) {
-		const Hazard& h = w.hazards[size_t(a.emplacement)];
+		const Hazard& h = w.scenery.hazards[size_t(a.emplacement)];
 		launch(p, h.muzzle, -96.5279999f, 5000, -1);
 		aimAtPoint(w, p, -1, h.point, 30);
 	}
 	else {
 		const size_t r = size_t(a.owner);
-		const Pose& v = w.visible[r];
+		const Pose& v = w.racers.visible[r];
 		launch(p, v.position + Vec3{0, 0, 5}, -32.1759987f, 3000, a.owner);
 		if (a.held >= 0) {
 			aimAtRacer(w, p, r, size_t(a.held), 180, false);
@@ -191,7 +196,7 @@ void fireCannon(World& w, Action& a)
 	}
 	registerShot(w, a, p.at, CannonRadius);
 	w.spawn("cannsmk", 0, ownerOf(w, a), p.at);
-	w.playSound(6, ownerOf(w, a), &p.start);
+	w.playSound(CannonFireSound, ownerOf(w, a), &p.start);
 }
 
 // What a cannonball or a missile does when it stops (with its hit point): a racer it hit is knocked about (unless a
@@ -226,8 +231,8 @@ void stopped(World& w, Action& a, bool missile)
 	if (burst) {
 		// Its blast: at the struck racer (unless a shield took it), or where it stopped.
 		if (p.state != Projectile::HitRacer || !shielded(w, size_t(p.struck))) {
-			const Vec3 heard = p.state == Projectile::HitRacer ? w.visible[size_t(p.struck)].position : at;
-			w.playSound(missile ? 50 : 5, ownerOf(w, a), &heard, 200, 600);
+			const Vec3 heard = p.state == Projectile::HitRacer ? w.racers.visible[size_t(p.struck)].position : at;
+			w.playSound(missile ? MissileBlastSound : CannonBlastSound, ownerOf(w, a), &heard, 200, 600);
 		}
 		w.explode(false, at, p.state == Projectile::HitWorld && p.normal.z > ScarSlope, a.owner);
 		w.raise(RaceEvent::Release, ownerOf(w, a)); // (its smoke, if still puffing, stops as it bursts)
@@ -266,7 +271,7 @@ void cannonFrame(World& w, Action& a, int32_t ms)
 // --- Grappling hook ---
 
 // QUIRK: every hook moves the one grapple model, so two hooks out at once fly from (and touch with) one place.
-Vec3 hookCentre(const World& w) { return toWorld(w.grapple.rotation, w.track.hook.centre) + w.grapple.position; }
+Vec3 hookCentre(const World& w) { return toWorld(w.powerUps.grapple.rotation, w.track.hook.centre) + w.powerUps.grapple.position; }
 
 void letGo(World& w, Action& a, Vec3 at)
 {
@@ -276,11 +281,11 @@ void letGo(World& w, Action& a, Vec3 at)
 			w.endPush(size_t(a.owner), 1);
 			a.held = -1;
 		}
-		w.playSound(20, ownerOf(w, a), &at); // (a racer's let go, or a shield threw it off)
+		w.playSound(HookReleaseSound, ownerOf(w, a), &at); // (a racer's let go, or a shield threw it off)
 	}
 	else {
-		w.playSound(22, ownerOf(w, a), &at); // (missed: the snap, then the reel)
-		w.playSound(73, ownerOf(w, a), &at);
+		w.playSound(HookSnapSound, ownerOf(w, a), &at); // (missed: the snap, then the reel)
+		w.playSound(HookReelSound, ownerOf(w, a), &at);
 	}
 	w.raise(RaceEvent::Release, ownerOf(w, a)); // (its smoke, if still puffing)
 	a.state = HookReeling;
@@ -294,7 +299,7 @@ void letGo(World& w, Action& a, Vec3 at)
 Projectile::State ropeFrame(World& w, Action& a, int32_t ms)
 {
 	Projectile& p = a.shot;
-	const Vec3 from = w.visible[size_t(a.owner)].position + Vec3{0, 0, 3};
+	const Vec3 from = w.racers.visible[size_t(a.owner)].position + Vec3{0, 0, 3};
 	if (a.state == HookReeling) {
 		// Reeled in at 250 ft per ms (QUIRK: per ms): in at once.
 		const Vec3 left = a.letGo - from;
@@ -305,7 +310,7 @@ Projectile::State ropeFrame(World& w, Action& a, int32_t ms)
 	}
 	if (p.state == Projectile::HitRacer) {
 		// The hook is on the racer (chased at 300 ft per ms: there at once), the rope taut: the track can cut it.
-		p.at = w.visible[size_t(p.struck)].position + Vec3{0, 0, 2};
+		p.at = w.racers.visible[size_t(p.struck)].position + Vec3{0, 0, 2};
 		Vec3 hit, normal;
 		if (w.shotHits(from, p.at, hit, normal)) {
 			p.state = Projectile::HitWorld;
@@ -323,7 +328,7 @@ Projectile::State ropeFrame(World& w, Action& a, int32_t ms)
 void fireHook(World& w, Action& a)
 {
 	const size_t r = size_t(a.owner);
-	const Pose& v = w.visible[r];
+	const Pose& v = w.racers.visible[r];
 	Projectile& p = a.shot;
 	launch(p, v.position + Vec3{0, 0, 5}, -90.1760025f, 3000, a.owner);
 	if (a.held >= 0) {
@@ -336,10 +341,37 @@ void fireHook(World& w, Action& a)
 		aimAtPoint(w, p, a.owner, v.position + v.rotation.f * 500 + Vec3{0, 0, 5}, 320);
 	}
 	a.held = -1; // (now the racer the rope holds)
-	w.grapple = {p.at, basisFromForwardUp(p.target - v.position, {0, 0, 1})};
+	w.powerUps.grapple = {p.at, basisFromForwardUp(p.target - v.position, {0, 0, 1})};
 	registerShot(w, a, hookCentre(w), w.track.hook.radius);
 	w.spawn("cannsmk", 0, ownerOf(w, a), p.at);
-	w.playSound(21, ownerOf(w, a), &v.position);
+	w.playSound(HookFireSound, ownerOf(w, a), &v.position);
+}
+
+// The hook pulling its racer toward the shooter, until a shield throws it off or the racer is close or behind.
+void hookPull(World& w, Action& a)
+{
+	const size_t owner = size_t(a.owner), held = size_t(a.held);
+	LR_ASSERT(a.owner >= 0 && owner < w.racers.visible.size() && a.held >= 0 && held < w.racers.visible.size());
+	const Vec3 A = w.racers.visible[owner].position, B = w.racers.visible[held].position;
+	if (shielded(w, held)) {
+		letGo(w, a, B);
+		return;
+	}
+	const Vec3 d = B - A;
+	float q = d.y * d.y;
+	q += d.z * d.z;
+	q += d.x * d.x;
+	const Vec3 f = w.racers.visible[owner].rotation.f;
+	float k = d.z * f.z;
+	k += d.y * f.y;
+	k += d.x * f.x;
+	if (q < 144 || k < 0) {
+		letGo(w, a, B);
+		return;
+	}
+	const Vec3 pull = normalize(d) * 180;
+	w.push(owner, 1, pull);
+	w.push(held, 0, -pull);
 }
 
 void hookFrame(World& w, Action& a, int32_t ms)
@@ -351,7 +383,7 @@ void hookFrame(World& w, Action& a, int32_t ms)
 			fireHook(w, a);
 		}
 		else if (a.state == ShotFlying || a.state == HookPulling) {
-			letGo(w, a, w.grapple.position);
+			letGo(w, a, w.powerUps.grapple.position);
 		}
 		else {
 			a.state = Action::Done;
@@ -362,9 +394,9 @@ void hookFrame(World& w, Action& a, int32_t ms)
 		return;
 	}
 	Projectile& p = a.shot;
-	p.at = w.grapple.position;
+	p.at = w.powerUps.grapple.position;
 	const Projectile::State ps = ropeFrame(w, a, ms);
-	w.grapple.position = p.at;
+	w.powerUps.grapple.position = p.at;
 	if (ps == Projectile::HitRacer && a.state == ShotFlying) {
 		// The hook hits: a shield throws it off, else the racer is pulled toward the shooter.
 		const size_t r = size_t(p.struck);
@@ -378,7 +410,7 @@ void hookFrame(World& w, Action& a, int32_t ms)
 			reactions(w, a, r);
 			a.held = int8_t(r);
 			w.dropWhite(r);
-			w.playSound(18, ownerOf(w, a), &w.visible[r].position);
+			w.playSound(HookGrabSound, ownerOf(w, a), &w.racers.visible[r].position);
 			w.raise(RaceEvent::Release, ownerOf(w, a)); // (its smoke, if still puffing, stops as it holds)
 		}
 	}
@@ -389,37 +421,17 @@ void hookFrame(World& w, Action& a, int32_t ms)
 			letGo(w, a, p.hit);
 		}
 		else {
-			w.grapple.rotation = basisFromForwardUp(p.target - w.visible[owner].position, {0, 0, 1});
+			w.powerUps.grapple.rotation = basisFromForwardUp(p.target - w.racers.visible[owner].position, {0, 0, 1});
 		}
 		break;
-	case HookPulling: {
+	case HookPulling:
 		if (ps == Projectile::HitWorld) {
 			letGo(w, a, p.hit);
-			break;
 		}
-		const size_t held = size_t(a.held);
-		const Vec3 A = w.visible[owner].position, B = w.visible[held].position;
-		if (shielded(w, held)) {
-			letGo(w, a, B);
-			break;
+		else {
+			hookPull(w, a);
 		}
-		const Vec3 d = B - A;
-		float q = d.y * d.y;
-		q += d.z * d.z;
-		q += d.x * d.x;
-		const Vec3 f = w.visible[owner].rotation.f;
-		float k = d.z * f.z;
-		k += d.y * f.y;
-		k += d.x * f.x;
-		if (q < 144 || k < 0) {
-			letGo(w, a, B);
-			break;
-		}
-		const Vec3 pull = normalize(d) * 180;
-		w.push(owner, 1, pull);
-		w.push(held, 0, -pull);
 		break;
-	}
 	case HookReeling:
 		if (ps == Projectile::Expired) {
 			a.state = Action::Done;
@@ -431,6 +443,46 @@ void hookFrame(World& w, Action& a, int32_t ms)
 
 // --- Lightning ---
 
+// Whether the bolt's spans, from o through its points, pass through a body's sphere.
+bool boltPasses(const Sphere& body, Vec3 o, const Vec3 (&points)[4])
+{
+	Vec3 from = o;
+	for (const Vec3& to : points) {
+		const Vec3 u = normalize(to - from), c = body.centre - from;
+		const float along = dotZYX(c, u);
+		const float disc = body.radius * body.radius - ((c.y * c.y + c.z * c.z + c.x * c.x) - along * along);
+		const Vec3 span = from - to;
+		const float t = along - std::sqrt(disc);
+		if (disc > 0 && !(t * t > dotZYX(span, span))) {
+			return true;
+		}
+		from = to;
+	}
+	return false;
+}
+
+// A racer the bolt passes through. Struck (only while it sustains): a shield takes it; a tumbling racer is left alone.
+void boltStrike(World& w, Action& a, int8_t q)
+{
+	const size_t r = size_t(q);
+	if (a.state == BoltSustain && shielded(w, r)) {
+		absorbed(w, r);
+	}
+	if (a.state == BoltSustain && !shielded(w, r) && !(w.racers.karts[r].flags & KartSpinOut)) {
+		w.spinOut(r);
+		w.markHit(r);
+		w.racers.karts[r].velocity = {};
+		const Vec3 h = w.racers.karts[r].heading;
+		w.impulse(r, {h.x * 80, h.y * 80, 200 + h.z * 80});
+		reactions(w, a, r);
+		w.dropWhite(r);
+		w.spawn("lghthit", 0, ownerOf(w, a), w.racers.visible[r].position);
+		w.playSound(BoltStrikeSound, ownerOf(w, a), &w.racers.visible[r].position);
+		a.shockMs = 0;
+		a.held = q;
+	}
+}
+
 void boltFrame(World& w, Action& a, int32_t ms)
 {
 	if (carriedTimeUp(a, ms)) {
@@ -438,10 +490,10 @@ void boltFrame(World& w, Action& a, int32_t ms)
 		a.ms = a.state == BoltSustain ? 7000 : a.state == BoltFade ? 500 : 0;
 		if (a.state == Action::Done) {
 			// The thunder, its hum stopped.
-			const Vec3 at = a.owner >= 0 ? w.powers[size_t(a.owner)].sourcePosition : a.point;
-			w.playSound(66, ownerOf(w, a), &at);
+			const Vec3 at = a.owner >= 0 ? w.racers.powers[size_t(a.owner)].sourcePosition : a.point;
+			w.playSound(ThunderSound, ownerOf(w, a), &at);
 			RaceEvent& loop = w.raise(RaceEvent::Sound, ownerOf(w, a));
-			loop.sound = 68, loop.stop = true;
+			loop.sound = BoltHumSound, loop.stop = true;
 			return;
 		}
 	}
@@ -458,19 +510,21 @@ void boltFrame(World& w, Action& a, int32_t ms)
 	// victim's sphere.
 	Vec3 origin = a.point, forward = a.direction;
 	if (a.owner >= 0) {
-		origin = w.powers[size_t(a.owner)].sourcePosition;
-		forward = w.powers[size_t(a.owner)].sourceForward;
+		LR_ASSERT(size_t(a.owner) < w.racers.powers.size());
+		origin = w.racers.powers[size_t(a.owner)].sourcePosition;
+		forward = w.racers.powers[size_t(a.owner)].sourceForward;
 	}
 	const Vec3 o = origin + Vec3{0, 0, 3};
 	Vec3 d = forward;
 	float length = a.state == BoltRamp ? (1 - float(int32_t(a.ms)) * 0.002f) * 50 : a.state == BoltFade ? (float(int32_t(a.ms)) * 0.002f) * 50 : 50;
 	const Vec3 end = o + d * (length * 4);
 	if (a.held >= 0) {
-		const Vec3 c = w.visible[size_t(a.held)].position;
+		LR_ASSERT(size_t(a.held) < w.racers.visible.size() && size_t(a.held) < w.racers.groups.size());
+		const Vec3 c = w.racers.visible[size_t(a.held)].position;
 		d = normalize(c - o);
 		const Vec3 oc = o - c;
-		float dist = std::sqrt(oc.x * oc.x + oc.y * oc.y + oc.z * oc.z);
-		const float r = w.groups[size_t(a.held)].radius;
+		float dist = lr::length(oc);
+		const float r = w.racers.groups[size_t(a.held)].radius;
 		if (dist > r) {
 			dist -= r;
 		}
@@ -480,7 +534,7 @@ void boltFrame(World& w, Action& a, int32_t ms)
 		Vec3 hit, normal;
 		if (w.shotHits(o, end, hit, normal)) {
 			const Vec3 oh = o - hit;
-			length = std::sqrt(oh.x * oh.x + oh.y * oh.y + oh.z * oh.z) * 0.25f;
+			length = lr::length(oh) * 0.25f;
 		}
 	}
 	Vec3 points[4];
@@ -497,36 +551,8 @@ void boltFrame(World& w, Action& a, int32_t ms)
 		if (q == a.owner) {
 			continue;
 		}
-		const Sphere body = w.bodySphere(size_t(q));
-		Vec3 from = o;
-		for (const Vec3& to : points) {
-			const Vec3 u = normalize(to - from), c = body.centre - from;
-			const float along = c.z * u.z + c.y * u.y + c.x * u.x;
-			const float disc = body.radius * body.radius - ((c.y * c.y + c.z * c.z + c.x * c.x) - along * along);
-			const Vec3 span = from - to;
-			const float t = along - std::sqrt(disc);
-			if (disc > 0 && !(t * t > dotZYX(span, span))) {
-				// Struck (only while it sustains): a shield takes it; a tumbling racer is left alone.
-				const size_t r = size_t(q);
-				if (a.state == BoltSustain && shielded(w, r)) {
-					absorbed(w, r);
-				}
-				if (a.state == BoltSustain && !shielded(w, r) && !(w.karts[r].flags & KartSpinOut)) {
-					w.spinOut(r);
-					w.markHit(r);
-					w.karts[r].velocity = {};
-					const Vec3 h = w.karts[r].heading;
-					w.impulse(r, {h.x * 80, h.y * 80, 200 + h.z * 80});
-					reactions(w, a, r);
-					w.dropWhite(r);
-					w.spawn("lghthit", 0, ownerOf(w, a), w.visible[r].position);
-					w.playSound(67, ownerOf(w, a), &w.visible[r].position);
-					a.shockMs = 0;
-					a.held = q;
-				}
-				break;
-			}
-			from = to;
+		if (boltPasses(w.bodySphere(size_t(q)), o, points)) {
+			boltStrike(w, a, q);
 		}
 	}
 }
@@ -539,7 +565,7 @@ void launchMissile(World& w, Action& a)
 	const Animation& anim = w.track.animations[size_t(w.track.missile.animation)];
 	// From the launcher's "missile" node at the rise's last frame, carried by the car's pose (as last followed).
 	const Pose node = w.nodeLocal(w.track.missile, &anim, 1, a.missile, float(anim.parts[a.missile].frames - 1), false);
-	const Pose& v = w.visible[r];
+	const Pose& v = w.racers.visible[r];
 	Projectile& p = a.shot;
 	const Vec3 start = toWorld(a.ride.rotation, node.position * w.track.missile.scale) + a.ride.position;
 	// (The missiles fly along the node's own forward, not its up.)
@@ -573,14 +599,140 @@ void launchMissile(World& w, Action& a)
 	a.hasWaypoint = false;
 	a.retargetMs = 0;
 	a.heading = rows.f;
-	a.checkpoint = w.racers[r].checkpoint;
+	a.checkpoint = w.racers.race[r].checkpoint;
 	if (a.checkpoint >= 0) {
 		const Vec3 n = w.track.checkpoints[size_t(a.checkpoint)].normal;
-		if (a.heading.z * n.z + a.heading.y * n.y + n.x * a.heading.x > 0) {
+		if (dotZYX(a.heading, n) > 0) {
 			a.checkpoint = -1;
 		}
 	}
 	registerShot(w, a, p.at, w.track.missile.radius);
+}
+
+// Targeting: the first racer in its cone it may hit, looked for again each second or when its target is spoiled.
+void retargetMissile(World& w, Action& a, int32_t ms)
+{
+	const Projectile& p = a.shot;
+	a.retargetMs += ms;
+	auto spoiled = [&](int8_t q) {
+		const size_t r = size_t(q);
+		return (w.racers.karts[r].flags & KartSpinOut) || shielded(w, r) || (w.racers.race[r].flags & RacerGhost);
+	};
+	if (a.held < 0 || a.retargetMs > 1000 || spoiled(a.held)) {
+		a.retargetMs = 0;
+		a.held = -1;
+		for (int8_t q = firstInCone(w, a.centre, a.heading, 100, 160000, MissileCone); q >= 0; q = firstInCone(w, a.centre, a.heading, 100, 160000, MissileCone, q)) {
+			if (q != p.owner && !spoiled(q)) {
+				a.held = q;
+				break;
+			}
+		}
+	}
+}
+
+// The course: a waypoint over the next checkpoint ahead of it.
+void missileWaypoint(World& w, Action& a)
+{
+	if (a.hasWaypoint || a.checkpoint < 0) {
+		return;
+	}
+	int32_t k = a.checkpoint;
+	while (k >= 0) {
+		const Checkpoint& c = w.track.checkpoints[size_t(k)];
+		if (dot(c.position - a.centre, a.heading) > 0 && dot(c.normal, a.centre) + c.offset >= 10) {
+			break;
+		}
+		const uint8_t next = c.next[0];
+		k = next == 255 ? -1 : next;
+		if (k >= 0) {
+			const Checkpoint& n = w.track.checkpoints[size_t(k)];
+			if (lengthSquared(n.position - a.centre) > 90000 || dot(n.normal, a.heading) > 0) {
+				k = -1;
+			}
+		}
+	}
+	if (k >= 0) {
+		const Vec3 c = w.track.checkpoints[size_t(k)].position;
+		Vec3 hit, normal;
+		if (w.shotHits(c + Vec3{0, 0, 5}, c - Vec3{0, 0, 50}, hit, normal)) {
+			a.waypoint = hit + Vec3{0, 0, 6};
+			a.hasWaypoint = true;
+		}
+	}
+}
+
+// The flight: straight at a target within 60 ft (striking within 3), else along its heading low over the ground,
+// spiralling.
+void flyMissile(World& w, Action& a, int32_t ms)
+{
+	Projectile& p = a.shot;
+	const float e = float(ms) * 0.001f;
+	p.ageMs += ms;
+	if (p.ageMs >= p.lifeMs) {
+		p.state = Projectile::Expired;
+		p.hit = p.at;
+		return;
+	}
+	Vec3 u = a.heading, goal, x;
+	float q = FLT_MAX;
+	if (a.held >= 0) {
+		LR_ASSERT(size_t(a.held) < w.racers.visible.size());
+		goal = w.racers.visible[size_t(a.held)].position + Vec3{0, 0, 5};
+		u = goal - a.centre;
+		q = dotZYX(u, u);
+	}
+	bool struck = false;
+	if (q < 3600) {
+		u = normalize(u);
+		const Vec3 v0 = p.velocity;
+		const Vec3 wv = u * lengthZYX(v0);
+		x = a.centre + wv * e;
+		const Vec3 g = goal - x;
+		struck = q < 9 || dotZYX(g, u) <= 0;
+		if (struck) {
+			p.hit = p.at = goal;
+			p.state = Projectile::Expired; // (the explosion does the harm)
+		}
+	}
+	else {
+		if (a.hasWaypoint) {
+			if (dot(a.waypoint - a.centre, u) > 0) {
+				u = a.waypoint - a.centre;
+			}
+			else {
+				a.hasWaypoint = false;
+			}
+		}
+		u = normalize(u);
+		x = a.centre + u * (p.speed * e);
+		Vec3 hit, normal;
+		if (w.shotHits(x + Vec3{0, 0, 2}, x - Vec3{0, 0, 6}, hit, normal)) {
+			x.z = hit.z + 6;
+			if (a.centre.z > x.z) {
+				const float low = a.centre.z - 6 * e;
+				x.z = low > x.z ? low : x.z;
+			}
+		}
+	}
+	if (!struck) {
+		a.centre = x;
+		a.amplitude = std::min(a.amplitude + 6 * e, 4.0f);
+		a.phase += 10 * e;
+		const float s = std::sin(a.phase), c = std::cos(a.phase), cc = 1 - c;
+		x.x += (u.z * u.x * cc - u.y * s) * a.amplitude;
+		x.y += (u.z * u.y * cc + s * u.x) * a.amplitude;
+		x.z += ((u.z * u.z * cc) + c) * a.amplitude;
+		Vec3 hit, normal;
+		if (w.shotHits(p.at, x, hit, normal)) {
+			p.state = Projectile::HitWorld;
+			p.hit = p.at = hit;
+			p.normal = normal;
+		}
+		else {
+			p.at = x;
+		}
+		a.heading = u;
+	}
 }
 
 void missileFrame(World& w, Action& a, int32_t ms)
@@ -591,7 +743,7 @@ void missileFrame(World& w, Action& a, int32_t ms)
 		const float last = float(w.track.animations[size_t(w.track.missile.animation)].parts[a.missile].frames - 1);
 		a.riseFrames = std::min(a.riseFrames + 0.0299999993f * float(ms), last);
 		if (a.riseFrames < last) {
-			a.ride = w.visible[size_t(a.owner)];
+			a.ride = w.racers.visible[size_t(a.owner)];
 			p.at = a.ride.position;
 			return;
 		}
@@ -605,118 +757,9 @@ void missileFrame(World& w, Action& a, int32_t ms)
 		stopped(w, a, true); // (a racer its touch entry met in a step)
 		return;
 	}
-	// Targeting: the first racer in its cone it may hit, looked for again each second or when its target is spoiled.
-	a.retargetMs += ms;
-	auto spoiled = [&](int8_t q) {
-		const size_t r = size_t(q);
-		return (w.karts[r].flags & KartSpinOut) || shielded(w, r) || (w.racers[r].flags & RacerGhost);
-	};
-	if (a.held < 0 || a.retargetMs > 1000 || spoiled(a.held)) {
-		a.retargetMs = 0;
-		a.held = -1;
-		for (int8_t q = firstInCone(w, a.centre, a.heading, 100, 160000, MissileCone); q >= 0;
-			 q = firstInCone(w, a.centre, a.heading, 100, 160000, MissileCone, q)) {
-			if (q != p.owner && !spoiled(q)) {
-				a.held = q;
-				break;
-			}
-		}
-	}
-	// The course: a waypoint over the next checkpoint ahead of it.
-	if (!a.hasWaypoint && a.checkpoint >= 0) {
-		int32_t k = a.checkpoint;
-		while (k >= 0) {
-			const Checkpoint& c = w.track.checkpoints[size_t(k)];
-			if (dot(c.position - a.centre, a.heading) > 0 && dot(c.normal, a.centre) + c.offset >= 10) {
-				break;
-			}
-			const uint8_t next = c.next[0];
-			k = next == 255 ? -1 : next;
-			if (k >= 0) {
-				const Checkpoint& n = w.track.checkpoints[size_t(k)];
-				if (lengthSquared(n.position - a.centre) > 90000 || dot(n.normal, a.heading) > 0) {
-					k = -1;
-				}
-			}
-		}
-		if (k >= 0) {
-			const Vec3 c = w.track.checkpoints[size_t(k)].position;
-			Vec3 hit, normal;
-			if (w.shotHits(c + Vec3{0, 0, 5}, c - Vec3{0, 0, 50}, hit, normal)) {
-				a.waypoint = hit + Vec3{0, 0, 6};
-				a.hasWaypoint = true;
-			}
-		}
-	}
-	// The flight: straight at a target within 60 ft (striking within 3), else along its heading low over the ground,
-	// spiralling.
-	const float e = float(ms) * 0.001f;
-	p.ageMs += ms;
-	if (p.ageMs >= p.lifeMs) {
-		p.state = Projectile::Expired;
-		p.hit = p.at;
-	}
-	else {
-		Vec3 u = a.heading, goal, x;
-		float q = FLT_MAX;
-		if (a.held >= 0) {
-			goal = w.visible[size_t(a.held)].position + Vec3{0, 0, 5};
-			u = goal - a.centre;
-			q = u.z * u.z + u.y * u.y + u.x * u.x;
-		}
-		bool struck = false;
-		if (q < 3600) {
-			u = normalize(u);
-			const Vec3 v0 = p.velocity;
-			const Vec3 wv = u * std::sqrt(v0.z * v0.z + v0.y * v0.y + v0.x * v0.x);
-			x = a.centre + wv * e;
-			const Vec3 g = goal - x;
-			struck = q < 9 || g.z * u.z + g.y * u.y + g.x * u.x <= 0;
-			if (struck) {
-				p.hit = p.at = goal;
-				p.state = Projectile::Expired; // (the explosion does the harm)
-			}
-		}
-		else {
-			if (a.hasWaypoint) {
-				if (dot(a.waypoint - a.centre, u) > 0) {
-					u = a.waypoint - a.centre;
-				}
-				else {
-					a.hasWaypoint = false;
-				}
-			}
-			u = normalize(u);
-			x = a.centre + u * (p.speed * e);
-			Vec3 hit, normal;
-			if (w.shotHits(x + Vec3{0, 0, 2}, x - Vec3{0, 0, 6}, hit, normal)) {
-				x.z = hit.z + 6;
-				if (a.centre.z > x.z) {
-					const float low = a.centre.z - 6 * e;
-					x.z = low > x.z ? low : x.z;
-				}
-			}
-		}
-		if (!struck) {
-			a.centre = x;
-			a.amplitude = std::min(a.amplitude + 6 * e, 4.0f);
-			a.phase += 10 * e;
-			const float s = std::sin(a.phase), c = std::cos(a.phase), cc = 1 - c;
-			x.x += (u.z * u.x * cc - u.y * s) * a.amplitude;
-			x.y += (u.z * u.y * cc + s * u.x) * a.amplitude;
-			x.z += ((u.z * u.z * cc) + c) * a.amplitude;
-			Vec3 hit, normal;
-			if (w.shotHits(p.at, x, hit, normal)) {
-				p.state = Projectile::HitWorld;
-				p.hit = p.at = hit;
-				p.normal = normal;
-			}
-			else {
-				p.at = x;
-			}
-			a.heading = u;
-		}
-	}
+	retargetMissile(w, a, ms);
+	missileWaypoint(w, a);
+	flyMissile(w, a, ms);
 	keepMember(w, a, p.at);
 	if (p.state != Projectile::Flying) {
 		stopped(w, a, true);
@@ -758,7 +801,7 @@ void aimAtRacer(const World& w, Projectile& p, size_t shooter, size_t target, fl
 	Vec3 dir;
 	float moving;
 	shooterMotion(w, int8_t(shooter), dir, moving);
-	p.target = w.visible[target].position + Vec3{0, 0, 5};
+	p.target = w.racers.visible[target].position + Vec3{0, 0, 5};
 	const float dx = p.target.x - p.start.x, dy = p.target.y - p.start.y;
 	float dist = std::sqrt(dy * dy + dx * dx);
 	const float inv = dist == 0 ? 1 : 1 / dist;
@@ -767,11 +810,11 @@ void aimAtRacer(const World& w, Projectile& p, size_t shooter, size_t target, fl
 	k = k < 0 ? -k : k; // QUIRK: moving away speeds it up too
 	const float sigma = std::max(speed + (k * moving) * 1000, 0.001f);
 	const float t = dist / sigma, tms = t * 1000;
-	const Vec3 lead = w.karts[target].velocity * tms;
+	const Vec3 lead = w.racers.karts[target].velocity * tms;
 	if (!predictive) {
 		p.target += lead;
 	}
-	else if (dotZYX(w.karts[shooter].heading, (p.target + lead) - p.start) < 0) {
+	else if (dotZYX(w.racers.karts[shooter].heading, (p.target + lead) - p.start) < 0) {
 		p.target += lead;
 	}
 	trajectory(p, t);
@@ -806,9 +849,9 @@ int8_t nearestInCone(const World& w, Vec3 o, Vec3 d, float dmin2, float dmax2, f
 {
 	int8_t best = -1;
 	float least = FLT_MAX;
-	for (size_t r = 0; r < w.visible.size(); r++) {
-		const Vec3 p = w.visible[r].position;
-		const float d2 = squaredXYZ(p - o);
+	for (size_t r = 0; r < w.racers.visible.size(); r++) {
+		const Vec3 p = w.racers.visible[r].position;
+		const float d2 = lengthSquared(p - o);
 		if (inCone(o, d, dmin2, dmax2, cosine, p, d2) && d2 < least) {
 			least = d2;
 			best = int8_t(r);
@@ -833,14 +876,14 @@ void startRed(World& w, Action& a, const Aim* aim)
 			a.direction = aim->direction;
 		}
 		RaceEvent& loop = w.raise(RaceEvent::Sound, ownerOf(w, a)); // its hum, at its source
-		loop.sound = 68, loop.looping = true;
-		loop.place = a.owner >= 0 ? w.visible[size_t(a.owner)].position : a.point;
+		loop.sound = BoltHumSound, loop.looping = true;
+		loop.place = a.owner >= 0 ? w.racers.visible[size_t(a.owner)].position : a.point;
 		return;
 	}
 	if (a.kind == Action::Missile) {
 		a.riseFrames = 0;
-		a.ride = w.visible[size_t(a.owner)];
-		w.playSound(51, ownerOf(w, a), &a.ride.position); // (as it rises off the car)
+		a.ride = w.racers.visible[size_t(a.owner)];
+		w.playSound(MissileLaunchSound, ownerOf(w, a), &a.ride.position); // (as it rises off the car)
 		return;
 	}
 	if (a.owner < 0) {
@@ -848,8 +891,8 @@ void startRed(World& w, Action& a, const Aim* aim)
 	}
 	// Aimed now, from where the shooter's car is: a player prefers the points it can shoot.
 	const size_t r = size_t(a.owner);
-	const Pose& v = w.visible[r];
-	const bool player = !w.racers[r].ai;
+	const Pose& v = w.racers.visible[r];
+	const bool player = !w.racers.race[r].ai;
 	if (a.kind == Action::Cannon) {
 		a.aimPoint = player ? nearestTarget(w, v.position, v.rotation.f, 100, 160000, 0.94999999f) : -1;
 		if (a.aimPoint < 0) {
@@ -914,21 +957,22 @@ bool World::shotHits(Vec3 a, Vec3 b, Vec3& point, Vec3& normal)
 
 void World::touchProjectile(size_t index, size_t i)
 {
-	Projectile& p = actions[index].shot;
+	LR_ASSERT(index < powerUps.actions.size());
+	Projectile& p = powerUps.actions[index].shot;
 	if (p.owner == int8_t(i) || p.state != Projectile::Flying) {
 		return;
 	}
 	p.state = Projectile::HitRacer;
 	p.struck = int8_t(i);
-	p.hit = visible[i].position;
+	p.hit = racers.visible[i].position;
 }
 
 // --- Explosions ---
 
 int8_t World::explode(bool spike, Vec3 at, bool scar, int8_t owner)
 {
-	std::vector<uint8_t>& free = freeExplosions[spike];
-	std::vector<uint8_t>& list = explosionList[spike];
+	std::vector<uint8_t>& free = powerUps.freeExplosions[spike];
+	std::vector<uint8_t>& list = powerUps.explosionList[spike];
 	int8_t e = -1;
 	if (!free.empty()) {
 		e = int8_t(free.front());
@@ -939,8 +983,8 @@ int8_t World::explode(bool spike, Vec3 at, bool scar, int8_t owner)
 		for (Explosion::State state : {Explosion::Scar, Explosion::Exploding}) {
 			int32_t least = INT32_MAX;
 			for (uint8_t x : list) {
-				if (explosions[x].state == state && explosions[x].ms < least) {
-					least = explosions[x].ms;
+				if (powerUps.explosions[x].state == state && powerUps.explosions[x].ms < least) {
+					least = powerUps.explosions[x].ms;
 					e = int8_t(x);
 				}
 			}
@@ -952,7 +996,7 @@ int8_t World::explode(bool spike, Vec3 at, bool scar, int8_t owner)
 		list.erase(std::find(list.begin(), list.end(), uint8_t(e)));
 	}
 	list.insert(list.begin(), uint8_t(e));
-	Explosion& x = explosions[size_t(e)];
+	Explosion& x = powerUps.explosions[size_t(e)];
 	killMember(x.member);
 	if (std::fabs(at.x) > 2048 || std::fabs(at.y) > 2048 || std::fabs(at.z) > 2048) {
 		x.state = Explosion::Idle;
@@ -972,10 +1016,10 @@ int8_t World::explode(bool spike, Vec3 at, bool scar, int8_t owner)
 
 void hooksMoved(World& w)
 {
-	for (uint8_t index : w.actionList) {
-		const Action& a = w.actions[index];
+	for (uint8_t index : w.powerUps.actionList) {
+		const Action& a = w.powerUps.actions[index];
 		if (a.kind == Action::Hook && a.member >= 0) {
-			w.members[size_t(a.member)].centre = hookCentre(w);
+			w.triggers.members[size_t(a.member)].centre = hookCentre(w);
 		}
 	}
 }
@@ -998,7 +1042,7 @@ void explosionFrame(World& w, Explosion& x, int32_t ms)
 			x.growth = e * x.rate + x.growth;
 			x.radius = (x.blast - 0.1f) * x.growth + 0.1f;
 			if (x.member >= 0) {
-				w.members[size_t(x.member)].radius = x.radius;
+				w.triggers.members[size_t(x.member)].radius = x.radius;
 			}
 			return;
 		}
@@ -1015,15 +1059,16 @@ void explosionFrame(World& w, Explosion& x, int32_t ms)
 
 void World::blast(size_t index, size_t i)
 {
-	const Explosion& x = explosions[index];
-	if (x.owner == int8_t(i) || (racers[i].flags & RacerShielded) || ((karts[i].flags & KartSpinOut) && !racers[i].ai)) {
+	LR_ASSERT(index < powerUps.explosions.size() && i < racers.race.size());
+	const Explosion& x = powerUps.explosions[index];
+	if (x.owner == int8_t(i) || (racers.race[i].flags & RacerShielded) || ((racers.karts[i].flags & KartSpinOut) && !racers.race[i].ai)) {
 		return;
 	}
 	float a = float(x.ms) / 1000.0f;
 	a = std::clamp(a + a, 0.0f, 1.0f);
 	spinOut(i);
-	karts[i].velocity = {};
-	const Vec3 h = karts[i].heading;
+	racers.karts[i].velocity = {};
+	const Vec3 h = racers.karts[i].heading;
 	Vec3 j = h * (a * 80);
 	j.z += a * 200;
 	impulse(i, j);

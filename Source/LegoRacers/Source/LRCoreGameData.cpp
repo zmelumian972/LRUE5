@@ -1,6 +1,7 @@
 // Finding the install, building and opening the data cache, and the cache's sounds as UE waves (LRCoreGameData.h).
 
 #include "LRCoreGameData.h"
+#include "LRCoreLog.h"
 
 #include "Async/Async.h"
 #include "HAL/FileManager.h"
@@ -33,7 +34,11 @@ std::span<const uint8_t> View(const TArray<uint8>& Bytes) { return {Bytes.GetDat
 class FLRSoundGenerator : public ISoundGenerator
 {
 public:
-	FLRSoundGenerator(TSharedPtr<const TArray<int16>, ESPMode::ThreadSafe> InPcm, bool bInLoops) : Pcm(MoveTemp(InPcm)), bLoops(bInLoops) {}
+	FLRSoundGenerator(TSharedPtr<const TArray<int16>, ESPMode::ThreadSafe> InPcm, bool bInLoops)
+		: Pcm(MoveTemp(InPcm))
+		, bLoops(bInLoops)
+	{
+	}
 	virtual int32 OnGenerateAudio(float* OutAudio, int32 NumSamples) override
 	{
 		const int32 Total = Pcm->Num();
@@ -105,10 +110,13 @@ FString PickJam()
 		}
 		return FString(); // (cancelled)
 	}
-	UE_LOG(LogTemp, Error, TEXT("LRCore: no file dialog (install zenity or kdialog), and no install found"));
-	FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(FString::Printf(TEXT("This computer has no file picker to choose LEGO.JAM with.\n\n"
-		"Install zenity or kdialog, or copy LEGO.JAM, LEGORacers.exe and the .TUN music files from your LEGO Racers folder into:\n%s\n\nThen start the game again."),
-		*FPaths::ConvertRelativePathToFull(FPaths::ProjectDir() / TEXT("GameData")))), FText::FromString(TEXT("LEGO Racers")));
+	UE_LOG(LogLRCore, Error, TEXT("no file dialog (install zenity or kdialog), and no install found"));
+	FMessageDialog::Open(EAppMsgType::Ok,
+		FText::FromString(FString::Printf(
+			TEXT("This computer has no file picker to choose LEGO.JAM with.\n\n"
+				 "Install zenity or kdialog, or copy LEGO.JAM, LEGORacers.exe and the .TUN music files from your LEGO Racers folder into:\n%s\n\nThen start the game again."),
+			*FPaths::ConvertRelativePathToFull(FPaths::ProjectDir() / TEXT("GameData")))),
+		FText::FromString(TEXT("LEGO Racers")));
 	return FString();
 }
 #endif
@@ -159,9 +167,7 @@ bool FLRCoreData::CheckInstall(const FString& Dir, FString& Why)
 
 FString FLRCoreData::FindInstall(bool bScripted)
 {
-	const auto Qualifies = [](const FString& Dir) {
-		return !Dir.IsEmpty() && FPaths::FileExists(Dir / TEXT("LEGO.JAM")) && FPaths::FileExists(Dir / TEXT("LEGORacers.exe"));
-	};
+	const auto Qualifies = [](const FString& Dir) { return !Dir.IsEmpty() && FPaths::FileExists(Dir / TEXT("LEGO.JAM")) && FPaths::FileExists(Dir / TEXT("LEGORacers.exe")); };
 	TArray<FString> Candidates;
 #if !UE_BUILD_SHIPPING
 	Candidates.Add(FPlatformMisc::GetEnvironmentVariable(TEXT("LR_GAME_DIR")));
@@ -189,16 +195,15 @@ FString FLRCoreData::AskForInstall(FString Why)
 {
 	const FText Title = FText::FromString(TEXT("LEGO Racers"));
 	for (;;) {
-		const FString Text = Why.IsEmpty()
-			? TEXT("Welcome to LEGO Racers!\n\n"
-				"This game runs on the files of the original LEGO Racers (1999),\n"
-				"so you need your own copy installed on this computer.\n"
-				"Nothing is downloaded, and your copy isn't changed.\n\n" // (line breaks by hand: Linux's message box doesn't wrap)
-				"Press OK, then find and select the file LEGO.JAM in the folder\n"
-				"where LEGO Racers is installed. LEGORacers.exe has to be in the same folder.\n\n"
-				"The first start then takes a while as the game prepares its data.\n\n"
-				"Press Cancel to quit.")
-			: Why + TEXT("\n\nPress OK to choose another LEGO.JAM, or Cancel to quit.");
+		const FString Text = Why.IsEmpty() ? TEXT("Welcome to LEGO Racers!\n\n"
+												  "This game runs on the files of the original LEGO Racers (1999),\n"
+												  "so you need your own copy installed on this computer.\n"
+												  "Nothing is downloaded, and your copy isn't changed.\n\n" // (line breaks by hand: Linux's message box doesn't wrap)
+												  "Press OK, then find and select the file LEGO.JAM in the folder\n"
+												  "where LEGO Racers is installed. LEGORacers.exe has to be in the same folder.\n\n"
+												  "The first start then takes a while as the game prepares its data.\n\n"
+												  "Press Cancel to quit.")
+										   : Why + TEXT("\n\nPress OK to choose another LEGO.JAM, or Cancel to quit.");
 		if (FMessageDialog::Open(EAppMsgType::OkCancel, FText::FromString(Text), Title) != EAppReturnType::Ok) {
 			return FString();
 		}
@@ -232,8 +237,7 @@ bool FLRCoreData::OpenCurrent(const FString& InstallDir)
 	for (size_t k = 0; k < Files.size(); k++) {
 		lr::CacheKind Kind;
 		lr::Digest J, E;
-		if (!ReadFile(CacheDir() / UTF8_TO_TCHAR(lr::CacheFileNames[k]), Files[k]) || !lr::cacheKey(View(Files[k]), Kind, J, E) || J != JamDigest ||
-			E != ExeDigest) {
+		if (!ReadFile(CacheDir() / UTF8_TO_TCHAR(lr::CacheFileNames[k]), Files[k]) || !lr::cacheKey(View(Files[k]), Kind, J, E) || J != JamDigest || E != ExeDigest) {
 			return false;
 		}
 		Views[k] = View(Files[k]);

@@ -1,20 +1,25 @@
 #pragma once
 
 // The race in the Classic look: drawn from
-// the core's world and the show only, never posed by UE itself. One scene capture per player viewport (split screen: two), each with its camera from the core; the track's worlds, the racers' members on their skeletons, the
-// power-ups, the sky re-centred on each eye, the effects, decals and the cars' shadows, the time race's ghosts and the
-// warp tube; materials and textures from the data cache (unlit: texture times the vertex colour decoded per pixel).
+// the core's world and the show only, never posed by UE itself. One scene capture per player viewport (split screen:
+// two), each with its camera from the core; the track's worlds, the racers' members on their skeletons, the power-ups,
+// the sky re-centred on each eye, the effects, decals and the cars' shadows, the time race's ghosts and the warp tube;
+// materials and textures from the data cache (unlit: texture times the vertex colour decoded per pixel).
 
 #include "CoreMinimal.h"
 #include "UObject/Object.h"
 #include "LRCore/Common/Math.h"
 #include "LRCore/Menus/Menus.h"
+#include "LRCore/Race/Track.h"
 #include "LRCore/Show/View.h"
+#include "LRCoreModelMesh.h"
 #include "LRData/Look.h"
 #include "LRData/Model.h"
 
 #include <array>
+#include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "LRCoreRace.generated.h"
@@ -36,6 +41,12 @@ class Show;
 struct World;
 struct Game;
 struct MenuData;
+struct RaceFile;
+struct PieceLibrary;
+struct CarPiece;
+struct Decal;
+struct Brick;
+struct Action;
 } // namespace lr
 
 struct FLRModelMesh; // a model's sections in UE's space (LRCoreRace.cpp)
@@ -79,8 +90,8 @@ public:
 		float Fov = 45; // vertical, degrees
 		bool bValid = false;
 	};
-	FMenuCamera PoseMenuView(UWorld* World, const lr::Cache& Cache, const lr::MenuData& Data, int32 View, const FVector& At, const lr::MenuScene& Scene,
-		const lr::Menus& Menus, const lr::Game& Game, AActor*& OutActor);
+	FMenuCamera PoseMenuView(UWorld* World, const lr::Cache& Cache, const lr::MenuData& Data, int32 View, const FVector& At, const lr::MenuScene& Scene, const lr::Menus& Menus,
+		const lr::Game& Game, AActor*& OutActor);
 
 private:
 	struct FView
@@ -89,7 +100,7 @@ private:
 		TWeakObjectPtr<UTextureRenderTarget2D> Target;
 		FIntRect Rect;
 		TWeakObjectPtr<UProceduralMeshComponent> Effects; // this view's particles, decals, beams (facing its camera)
-		TWeakObjectPtr<AActor> Sky;                        // its sky, re-centred on its eye
+		TWeakObjectPtr<AActor> Sky; // its sky, re-centred on its eye
 		TArray<TWeakObjectPtr<UProceduralMeshComponent>> SkyDome;
 	};
 	TArray<FView> Views;
@@ -130,8 +141,7 @@ private:
 		// A race's built driver: each section's colours, lit once at build; none: lit as posed.
 		TArray<TArray<FColor>> Prelit;
 	};
-	FPlaced Place(AActor* Actor, const FString& Path, const TArray<std::pair<std::string, std::string>>& Libraries, bool bLit,
-		bool bMirrored = false, float Alpha = 1);
+	FPlaced Place(AActor* Actor, const FString& Path, const TArray<std::pair<std::string, std::string>>& Libraries, bool bLit, bool bMirrored = false, float Alpha = 1);
 	void PoseNodes(FPlaced& P, const TArray<FTransform>& Nodes, const FTransform& Whole);
 	void Relight(FPlaced& P, const TArray<FQuat>& Rotations);
 	// The cache's model as UE sections (made once per path and mirroring); a model in hand, made once per key.
@@ -149,27 +159,23 @@ private:
 	FColor LitVertex(const lr::Vec3& N, const uint8* Diffuse, const uint8* Ambient, int32 Boost = 0) const;
 	void LightMenu(const lr::MenuLighting& L);
 	// A material of the libraries for a section (the texture's flip applied to its uvs by the caller), made once.
-	UMaterialInstanceDynamic* MaterialFor(const std::string& Name, const TArray<std::pair<std::string, std::string>>& Libraries, float Alpha,
-		bool& bFlip, uint8 Diffuse[4], bool bForceTranslucent = false, uint8* Ambient = nullptr);
+	UMaterialInstanceDynamic* MaterialFor(const std::string& Name, const TArray<std::pair<std::string, std::string>>& Libraries, float Alpha, bool& bFlip, uint8 Diffuse[4],
+		bool bForceTranslucent = false, uint8* Ambient = nullptr);
 	UTexture2D* Texture(const std::string& List, const std::string& Name, bool bPoint, bool bClamp);
 
 	// The track: its plain entities, its animated ones (by World::track.animated), the sky's world.
 	TArray<FPlaced> Animated;
-	struct FBinding
-	{
-		int32 Animated = -1, Plain = -1, Slot = -1, Track = -1;
-	};
 	TArray<FPlaced> Plain;
 	TArray<FString> PlainNames;
 	TArray<int32> PlainOfEntity; // Track::models' index -> Plain's (-1 none)
-	TArray<int16> ShownFrames;   // each material binding's frame last shown
+	TArray<int16> ShownFrames; // each material binding's frame last shown
 	TArray<float> PlainDistances; // each plain model entity's farthest squared draw distance last applied (the core's)
 	// The racers: each member (body, variant, car, driver), its ghost copies.
 	struct FRacer
 	{
 		FPlaced Members[4]; // (a built driver's: its head, on the face node)
 		TArray<TWeakObjectPtr<UProceduralMeshComponent>> Built; // a built car's body (lit once)
-		TArray<FSkin> Driver;                                    // a built driver's body
+		TArray<FSkin> Driver; // a built driver's body
 		TWeakObjectPtr<UTexture2D> Shadow;
 	};
 	TArray<FRacer> Racers;
@@ -183,14 +189,27 @@ private:
 	UMaterialInterface* Picture(const std::string& File, bool bFlip, float Alpha = 1);
 	// The power-ups' models (POWERUP.WDB), by role, made once each and shown as needed.
 	TArray<FPlaced> Bricks, BrickGlows, Explosions;
-	// The actions' models (turbo burns and flames, shields, the dynamite, the grapple, missiles), by action and role,
-	// made when first wanted; which were shown this frame.
-	TMap<FString, FPlaced> ActionModels;
-	TSet<int32> ActionShown;
+	// The actions' models (turbo burns and flames, shields, the dynamite, the grapple, missiles), by action and role
+	// (a slot is reused by other kinds and levels, whose models differ), made when first wanted; the frame each was last
+	// shown in.
+	struct FActionModel
+	{
+		std::string Model;
+		FPlaced Placed;
+		uint32 ShownAt = 0;
+	};
+	TMap<uint32, TArray<FActionModel>> ActionModels;
+	uint32 ActionFrame = 0;
 	FPlaced& ActionModel(int32 Action, int32 Role, const std::string& Model);
 	void PoseActions(const lr::World& W);
-	struct FFigure; // a power-up model's skeleton and parts (LRCoreRace.cpp)
-	TMap<FString, FFigure*> Figures;
+	// A power-up model's skeleton and parts.
+	struct FFigure
+	{
+		std::vector<lr::SkeletonNode> Nodes;
+		lr::Animation Animation;
+		bool bAnimated = false;
+	};
+	TMap<FString, TUniquePtr<FFigure>> Figures;
 	const FFigure* Figure(const std::string& Model);
 	FPlaced Tube[2];
 	std::string TubeModels[2];
@@ -217,9 +236,9 @@ private:
 	struct FMenuThing
 	{
 		FString Key;
-		TArray<FPlaced> Placed;                                // a minifig's head; a plain model's
+		TArray<FPlaced> Placed; // a minifig's head; a plain model's
 		TArray<TWeakObjectPtr<UProceduralMeshComponent>> Built; // a built mesh (car, piece, marks)
-		TArray<FSkin> Skins;                                    // a minifig's body; an animated cinematic entity
+		TArray<FSkin> Skins; // a minifig's body; an animated cinematic entity
 		std::vector<lr::SkeletonNode> Nodes;
 		const lr::Animation* Animation = nullptr;
 		int32 FacePart = -1; // the body node the head rides on
@@ -250,21 +269,27 @@ private:
 	};
 	TArray<FMenuView> MenuViews;
 	void PoseMenuSprites(FMenuView& V, const lr::MenuScene& Scene, const lr::MenuData& Data);
-	TMap<FString, lr::Animation*> MenuAnimations;
+	TMap<FString, TUniquePtr<lr::Animation>> MenuAnimations;
 	bool InitBase(UWorld* World, const lr::Cache& InCache);
 	void ClearThing(FMenuThing& T);
 	void BuildThing(FMenuThing& T, AActor* Actor, const lr::MenuScene& Scene, const lr::MenuScene::Thing& Thing, const lr::Menus& Menus, const lr::Game& Game,
 		const lr::MenuData& Data);
+	void BuildMinifig(FMenuThing& T, AActor* Actor, const lr::MenuScene::Thing& Thing, const lr::MenuData& Data);
+	void BuildEntity(FMenuThing& T, AActor* Actor, const lr::MenuScene& Scene, const lr::MenuScene::Thing& Thing, const lr::MenuData& Data);
+	void BuildPart(FMenuThing& T, AActor* Actor, const lr::MenuScene::Thing& Thing, const lr::MenuData& Data);
+	void BuildMenuCar(FMenuThing& T, AActor* Actor, const lr::MenuScene::Thing& Thing, const lr::Menus& Menus, const lr::Game& Game, const lr::MenuData& Data);
+	void BuildChassis(FMenuThing& T, AActor* Actor, const lr::MenuScene::Thing& Thing, const lr::MenuData& Data);
+	void BuildMark(FMenuThing& T, AActor* Actor, const lr::MenuScene::Thing& Thing);
 	void PoseThing(FMenuThing& T, const lr::MenuScene& Scene, const lr::MenuScene::Thing& Thing, const lr::Menus& Menus, const FVector& At);
-	FSkin BuildSkin(AActor* Actor, const lr::Model& Model, const TArray<std::pair<std::string, std::string>>& Libraries,
-		const TMap<FString, UMaterialInterface*>* Overrides, bool bFaceless, float Alpha = 1);
+	FSkin BuildSkin(AActor* Actor, const lr::Model& Model, const TArray<std::pair<std::string, std::string>>& Libraries, const TMap<FString, UMaterialInterface*>* Overrides,
+		bool bFaceless, float Alpha = 1);
 	void PoseSkin(FSkin& S, const std::vector<lr::NodeMatrix>& Nodes, const FVector& At);
 	// A cinematic entity's model table swaps and colour transform.
 	void ShowTable(FMenuThing& T, const lr::MenuScene::Thing& Thing);
 	void Recolour(FPlaced& P, const lr::MenuScene::Thing& Thing);
 	UTexture2D* ImageTexture(const std::string& Path, bool bFlip);
-	UProceduralMeshComponent* BuiltMesh(AActor* Actor, const lr::CarMesh& Mesh, const TArray<std::pair<std::string, std::string>>& Libraries,
-		const std::vector<std::string>& Names, float Alpha, bool bBright);
+	UProceduralMeshComponent* BuiltMesh(AActor* Actor, const lr::CarMesh& Mesh, const TArray<std::pair<std::string, std::string>>& Libraries, const std::vector<std::string>& Names,
+		float Alpha, bool bBright);
 	const lr::Animation* MenuAnimation(const std::string& Path);
 
 	void ConfigureCapture(USceneCaptureComponent2D* Capture) const;
@@ -292,10 +317,59 @@ private:
 	TMap<FString, TObjectPtr<UTexture2D>> Textures;
 	UPROPERTY()
 	TMap<FString, TObjectPtr<UMaterialInstanceDynamic>> Materials;
+	// Each material library and texture list decoded once (MaterialFor runs per particle per frame); none if it doesn't
+	// decode.
+	// Per-frame scratch (posed vertices, relit colours), kept so a frame allocates nothing for them.
+	TArray<FVector> ScratchPositions;
+	TArray<FColor> ScratchColours;
+	TArray<FTransform> ScratchNodes;
+	std::vector<lr::NodeMatrix> ScratchMatrices;
+	std::unordered_map<std::string, std::optional<lr::MaterialLibrary>> LibraryCache;
+	std::unordered_map<std::string, std::optional<lr::TextureList>> TextureCache;
+	const lr::MaterialLibrary* LibraryAt(const std::string& Path);
+	bool LoadBases();
+	void BuildLibraries(const lr::RaceFile& Race, const std::string& Dir);
+	void BuildScenery(const lr::RaceFile& Race, const std::string& Dir, const lr::World& W);
+	void BuildRacers(const lr::World& W, const lr::MenuData& Data);
+	UProceduralMeshComponent* BuiltCar(AActor* Kart, const std::vector<lr::CarPiece>& Pieces, const lr::PieceLibrary& Low, const lr::MenuData& Data);
+	void BuildPowerups(const lr::World& W);
+	void BuildWarpTube();
+	void ShowActionModel(int32 Action, int32 Role, const std::string& Model, const lr::Pose& At, float Scale, int32 Part, float TimeMs, float Alpha, FVector2D Scroll);
+	void PoseTurbo(const lr::World& W, int32 i, const lr::Action& A, const lr::Pose& Car, float Seconds);
+	void PoseRacerMember(int32 i, int32 m, const lr::World& W);
+	void PoseGhosts(const lr::World& W);
+	FMenuView& MenuView(UWorld* World, int32 v, const FVector& At);
+	void ResetMenuView(FMenuView& View, const std::string& WorldName, bool bCinema);
+	void BuildMenuWorld(FMenuView& View, const lr::MenuScene& Scene, const FVector& At);
+	void AddBlendedWorld(FMenuView& View, const std::string& Folder, const TArray<std::pair<std::string, std::string>>& Libraries);
+	void PoseBlended(FMenuView& View, const lr::MenuScene& Scene, const FVector& At);
+	static FString ThingKey(const lr::MenuScene::Thing& Th, const lr::Menus& Menus, bool bRing);
+	void PoseMenuThings(FMenuView& View, const lr::MenuScene& Scene, const lr::Menus& Menus, const lr::Game& Game, const lr::MenuData& Data, const FVector& At);
+	void PoseAnimatedScenery(const lr::World& W);
+	void ApplyDrawDistances(const lr::World& W);
+	FPlaced* SceneryOf(bool bAnimated, int32 Entity);
+	void AnimateMaterials(const lr::World& W);
+	static void ForSections(FPlaced& P, const std::string* Only, TFunctionRef<void(UProceduralMeshComponent*, int32, const FLRModelMesh::FSection&)> Do);
+	FVector2f ShadowSize(int32 Racer, const lr::World& W);
+	void MakeSky(FView& V);
+	void AddSkyWorld(FView& V, AActor* A);
+	void PoseBrick(const lr::World& W, const lr::Brick& B, FPlaced& Placed, int32 m);
+	void PoseExplosions(const lr::World& W);
+	void AddViews(int32 Count);
+	void PoseView(int32 v, const lr::World& W, float WindowScale, float WideAspect);
+	void HideFromView(USceneCaptureComponent2D* Capture, int32 v, const lr::World& W);
+	void PoseWarpView(USceneCaptureComponent2D* Capture, const lr::World& W, const lr::PlayerCamera& Cam, lr::Vec3& EyeAt, lr::Vec3& Look, lr::Vec3& Down, float& Fov);
+	struct FEffects;
+	void AddParticles(FEffects& E, const lr::Show& Show);
+	void AddBillboards(FEffects& E, const lr::World& W);
+	void AddSprites(FEffects& E, const lr::World& W);
+	void AddDecals(FEffects& E, int32 v, const lr::Show& Show);
+	UMaterialInterface* DecalMaterial(const lr::Decal& D, const TArray<std::pair<std::string, std::string>>& Shared, bool& bFlip);
+	const lr::TextureList* TexturesAt(const std::string& Path);
 	UPROPERTY()
 	TArray<TObjectPtr<UTextureRenderTarget2D>> Targets;
 	UPROPERTY()
 	TArray<TObjectPtr<UTexture2D>> Shadows;
-	TMap<FString, FLRModelMesh*> Meshes;
+	TMap<FString, TUniquePtr<FLRModelMesh>> Meshes;
 	TArray<std::pair<std::string, std::string>> TrackLibraries, CommonLibraries, PowerupLibraries, SkyLibraries;
 };

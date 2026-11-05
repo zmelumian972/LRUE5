@@ -1,8 +1,11 @@
-// The game on the rewrite's core: booting it, its inputs, its frames, its 2D layers, its sounds and its saves, and the
+// The game on the core: booting it, its inputs, its frames, its 2D layers, its sounds and its saves, and the
 // 3D: the menus' views (worlds, cars, pieces) and the race, plainly.
 
 #include "LRCoreGameMode.h"
+#include "LRCoreLog.h"
 
+#include "LRCoreModelMesh.h"
+#include "LRCoreRun.h"
 #include "LRCoreRace.h"
 #include "LRCoreSettings.h"
 #include "LRCoreSound.h"
@@ -14,16 +17,12 @@
 #include "Camera/CameraComponent.h"
 #include "Components/DirectionalLightComponent.h"
 #include "Components/SceneCaptureComponent2D.h"
-#include "Components/StaticMeshComponent.h"
-#include "Engine/DirectionalLight.h"
 #include "Engine/Engine.h"
-#include "Engine/StaticMesh.h"
 #include "LRData/Cars.h"
 #include "LRData/Model.h"
 #include "LRData/Race.h"
 #include "LRData/Scene.h"
 #include "ProceduralMeshComponent.h"
-#include "CanvasItem.h"
 #include "Components/AudioComponent.h"
 #include "Engine/Canvas.h"
 #include "Engine/Texture2D.h"
@@ -41,58 +40,15 @@
 #include "LRData/Sound.h"
 #include "Misc/App.h"
 #include "Misc/FileHelper.h"
-#include "Misc/PackageName.h"
 #include "Misc/Paths.h"
 #include "UnrealClient.h"
 
 #include <algorithm>
 
+using namespace LRUe;
+
 namespace
 {
-// UE's keys as USB usages.
-uint32 UsbOf(const FKey& Key)
-{
-	static const TMap<FKey, uint32> Codes = [] {
-		TMap<FKey, uint32> M;
-		const FKey Letters[26] = {EKeys::A, EKeys::B, EKeys::C, EKeys::D, EKeys::E, EKeys::F, EKeys::G, EKeys::H, EKeys::I, EKeys::J, EKeys::K,
-			EKeys::L, EKeys::M, EKeys::N, EKeys::O, EKeys::P, EKeys::Q, EKeys::R, EKeys::S, EKeys::T, EKeys::U, EKeys::V, EKeys::W, EKeys::X,
-			EKeys::Y, EKeys::Z};
-		for (uint32 i = 0; i < 26; i++) {
-			M.Add(Letters[i], 4 + i);
-		}
-		const FKey Digits[10] = {EKeys::One, EKeys::Two, EKeys::Three, EKeys::Four, EKeys::Five, EKeys::Six, EKeys::Seven, EKeys::Eight,
-			EKeys::Nine, EKeys::Zero};
-		for (uint32 i = 0; i < 10; i++) {
-			M.Add(Digits[i], 30 + i);
-		}
-		const FKey Functions[12] = {EKeys::F1, EKeys::F2, EKeys::F3, EKeys::F4, EKeys::F5, EKeys::F6, EKeys::F7, EKeys::F8, EKeys::F9, EKeys::F10,
-			EKeys::F11, EKeys::F12};
-		for (uint32 i = 0; i < 12; i++) {
-			M.Add(Functions[i], 58 + i);
-		}
-		const FKey Pad[10] = {EKeys::NumPadOne, EKeys::NumPadTwo, EKeys::NumPadThree, EKeys::NumPadFour, EKeys::NumPadFive, EKeys::NumPadSix,
-			EKeys::NumPadSeven, EKeys::NumPadEight, EKeys::NumPadNine, EKeys::NumPadZero};
-		for (uint32 i = 0; i < 10; i++) {
-			M.Add(Pad[i], 89 + i);
-		}
-		const TPair<FKey, uint32> Others[] = {{EKeys::Enter, 40}, {EKeys::Escape, 41}, {EKeys::BackSpace, 42}, {EKeys::Tab, 43},
-			{EKeys::SpaceBar, 44}, {EKeys::Hyphen, 45}, {EKeys::Equals, 46}, {EKeys::LeftBracket, 47}, {EKeys::RightBracket, 48},
-			{EKeys::Backslash, 49}, {EKeys::Semicolon, 51}, {EKeys::Apostrophe, 52}, {EKeys::Tilde, 53}, {EKeys::Comma, 54},
-			{EKeys::Period, 55}, {EKeys::Slash, 56}, {EKeys::CapsLock, 57}, {EKeys::ScrollLock, 71}, {EKeys::Pause, 72}, {EKeys::Insert, 73},
-			{EKeys::Home, 74}, {EKeys::PageUp, 75}, {EKeys::Delete, 76}, {EKeys::End, 77}, {EKeys::PageDown, 78}, {EKeys::Right, 79},
-			{EKeys::Left, 80}, {EKeys::Down, 81}, {EKeys::Up, 82}, {EKeys::NumLock, 83}, {EKeys::Divide, 84}, {EKeys::Multiply, 85},
-			{EKeys::Subtract, 86}, {EKeys::Add, 87}, {EKeys::Decimal, 99}, {EKeys::LeftControl, 224}, {EKeys::LeftShift, 225},
-			{EKeys::LeftAlt, 226}, {EKeys::LeftCommand, 227}, {EKeys::RightControl, 228}, {EKeys::RightShift, 229}, {EKeys::RightAlt, 230},
-			{EKeys::RightCommand, 231}};
-		for (const auto& [K, Code] : Others) {
-			M.Add(K, Code);
-		}
-		return M;
-	}();
-	const uint32* Code = Codes.Find(Key);
-	return Code ? *Code : 0;
-}
-
 // The race view's look from the settings.
 ULRRaceView::FLook LookOf(const FLRSettings& S)
 {
@@ -101,199 +57,7 @@ ULRRaceView::FLook LookOf(const FLRSettings& S)
 	return L;
 }
 
-// A pad's buttons as SDL numbers them (the bindings'); -1 not a button.
-int32 PadButtonOf(const FKey& Key)
-{
-	static const FKey Buttons[15] = {EKeys::Gamepad_FaceButton_Bottom, EKeys::Gamepad_FaceButton_Right, EKeys::Gamepad_FaceButton_Left,
-		EKeys::Gamepad_FaceButton_Top, EKeys::Gamepad_Special_Left, FKey(), EKeys::Gamepad_Special_Right, EKeys::Gamepad_LeftThumbstick,
-		EKeys::Gamepad_RightThumbstick, EKeys::Gamepad_LeftShoulder, EKeys::Gamepad_RightShoulder, EKeys::Gamepad_DPad_Up,
-		EKeys::Gamepad_DPad_Down, EKeys::Gamepad_DPad_Left, EKeys::Gamepad_DPad_Right};
-	for (int32 i = 0; i < 15; i++) {
-		if (Buttons[i].IsValid() && Buttons[i] == Key) {
-			return i;
-		}
-	}
-	return -1;
-}
 } // namespace
-
-// Everything the program needs that isn't a UObject.
-struct FLRCoreRun
-{
-	FLRCoreData Files; // the install and its data cache
-	lr::MenuData Data;
-	lr::Program Program;
-	lr::Show Show; // the race's show: advanced after each race frame
-	FString SaveDir;
-	// The presentation's settings (LRCoreSettings.h) and its VIDEO SETTINGS screen: open, the keys
-	// it gets (the core gets none while it's open), the mouse buttons it saw, its draw list.
-	FLRSettings Settings;
-	lr::VideoSettings Video;
-	bool bVideoOpen = false;
-	TArray<TPair<lr::VideoSettings::Key, bool>> VideoKeys;
-	uint32 VideoButtons = 0;
-	std::vector<lr::MenuElement> VideoElements;
-	std::vector<lr::MenuGlyph> VideoGlyphs;
-
-	// Input: the key events since the last frame (menu keys), what is held (keyboard codes; each pad's buttons and stick
-	// directions as bindings), the mouse in 640x480 space.
-	struct FInput : public IInputProcessor
-	{
-		FLRCoreRun* Run = nullptr;
-		virtual void Tick(const float, FSlateApplication&, TSharedRef<ICursor>) override {}
-		virtual bool HandleKeyDownEvent(FSlateApplication&, const FKeyEvent& Event) override
-		{
-			if (!Event.IsRepeat()) {
-				if (Run->bVideoOpen) {
-					Run->VideoKey(Event.GetKey());
-				}
-				else {
-					Run->Key(Event.GetKey(), true, Event.GetUserIndex());
-				}
-			}
-			return false;
-		}
-		virtual bool HandleKeyUpEvent(FSlateApplication&, const FKeyEvent& Event) override
-		{
-			if (!Run->bVideoOpen) {
-				Run->Key(Event.GetKey(), false, Event.GetUserIndex());
-			}
-			return false;
-		}
-		virtual bool HandleAnalogInputEvent(FSlateApplication&, const FAnalogInputEvent& Event) override
-		{
-			Run->Stick(Event.GetKey(), Event.GetAnalogValue(), Event.GetUserIndex());
-			return false;
-		}
-		virtual bool HandleMouseButtonDownEvent(FSlateApplication&, const FPointerEvent& Event) override
-		{
-			Run->MouseButton(Event.GetEffectingButton(), true);
-			return false;
-		}
-		virtual bool HandleMouseButtonUpEvent(FSlateApplication&, const FPointerEvent& Event) override
-		{
-			Run->MouseButton(Event.GetEffectingButton(), false);
-			return false;
-		}
-		virtual const TCHAR* GetDebugName() const override { return TEXT("LRCore"); }
-	};
-	TSharedPtr<FInput> Input;
-	TArray<lr::MenuKey> Keys;
-	TArray<uint32> Held;
-	TArray<uint32> PadHeld[2];
-	float StickX[2] = {}, StickY[2] = {};
-	int32 MouseX = 0, MouseY = 0;
-	uint32 Buttons = 0;
-	// Where the 640x480 screen is in the window.
-	FVector2D Origin = FVector2D::ZeroVector;
-	float Scale = 1, WindowAspect = 4.0f / 3;
-
-	// The frames run and the clock of real time not yet run.
-	int32 Frames = 0;
-	double ClockMs = 0;
-
-	// What the frames of a tick started (sounds, saves) and the tunes playing.
-	TArray<int32> Sounds;
-	bool TuneChanged = false, TuneLoops = false;
-	FString Tune;             // the tune to play when it changed (a file: "theme.tun"; empty: none)
-	TArray<FString> RaceMusic; // the track's LEGOMSC
-	// The 2D layers' pixels and the views between them: element ranges and the views' rects and scenes.
-	TArray<TArray<uint32>> LayerPixels;
-	TArray<uint32> LayerCrcs;
-	struct FView
-	{
-		FIntRect Rect;
-		int32 Scene;
-	};
-	TArray<FView> Views;
-	bool RaceView = false; // the race drawn by UE's camera under the layers
-	bool WideRace = false; // a one-player race in a wide window: its 3D fills it, its HUD keeps to its edges
-	TArray<bool> ViewShown; // the view has something to show (else the 2D under it stays)
-	bool bBooted = false;
-
-	void Key(const FKey& K, bool Down, int32 User)
-	{
-		const int32 Button = PadButtonOf(K);
-		if (Button >= 0) {
-			// The menus see every pad button as one; the race its own number.
-			PadHeld[User & 1].Remove(lr::SourcePad | uint32(Button));
-			if (Down) {
-				PadHeld[User & 1].Add(lr::SourcePad | uint32(Button));
-			}
-			Keys.Add({lr::MenuPadButton, Down, false});
-			return;
-		}
-		if (K.IsMouseButton()) {
-			return;
-		}
-		const uint32 Usb = UsbOf(K);
-		const uint32 Code = lr::menuKey(Usb);
-		if (!Code) {
-			return;
-		}
-		Held.Remove(Code);
-		if (Down) {
-			Held.Add(Code);
-			// A text field's character before its key.
-			if (Program.menus.top() == lr::ScreenLicense && lr::menuCharacter(Usb)) {
-				Keys.Add({lr::SourceCharacter | lr::menuCharacter(Usb), true, false});
-			}
-		}
-		Keys.Add({Code, Down, false});
-	}
-	// The VIDEO SETTINGS screen's keys: the arrows and Esc, a pad's d-pad and B (its stick in Stick).
-	void VideoKey(const FKey& K)
-	{
-		using V = lr::VideoSettings;
-		struct FTo
-		{
-			FKey From;
-			V::Key Key;
-			bool bPad;
-		};
-		const FTo Map[] = {{EKeys::Up, V::Up, false}, {EKeys::Down, V::Down, false}, {EKeys::Left, V::Back, false}, {EKeys::Right, V::Forward, false},
-			{EKeys::Escape, V::Close, false}, {EKeys::Gamepad_DPad_Up, V::Up, true}, {EKeys::Gamepad_DPad_Down, V::Down, true},
-			{EKeys::Gamepad_DPad_Left, V::Back, true}, {EKeys::Gamepad_DPad_Right, V::Forward, true}, {EKeys::Gamepad_FaceButton_Right, V::Close, true}};
-		for (const FTo& To : Map) {
-			if (To.From == K) {
-				VideoKeys.Add({To.Key, To.bPad});
-			}
-		}
-	}
-	// A stick past 60% is an axis-button (0 right, 1 left, 2 down, 3 up).
-	void Stick(const FKey& K, float Value, int32 User)
-	{
-		const bool X = K == EKeys::Gamepad_LeftX, Y = K == EKeys::Gamepad_LeftY;
-		if (!X && !Y) {
-			return;
-		}
-		float& Axis = X ? StickX[User & 1] : StickY[User & 1];
-		const auto Direction = [&](float V) { return V > 0.6f ? (X ? 0 : 3) : V < -0.6f ? (X ? 1 : 2) : -1; };
-		const int32 Before = Direction(Axis), After = Direction(Value);
-		Axis = Value;
-		if (Before == After) {
-			return;
-		}
-		if (bVideoOpen && After >= 0) {
-			static const lr::VideoSettings::Key Steps[4] = {lr::VideoSettings::Forward, lr::VideoSettings::Back, lr::VideoSettings::Down, lr::VideoSettings::Up};
-			VideoKeys.Add({Steps[After], true}); // (the core's keys are dropped while the screen is open)
-		}
-		if (Before >= 0) {
-			PadHeld[User & 1].Remove(lr::SourceAxis | uint32(Before));
-			Keys.Add({lr::SourceAxis | uint32(Before), false, false});
-		}
-		if (After >= 0) {
-			PadHeld[User & 1].Add(lr::SourceAxis | uint32(After));
-			Keys.Add({lr::SourceAxis | uint32(After), true, false});
-		}
-	}
-	void MouseButton(const FKey& K, bool Down)
-	{
-		const uint32 Bit = K == EKeys::LeftMouseButton ? 1 : K == EKeys::RightMouseButton ? 2 : K == EKeys::MiddleMouseButton ? 4 : 0;
-		Buttons = Down ? Buttons | Bit : Buttons & ~Bit;
-	}
-
-};
 
 ALRCoreGameMode::ALRCoreGameMode()
 {
@@ -305,7 +69,7 @@ ALRCoreGameMode::ALRCoreGameMode()
 void ALRCoreGameMode::StartPlay()
 {
 	Super::StartPlay();
-	Run = new FLRCoreRun;
+	Run = MakeUnique<FLRCoreRun>();
 	if (!FindData()) {
 		FPlatformMisc::RequestExit(false);
 	}
@@ -316,22 +80,22 @@ void ALRCoreGameMode::StartPlay()
 bool ALRCoreGameMode::FindData()
 {
 	FLRCoreRun& R = *Run;
-	bool bScripted = FApp::IsUnattended();
+	const bool bScripted = FApp::IsUnattended() || R.OwnsInput();
 	FString Dir = FLRCoreData::FindInstall(bScripted);
 	if (Dir.IsEmpty() && !bScripted) {
 		Dir = FLRCoreData::AskForInstall();
 	}
 	if (Dir.IsEmpty()) {
-		UE_LOG(LogTemp, Error, TEXT("LRCore: no LEGO Racers install (a folder with LEGO.JAM and LEGORacers.exe)"));
+		UE_LOG(LogLRCore, Error, TEXT("no LEGO Racers install (a folder with LEGO.JAM and LEGORacers.exe)"));
 		return false;
 	}
 	if (R.Files.OpenCurrent(Dir)) {
-		UE_LOG(LogTemp, Display, TEXT("LRCore: the data cache of %s"), *Dir);
+		UE_LOG(LogLRCore, Display, TEXT("the data cache of %s"), *Dir);
 		return BootOrQuit();
 	}
 	FString Why;
 	if (!FLRCoreData::CheckInstall(Dir, Why)) {
-		UE_LOG(LogTemp, Error, TEXT("LRCore: %s (%s)"), *Why, *Dir);
+		UE_LOG(LogLRCore, Error, TEXT("%s (%s)"), *Why, *Dir);
 		Dir = bScripted ? FString() : FLRCoreData::AskForInstall(Why);
 		if (Dir.IsEmpty()) {
 			return false;
@@ -340,7 +104,7 @@ bool ALRCoreGameMode::FindData()
 			return BootOrQuit();
 		}
 	}
-	UE_LOG(LogTemp, Display, TEXT("LRCore: building the data cache from %s"), *Dir);
+	UE_LOG(LogLRCore, Display, TEXT("building the data cache from %s"), *Dir);
 	R.Files.StartBuild(Dir);
 	return true;
 }
@@ -348,7 +112,7 @@ bool ALRCoreGameMode::FindData()
 bool ALRCoreGameMode::BootOrQuit()
 {
 	if (!Boot()) {
-		UE_LOG(LogTemp, Error, TEXT("LRCore: can't start the game (see above)"));
+		UE_LOG(LogLRCore, Error, TEXT("can't start the game (see above)"));
 		return false;
 	}
 	return true;
@@ -360,8 +124,7 @@ void ALRCoreGameMode::EndPlay(const EEndPlayReason::Type Reason)
 		if (Run->Input && FSlateApplication::IsInitialized()) {
 			FSlateApplication::Get().UnregisterInputPreProcessor(Run->Input);
 		}
-		delete Run;
-		Run = nullptr;
+		Run.Reset();
 	}
 	Super::EndPlay(Reason);
 }
@@ -370,31 +133,42 @@ bool ALRCoreGameMode::Boot()
 {
 	FLRCoreRun& R = *Run;
 	if (!R.Data.load(R.Files.Cache)) {
-		UE_LOG(LogTemp, Error, TEXT("LRCore: the menus' files don't load"));
+		UE_LOG(LogLRCore, Error, TEXT("the menus' files don't load"));
 		return false;
 	}
 	// The save files.
 	R.SaveDir = FPaths::ProjectSavedDir() / TEXT("Save");
+	if (R.Harness) {
+		R.Harness->BootFolder(R.SaveDir);
+	}
 	std::array<std::vector<uint8_t>, 2> Saves;
 	for (int32 Slot = 0; Slot < 2; Slot++) {
 		TArray<uint8> Bytes;
-		FString File = R.SaveDir / FString::Printf(TEXT("%d/racers.lrsave"), Slot);
+		const FString File = R.SaveDir / FString::Printf(TEXT("%d/racers.lrsave"), Slot);
 		if (FFileHelper::LoadFileToArray(Bytes, *File, FILEREAD_Silent)) {
 			Saves[Slot].assign(Bytes.GetData(), Bytes.GetData() + Bytes.Num());
 		}
 	}
 	uint8 PadCount = FSlateApplication::Get().IsGamepadAttached() ? 1 : 0;
+	if (R.Harness) {
+		R.Harness->BootSaves(Saves, PadCount);
+	}
 	R.Program.boot(R.Data, R.Files.Cache, PadCount, Saves);
 	R.Frames = 1; // the boot is frame 1
-
+	if (R.Harness) {
+		R.Harness->Booted(R);
+	}
 	// The presentation's settings.
-	{
+	if (R.OwnsInput()) {
+		R.Settings.ApplyUnattended(); // (the saved ones are ignored)
+	}
+	else {
 		R.Settings.Load();
 		R.Settings.ApplyVideo();
 	}
 
 	R.Input = MakeShared<FLRCoreRun::FInput>();
-	R.Input->Run = Run;
+	R.Input->Run = Run.Get();
 	FSlateApplication::Get().RegisterInputPreProcessor(R.Input);
 	if (APlayerController* Player = GetWorld()->GetFirstPlayerController()) {
 		// The core draws its own cursor: the system's is hidden but free (absolute positions).
@@ -411,7 +185,7 @@ bool ALRCoreGameMode::Boot()
 		Viewport->bDisableWorldRendering = true;
 	}
 	R.bBooted = true;
-	UE_LOG(LogTemp, Display, TEXT("LRCore: booted (%d images, %d pads)"), int32(R.Data.images.size()), PadCount);
+	UE_LOG(LogLRCore, Display, TEXT("booted (%d images, %d pads)"), int32(R.Data.images.size()), PadCount);
 	return true;
 }
 
@@ -420,7 +194,7 @@ void ALRCoreGameMode::Tick(float DeltaSeconds)
 	Super::Tick(DeltaSeconds);
 	if (Run && Run->Files.IsBuilding()) {
 		if (Run->Files.Poll() && (!Run->Files.Error.IsEmpty() || !BootOrQuit())) {
-			UE_LOG(LogTemp, Error, TEXT("LRCore: the data cache: %s"), *Run->Files.Error);
+			UE_LOG(LogLRCore, Error, TEXT("the data cache: %s"), *Run->Files.Error);
 			FPlatformMisc::RequestExit(false);
 		}
 		return;
@@ -432,8 +206,7 @@ void ALRCoreGameMode::Tick(float DeltaSeconds)
 	// The mouse, in the 640x480 screen as the HUD last placed it.
 	APlayerController* Player = GetWorld()->GetFirstPlayerController();
 	float X = 0, Y = 0;
-	if (Player && Player->GetMousePosition(X, Y)
-		) {
+	if (Player && Player->GetMousePosition(X, Y) && !R.OwnsInput()) {
 		R.MouseX = FMath::Clamp(int32((X - R.Origin.X) / R.Scale), 0, 639);
 		R.MouseY = FMath::Clamp(int32((Y - R.Origin.Y) / R.Scale), 0, 479);
 	}
@@ -441,14 +214,17 @@ void ALRCoreGameMode::Tick(float DeltaSeconds)
 	R.ClockMs = FMath::Min(R.ClockMs + DeltaSeconds * 1000.0, 64.0 + 16.0);
 	int32 Count = int32(R.ClockMs / 16.0);
 	R.ClockMs -= Count * 16.0;
+	if (R.OwnsInput()) {
+		Count = 1; // (one 16 ms frame a tick)
+	}
 	for (int32 i = 0; i < Count && R.Program.mode != lr::Program::Mode::Quit; i++) {
 		StepFrame(i);
 	}
 	// Frame smoothing: above 62.5 Hz a full-screen one-player race shows the view between its last two
 	// frames by the next frame's fraction gone.
 	const lr::World& W = R.Program.world;
-	bool bSmooth = R.Settings.bSmoothing && R.RaceView && RaceView && RaceView->bBuilt && W.cameras.size() == 1 &&
-		!W.cameras[0].hidden && DeltaSeconds < 0.016f;
+	bool bSmooth = R.Settings.bSmoothing && R.RaceView && RaceView && RaceView->bBuilt && W.raceView.cameras.size() == 1 && !W.raceView.cameras[0].hidden && DeltaSeconds < 0.016f;
+	bSmooth = bSmooth && !R.OwnsInput();
 	if (RaceView) {
 		RaceView->bSmoothing = bSmooth;
 	}
@@ -497,7 +273,7 @@ void ALRCoreGameMode::RunVideo()
 		if (bVideo) {
 			R.Settings.ApplyVideo();
 		}
-		{
+		if (!R.OwnsInput()) {
 			R.Settings.Save();
 		}
 	}
@@ -509,20 +285,39 @@ void ALRCoreGameMode::RunVideo()
 	}
 }
 
+// OPTIONS > VIDEO OPTIONS: the screen opens on its first row with the settings as they are.
+void ALRCoreGameMode::OpenVideo()
+{
+	FLRCoreRun& R = *Run;
+	R.bVideoOpen = true;
+	R.Video = lr::VideoSettings();
+	R.Settings.ToScreen(R.Video);
+	R.VideoKeys.Reset();
+	R.VideoButtons = R.Buttons;
+	if (APlayerController* Player = GetWorld()->GetFirstPlayerController()) {
+		Player->CurrentMouseCursor = EMouseCursor::Default; // (the core's cursor isn't drawn over it)
+	}
+	R.Log(FString::Printf(TEXT("%d,video_settings,1"), R.Frames));
+}
+
 void ALRCoreGameMode::StepFrame(int32 FrameIndex)
 {
 	FLRCoreRun& R = *Run;
 	lr::Program& P = R.Program;
 	R.Frames++;
+	if (R.Harness) {
+		R.Harness->BeforeFrame(R);
+	}
 	// The players' race keys from their controls.
 	lr::Program::Input In;
 	const std::vector<lr::MenuKey> Keys(R.Keys.GetData(), R.Keys.GetData() + R.Keys.Num());
 	R.Keys.Reset();
 	In.keys = Keys;
 	In.mouseX = R.MouseX, In.mouseY = R.MouseY, In.buttons = R.Buttons;
+	In.windowAspect = R.WindowAspect;
 	for (size_t Player = 0; Player < 2; Player++) {
 		const lr::KeyLayout& Layout = P.game.settings.layouts[P.game.settings.layout[Player] % 5];
-		const TArray<uint32>& Down = Layout.kind == 4 ? R.PadHeld[Layout.device & 1] : R.Held;
+		const TArray<uint32>& Down = Layout.kind == lr::KeyLayout::Joystick ? R.PadHeld[Layout.device & 1] : R.Held;
 		In.players[Player] = lr::Program::raceKeys(Layout, {Down.GetData(), size_t(Down.Num())});
 	}
 	if (R.bVideoOpen) {
@@ -532,65 +327,56 @@ void ALRCoreGameMode::StepFrame(int32 FrameIndex)
 		In.players = decltype(In.players){};
 		RunVideo();
 	}
-	// A one-player race in a window wider than 4:3 draws Hor+: the
-	// core's frustum is the window's (its vertical field the original's, its width the window's).
-	if (P.mode == lr::Program::Mode::Race && P.world.cameras.size() == 1) {
-		P.world.cameras[0].aspect = R.WindowAspect > 4.0f / 3 + 0.01f ? R.WindowAspect : 4.0f / 3;
-	}
+	const bool bWasRace = P.mode == lr::Program::Mode::Race;
 	P.frame(16, In);
+	if (R.Harness) {
+		R.Harness->AfterCoreFrame(R, bWasRace);
+	}
 
 	for (const int32 Sound : P.menus.sounds) {
 		R.Sounds.Add(Sound);
 	}
 	// The tunes: the menus' as they start one or stop theirs; the race's cues (presentation draws the racing tune from
 	// the candidates).
-	const auto SetTune = [&](const FString& Tune, bool Loops) {
-		R.TuneChanged = true;
-		R.Tune = Tune;
-		R.TuneLoops = Loops;
-	};
 	if (P.mode == lr::Program::Mode::Menus && (P.menus.tuneStarted || (P.menus.tune < 0 && !R.Tune.IsEmpty()))) {
 		const int32 T = P.menus.tune;
-		SetTune(T >= 0 && size_t(T) < R.Data.music.names.size() ? FString(UTF8_TO_TCHAR(R.Data.music.names[size_t(T)].c_str())) : FString(),
-			P.menus.tuneLoops);
+		R.SetTune(T >= 0 && size_t(T) < R.Data.music.names.size() ? FString(UTF8_TO_TCHAR(R.Data.music.names[size_t(T)].c_str())) : FString(), P.menus.tuneLoops);
 	}
 	WriteSaves();
 	if (P.menus.videoSettings) {
-		// OPTIONS > VIDEO OPTIONS: the screen opens on its first row with the settings as they are.
 		P.menus.videoSettings = false;
-		R.bVideoOpen = true;
-		R.Video = lr::VideoSettings();
-		R.Settings.ToScreen(R.Video);
-		R.VideoKeys.Reset();
-		R.VideoButtons = R.Buttons;
-		if (APlayerController* Player = GetWorld()->GetFirstPlayerController()) {
-			Player->CurrentMouseCursor = EMouseCursor::Default; // (the core's cursor isn't drawn over it)
-		}
+		OpenVideo();
 	}
 	if (P.ended) {
 		ClearRace();
 	}
 	if (P.loaded) {
 		BuildRace();
-		SetTune(FString(), false);
+		R.SetTune(FString(), false);
 	}
 	else if (P.mode == lr::Program::Mode::Race) {
 		// The show runs on the race's ms (fast forward's x1.75; nothing while paused).
 		const lr::World& W = P.world;
-		R.Show.advance(W, W.paused() ? 0 : (W.brief.cheats & lr::CheatFastForward) ? int32(16 * 1.75f) : 16);
+		R.Show.advance(W, W.paused() ? 0 : (W.session.brief.cheats & lr::CheatFastForward) ? int32(16 * 1.75f) : 16);
 	}
-	if (P.mode == lr::Program::Mode::Race && P.world.tune.started) {
-		const lr::RaceTune& T = P.world.tune;
+	if (P.mode == lr::Program::Mode::Race && P.world.session.tune.started) {
+		const lr::RaceTune& T = P.world.session.tune;
 		const int32 Index = T.choices.empty() ? T.tune : T.choices[size_t(FMath::RandHelper(int32(T.choices.size())))];
-		SetTune(Index >= 0 && Index < R.RaceMusic.Num() ? R.RaceMusic[Index] : FString(), T.loops);
+		R.SetTune(Index >= 0 && Index < R.RaceMusic.Num() ? R.RaceMusic[Index] : FString(), T.loops);
 	}
 	R.RaceView = P.mode == lr::Program::Mode::Race && !P.loaded;
+	if (R.Harness) {
+		R.Harness->Trace(R);
+	}
 	if (P.mode == lr::Program::Mode::Quit) {
-		UE_LOG(LogTemp, Display, TEXT("LRCore: QUIT chosen at frame %d"), R.Frames);
+		UE_LOG(LogLRCore, Display, TEXT("QUIT chosen at frame %d"), R.Frames);
+		R.Log(FString::Printf(TEXT("%d,quit,"), R.Frames));
 		FPlatformMisc::RequestExit(false);
 	}
+	if (R.Harness) {
+		R.Harness->AfterFrame(R, FrameIndex, RaceView);
+	}
 }
-
 
 void ALRCoreGameMode::WriteSaves()
 {
@@ -598,7 +384,7 @@ void ALRCoreGameMode::WriteSaves()
 	for (const lr::Menus::SaveFile& S : R.Program.menus.saves) {
 		const FString File = R.SaveDir / FString::Printf(TEXT("%d/racers.lrsave"), S.slot);
 		if (!FFileHelper::SaveArrayToFile(TArrayView<const uint8>(S.bytes.data(), int32(S.bytes.size())), *File)) {
-			UE_LOG(LogTemp, Error, TEXT("LRCore: can't write %s"), *File);
+			UE_LOG(LogLRCore, Error, TEXT("can't write %s"), *File);
 		}
 	}
 }
@@ -619,7 +405,7 @@ void ALRCoreGameMode::Sounds()
 			ULRCoreWave* Made = R.Files.Cache.get(TCHAR_TO_UTF8(*Path), Sound) && !Sound.samples.empty() ? ULRCoreWave::Make(this, Sound, Loops) : nullptr;
 			Found = &Assets.Add(Key, Made);
 			if (!Made) {
-				UE_LOG(LogTemp, Warning, TEXT("LRCore: no sound %s in the data cache"), *Path);
+				UE_LOG(LogLRCore, Warning, TEXT("no sound %s in the data cache"), *Path);
 			}
 		}
 		return Cast<USoundBase>(Found->Get());
@@ -705,7 +491,7 @@ void ALRCoreGameMode::PaintLayers()
 		PaintSpan(R.VideoElements, R.VideoGlyphs);
 		return;
 	}
-	R.WideRace = R.RaceView && R.Program.world.cameras.size() == 1 && R.WindowAspect > 4.0f / 3 + 0.01f;
+	R.WideRace = R.RaceView && R.Program.world.raceView.cameras.size() == 1 && R.WindowAspect > 4.0f / 3 + 0.01f;
 	if (R.WideRace) {
 		const std::pair<uint32_t, uint32_t> Hud = M.hudLayers[0];
 		std::vector<lr::MenuElement> Groups[3], Rest;
@@ -716,8 +502,8 @@ void ALRCoreGameMode::PaintLayers()
 			}
 			const lr::MenuElement& El = E[i];
 			const float X = El.kind == lr::MenuElement::Triangle ? (El.vertices[0][0] + El.vertices[1][0] + El.vertices[2][0]) / 3
-				: El.kind == lr::MenuElement::Glyphs ? float(El.box[0]) + float(El.box[2]) / 2
-													  : (El.dest[0] + El.dest[2]) / 2;
+				: El.kind == lr::MenuElement::Glyphs			 ? float(El.box[0]) + float(El.box[2]) / 2
+																 : (El.dest[0] + El.dest[2]) / 2;
 			Groups[X < 640.0f / 3 ? 0 : X > 1280.0f / 3 ? 2 : 1].push_back(El);
 		}
 		for (const std::vector<lr::MenuElement>& G : Groups) {
@@ -799,11 +585,9 @@ void ALRCoreGameMode::DrawScreen(UCanvas* Canvas)
 			Item.BlendMode = SE_BLEND_Translucent;
 			Canvas->DrawItem(Item);
 		}
-		if (Layer < R.Views.Num() && Layer < R.ViewShown.Num() && R.ViewShown[Layer] && Layer < ViewTargets.Num() && ViewTargets[Layer] &&
-			ViewTargets[Layer]->GetResource()) {
+		if (Layer < R.Views.Num() && Layer < R.ViewShown.Num() && R.ViewShown[Layer] && Layer < ViewTargets.Num() && ViewTargets[Layer] && ViewTargets[Layer]->GetResource()) {
 			const FIntRect& V = R.Views[Layer].Rect;
-			FCanvasTileItem Item(R.Origin + FVector2D(V.Min) * R.Scale, ViewTargets[Layer]->GetResource(), FVector2D(V.Size()) * R.Scale,
-				FLinearColor::White);
+			FCanvasTileItem Item(R.Origin + FVector2D(V.Min) * R.Scale, ViewTargets[Layer]->GetResource(), FVector2D(V.Size()) * R.Scale, FLinearColor::White);
 			Item.BlendMode = SE_BLEND_Opaque;
 			Canvas->DrawItem(Item);
 		}
@@ -819,7 +603,6 @@ void ALRCoreHUD::DrawHUD()
 }
 
 // ---- 3D ----
-
 
 void ALRCoreGameMode::SetUpLights()
 {
@@ -902,11 +685,7 @@ void ALRCoreGameMode::PoseViews()
 		const FIntPoint Size(FMath::Max(1, int32(View.Rect.Width() * R.Scale)), FMath::Max(1, int32(View.Rect.Height() * R.Scale)));
 		UTextureRenderTarget2D* Target = ViewTargets[v];
 		if (!Target || Target->SizeX != Size.X || Target->SizeY != Size.Y) {
-			Target = NewObject<UTextureRenderTarget2D>(this);
-			Target->RenderTargetFormat = RTF_RGBA8_SRGB;
-			Target->ClearColor = FLinearColor::Black;
-			Target->InitAutoFormat(Size.X, Size.Y);
-			Target->UpdateResourceImmediate(true);
+			Target = NewTarget(this, Size.X, Size.Y);
 			ViewTargets[v] = Target;
 		}
 		UCanvas* Under = nullptr;
@@ -914,8 +693,8 @@ void ALRCoreGameMode::PoseViews()
 		FDrawToRenderTargetContext Context;
 		UKismetRenderingLibrary::BeginDrawCanvasToRenderTarget(this, Target, Under, Extent, Context);
 		for (int32 k = 0; Under && k <= v && k < ScreenLayers.Num(); k++) {
-			Under->K2_DrawTexture(ScreenLayers[k], FVector2D::ZeroVector, Extent, FVector2D(View.Rect.Min) / FVector2D(640, 480),
-				FVector2D(View.Rect.Size()) / FVector2D(640, 480), FLinearColor::White, k == 0 ? BLEND_Opaque : BLEND_Translucent);
+			Under->K2_DrawTexture(ScreenLayers[k], FVector2D::ZeroVector, Extent, FVector2D(View.Rect.Min) / FVector2D(640, 480), FVector2D(View.Rect.Size()) / FVector2D(640, 480),
+				FLinearColor::White, k == 0 ? BLEND_Opaque : BLEND_Translucent);
 		}
 		UKismetRenderingLibrary::EndDrawCanvasToRenderTarget(this, Context);
 		USceneCaptureComponent2D* C = Captures[v];
@@ -940,7 +719,7 @@ void ALRCoreGameMode::BuildRace()
 	const lr::Program& P = R.Program;
 	const lr::World& W = P.world;
 	ClearRace();
-	const std::string Dir = "GAMEDATA/" + W.brief.track + "/";
+	const std::string Dir = "GAMEDATA/" + W.session.brief.track + "/";
 	lr::NameList Tunes;
 	R.RaceMusic.Reset();
 	if (R.Files.Cache.get(Dir + "LEGOMSC", Tunes)) {
@@ -949,7 +728,9 @@ void ALRCoreGameMode::BuildRace()
 		}
 	}
 	R.Show.effectsVolume = P.game.settings.sound / 255.0f;
-	R.Show.load(R.Files.Cache, W);
+	if (!R.Show.load(R.Files.Cache, W)) {
+		UE_LOG(LogLRCore, Error, TEXT("the race's sounds and effects don't load: the race runs silent"));
+	}
 	// The race's sounds: one mixed stream, playing from the race's setup on (silent until the show gives a voice).
 	if (!RaceMixer) {
 		RaceMixer = ULRRaceMixer::Make(this);

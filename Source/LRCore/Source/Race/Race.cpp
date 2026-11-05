@@ -2,6 +2,7 @@
 // karts against karts (and what shields and curses do there), the checkpoint gates and lap marks, the racers' timers
 // (the AI's use of its brick, taunts, curses), the standings and the rubber band.
 
+#include "Common/Assert.h"
 #include "Kart/Body.h"
 #include "LRCore/Race/World.h"
 
@@ -37,123 +38,12 @@ Vec3 turningOf(Vec3 centre, const Basis& w, Vec3 point, Vec3 n)
 {
 	const Vec3 r = normalize(centre - point);
 	const Vec3 g = cross(r, n);
-	const Vec3 wg = {w.u.x * g.z + w.s.x * g.y + w.f.x * g.x, w.u.y * g.z + w.s.y * g.y + w.f.y * g.x, w.u.z * g.z + w.s.z * g.y + w.f.z * g.x};
-	return cross(wg, r);
+	return cross(toWorld(w, g), r);
 }
 
-} // namespace
-
-float World::progress(size_t i) const
+// A returning driver's stuck clock: a spin or 2 s reversing ends the reversing; 1 s without moving starts it.
+void updateStuck(Driver& d, const Kart& k, int32_t dt)
 {
-	const Racer& r = racers[i];
-	return r.checkpoint < 0 ? 0 : float(r.checkpointCount) + track.checkpoints[size_t(r.checkpoint)].fraction;
-}
-
-// (A warp shrinks the car, and its spheres with it.)
-Sphere World::carSphere(size_t i) const
-{
-	const float g = powers.empty() ? 1.0f : powers[i].carScale;
-	return {toWorld(visible[i].rotation, carBounds[i].centre * g) + visible[i].position, carBounds[i].radius * g};
-}
-
-Sphere World::bodySphere(size_t i) const
-{
-	// The body as it leans.
-	const float g = powers.empty() ? 1.0f : powers[i].carScale;
-	const Pose& body = looks.empty() ? visible[i] : looks[i].body;
-	return {toWorld(body.rotation, bodyBounds[i].centre * g) + body.position, bodyBounds[i].radius * g};
-}
-
-Sphere World::groupSphere(size_t i) const { return groups[i]; }
-
-void World::handToAi(size_t i)
-{
-	racers[i].ai = true;
-	if (playback[i].route >= 0) {
-		return;
-	}
-	// The nearest route's loop point.
-	int32_t nearest = -1;
-	float best = FLT_MAX;
-	for (size_t slot = 0; slot < routes.size(); slot++) {
-		if (routes[slot].points.empty()) {
-			continue;
-		}
-		const Vec3 to = routes[slot].loop - visible[i].position;
-		const float d = dotZYX(to, to);
-		if (d < best) {
-			best = d;
-			nearest = int32_t(slot);
-		}
-	}
-	Driver& d = drivers[i];
-	if (nearest < 0) {
-		d.flags |= DriverBrakeToStop;
-		return;
-	}
-	playback[i].route = nearest;
-	d.previewMs = 1000;
-	d.flags |= DriverReturning;
-	endPowerslide(d, karts[i]);
-	d.radius = 0;
-	aimAlong(preview, routes[size_t(nearest)], d.previewMs, true);
-}
-
-void World::driveRacer(size_t i, int32_t dt)
-{
-	stage = RaceEvent::Controls;
-	Driver& d = drivers[i];
-	Kart& k = karts[i];
-	const KartParams& p = params[i];
-	if (d.flags & DriverBrakeToStop) {
-		d.thrust = k.headingSpeed > 0 ? -108.0f : 0.0f;
-		applyDriver(d, k, p); // with the radius before (not refreshed)
-		return;
-	}
-	if (!racers[i].ai) {
-		if (d.flags & DriverCursed) {
-			// A curse jitters the throttle: a new offset (and steering's, unused) at random times.
-			if (d.jitterMs == 0) {
-				d.jitterMs = draw(Draw::CurseJitter) % 500;
-				draw(Draw::CurseJitter);
-				d.curseThrottle = float(draw(Draw::CurseJitter) % 200) * 0.01f - 1;
-			}
-			else {
-				d.jitterMs = std::max(0, d.jitterMs - dt);
-			}
-		}
-		stepDriver(d, k, p, dt);
-		return;
-	}
-	if (!(d.flags & DriverReturning)) {
-		return;
-	}
-	// Back to the route: aim at a point a little way along it, from the loop.
-	Playback& pl = playback[i];
-	const Route& route = routes[size_t(pl.route)];
-	const Pose& vis = visible[i];
-	Vec3 delta = preview.position - vis.position;
-	const float dist = lengthZYX(delta);
-	if (dist < 3) {
-		// There: into route playback, a little along from the loop.
-		attachAtLoop(pl, k, visible[i], p, route, pl.route);
-		RoutePlace& c = pl.cursor;
-		c.rate = 1;
-		Vec3 none{};
-		c.seek(route, none);
-		pl.baseRate = 1;
-		pl.sink = pl.hop = pl.side = pl.hopVelocity = 0;
-		pl.targetRate = 1;
-		c.advance(route, float(d.previewMs));
-		d.flags &= ~DriverReturning;
-		d.previewMs = 0;
-		d.radius = 0;
-		d.thrust = 0;
-		k.turnRadius = 0;
-		k.thrust = 0;
-		return;
-	}
-	d.prevRadius = d.radius;
 	d.stuckMs += dt;
 	if (k.flags & KartSpinning) {
 		d.stuckMs = 0;
@@ -172,6 +62,131 @@ void World::driveRacer(size_t i, int32_t dt)
 		d.stuckMs = 0;
 		d.flags |= DriverReversing;
 	}
+}
+
+// A returning driver there: into route playback, a little along from the loop (by its preview's ms).
+void rejoinRoute(World& w, size_t i, const Route& route)
+{
+	Driver& d = w.racers.drivers[i];
+	Kart& k = w.racers.karts[i];
+	Playback& pl = w.racers.playback[i];
+	attachAtLoop(pl, k, w.racers.visible[i], w.racers.params[i], route, pl.route);
+	RoutePlace& c = pl.cursor;
+	c.rate = 1;
+	Vec3 none{};
+	c.seek(route, none);
+	pl.baseRate = 1;
+	pl.sink = pl.hop = pl.side = pl.hopVelocity = 0;
+	pl.targetRate = 1;
+	c.advance(route, float(d.previewMs));
+	d.flags &= ~DriverReturning;
+	d.previewMs = 0;
+	d.radius = 0;
+	d.thrust = 0;
+	k.turnRadius = 0;
+	k.thrust = 0;
+}
+
+} // namespace
+
+float World::progress(size_t i) const
+{
+	const Racer& r = racers.race[i];
+	return r.checkpoint < 0 ? 0 : float(r.checkpointCount) + track.checkpoints[size_t(r.checkpoint)].fraction;
+}
+
+// (A warp shrinks the car, and its spheres with it.)
+Sphere World::carSphere(size_t i) const
+{
+	const float g = racers.powers.empty() ? 1.0f : racers.powers[i].carScale;
+	return {toWorld(racers.visible[i].rotation, racers.carBounds[i].centre * g) + racers.visible[i].position, racers.carBounds[i].radius * g};
+}
+
+Sphere World::bodySphere(size_t i) const
+{
+	// The body as it leans.
+	const float g = racers.powers.empty() ? 1.0f : racers.powers[i].carScale;
+	const Pose& body = raceView.looks.empty() ? racers.visible[i] : raceView.looks[i].body;
+	return {toWorld(body.rotation, racers.bodyBounds[i].centre * g) + body.position, racers.bodyBounds[i].radius * g};
+}
+
+Sphere World::groupSphere(size_t i) const { return racers.groups[i]; }
+
+void World::handToAi(size_t i)
+{
+	racers.race[i].ai = true;
+	if (racers.playback[i].route >= 0) {
+		return;
+	}
+	// The nearest route's loop point.
+	int32_t nearest = -1;
+	float best = FLT_MAX;
+	for (size_t slot = 0; slot < routes.size(); slot++) {
+		if (routes[slot].points.empty()) {
+			continue;
+		}
+		const Vec3 to = routes[slot].loop - racers.visible[i].position;
+		const float d = dotZYX(to, to);
+		if (d < best) {
+			best = d;
+			nearest = int32_t(slot);
+		}
+	}
+	Driver& d = racers.drivers[i];
+	if (nearest < 0) {
+		d.flags |= DriverBrakeToStop;
+		return;
+	}
+	racers.playback[i].route = nearest;
+	d.previewMs = 1000;
+	d.flags |= DriverReturning;
+	endPowerslide(d, racers.karts[i]);
+	d.radius = 0;
+	aimAlong(preview, routes[size_t(nearest)], d.previewMs, true);
+}
+
+void World::driveRacer(size_t i, int32_t dt)
+{
+	raceView.stage = RaceEvent::Controls;
+	Driver& d = racers.drivers[i];
+	Kart& k = racers.karts[i];
+	const KartParams& p = racers.params[i];
+	if (d.flags & DriverBrakeToStop) {
+		d.thrust = k.headingSpeed > 0 ? -108.0f : 0.0f;
+		applyDriver(d, k, p); // with the radius before (not refreshed)
+		return;
+	}
+	if (!racers.race[i].ai) {
+		if (d.flags & DriverCursed) {
+			// A curse jitters the throttle: a new offset (and steering's, unused) at random times.
+			if (d.jitterMs == 0) {
+				d.jitterMs = draw(Draw::CurseJitter) % 500;
+				draw(Draw::CurseJitter);
+				d.curseThrottle = float(draw(Draw::CurseJitter) % 200) * 0.01f - 1;
+			}
+			else {
+				d.jitterMs = std::max(0, d.jitterMs - dt);
+			}
+		}
+		stepDriver(d, k, p, dt);
+		return;
+	}
+	if (!(d.flags & DriverReturning)) {
+		return;
+	}
+	// Back to the route: aim at a point a little way along it, from the loop.
+	Playback& pl = racers.playback[i];
+	LR_ASSERT(pl.route >= 0 && size_t(pl.route) < routes.size());
+	const Route& route = routes[size_t(pl.route)];
+	const Pose& vis = racers.visible[i];
+	Vec3 delta = preview.position - vis.position;
+	const float dist = lengthZYX(delta);
+	if (dist < 3) {
+		rejoinRoute(*this, i, route);
+		return;
+	}
+	d.prevRadius = d.radius;
+	updateStuck(d, k, dt);
 	const Vec3 along = k.contacts >= 3 ? vis.rotation.f : k.heading;
 	const bool left = dot(vis.rotation.s, delta) >= 0;
 	const Vec3 side = left ? vis.rotation.s : -vis.rotation.s;
@@ -195,24 +210,25 @@ void World::driveRacer(size_t i, int32_t dt)
 
 void World::moveRacer(size_t i, int32_t dt)
 {
-	stage = RaceEvent::Controls;
-	Kart& k = karts[i];
+	raceView.stage = RaceEvent::Controls;
+	Kart& k = racers.karts[i];
 	hits.clear();
-	if (playback[i].active) {
-		const Playback& pl = playback[i];
-		stepPlayback(playback[i], k, visible[i], params[i], track, routes[size_t(pl.route)], dt, &hits);
+	if (racers.playback[i].active) {
+		const Playback& pl = racers.playback[i];
+		LR_ASSERT(pl.route >= 0 && size_t(pl.route) < routes.size());
+		stepPlayback(racers.playback[i], k, racers.visible[i], racers.params[i], track, routes[size_t(pl.route)], dt, &hits);
 	}
 	else {
-		k.preStart = racers[i].flags & RacerOnGrid;
-		k.engineStarted = racers[i].flags & RacerEngine;
+		k.preStart = racers.race[i].flags & RacerOnGrid;
+		k.engineStarted = racers.race[i].flags & RacerEngine;
 		wheelSurfaces.clear();
-		stepBody(k, params[i], track, dt, &hits, &visible[i], &wheelSurfaces);
+		stepBody(k, racers.params[i], track, dt, &hits, &racers.visible[i], &wheelSurfaces);
 		// The wheels' surface particles (a player's), substep by substep: a change is an event.
-		RacerLook& look = looks[i];
+		RacerLook& look = raceView.looks[i];
 		for (const std::array<int16_t, 4>& on : wheelSurfaces) {
 			for (size_t w = 0; w < 4; w++) {
 				std::array<char, 9> name = {};
-				if (!racers[i].ai && on[w] >= 0) {
+				if (!racers.race[i].ai && on[w] >= 0) {
 					name = track.surfaces[size_t(on[w])].particle;
 				}
 				if (name != look.wheelParticles[w]) {
@@ -227,7 +243,7 @@ void World::moveRacer(size_t i, int32_t dt)
 		}
 	}
 	if (k.wallHits > 0) {
-		raise(RaceEvent::Scrape, {Owner::Racer, int16_t(i)}).place = visible[i].position; // (its cooldown is the show's)
+		raise(RaceEvent::Scrape, {Owner::Racer, int16_t(i)}).place = racers.visible[i].position; // (its cooldown is the show's)
 	}
 	applyHits(i);
 }
@@ -240,7 +256,7 @@ void World::applyHits(size_t i)
 			continue;
 		}
 		if (h.finishLine) {
-			racers[i].laps = raceLaps;
+			racers.race[i].laps = session.raceLaps;
 		}
 		if (h.event >= 0) {
 			// Started and ended at once, at the hit and for the racer.
@@ -252,7 +268,7 @@ void World::applyHits(size_t i)
 
 void World::crossGate(size_t i, int16_t g, bool forward)
 {
-	Racer& r = racers[i];
+	Racer& r = racers.race[i];
 	if (g == r.checkpoint && forward == r.forward) {
 		return; // the same gate again (another body point, or after a back-off)
 	}
@@ -285,7 +301,7 @@ void World::crossGate(size_t i, int16_t g, bool forward)
 
 void World::lapMark(size_t i, LapMark::Zone zone)
 {
-	Racer& r = racers[i];
+	Racer& r = racers.race[i];
 	if (zone == r.zones[0]) {
 		return;
 	}
@@ -295,7 +311,7 @@ void World::lapMark(size_t i, LapMark::Zone zone)
 		if (r.lineCrossings > 0 && r.lineCrossings > r.laps) {
 			r.laps++;
 			r.timeBehind = r.standing == 1 ? 0 : timeBehind(i);
-			if (r.timeBehind != 0 && r.laps < raceLaps) {
+			if (r.timeBehind != 0 && r.laps < session.raceLaps) {
 				r.timeBehindMs = 2000;
 			}
 		}
@@ -308,20 +324,20 @@ void World::lapMark(size_t i, LapMark::Zone zone)
 int32_t World::timeBehind(size_t i) const
 {
 	// Behind the slowest of those who have done as many laps, over those laps (and the laps they did beyond).
-	const Racer& r = racers[i];
-	const int32_t laps = std::min(r.laps, raceLaps);
+	const Racer& r = racers.race[i];
+	const int32_t laps = std::min(r.laps, session.raceLaps);
 	int32_t most = 0;
-	for (size_t o = 0; o < racers.size(); o++) {
-		const int32_t other = std::min(racers[o].laps, raceLaps);
+	for (size_t o = 0; o < racers.race.size(); o++) {
+		const int32_t other = std::min(racers.race[o].laps, session.raceLaps);
 		if (o == i || other < laps) {
 			continue;
 		}
 		int32_t behind = 0;
 		for (int32_t l = 0; l < laps; l++) {
-			behind += r.lapMs[l] - racers[o].lapMs[l];
+			behind += r.lapMs[l] - racers.race[o].lapMs[l];
 		}
 		for (int32_t l = laps; l < other; l++) {
-			behind += racers[o].lapMs[l];
+			behind += racers.race[o].lapMs[l];
 		}
 		most = std::max(most, behind);
 	}
@@ -330,7 +346,7 @@ int32_t World::timeBehind(size_t i) const
 
 void World::finish(size_t i)
 {
-	Racer& r = racers[i];
+	Racer& r = racers.race[i];
 	r.flags |= RacerFinished;
 	r.place = session.finishers++;
 	setStanding(i, session.finishers);
@@ -340,26 +356,48 @@ void World::finish(size_t i)
 void World::setStanding(size_t i, int32_t standing)
 {
 	// A better place is cheered, a worse one regretted (the show's voices).
-	const int32_t before = racers[i].standing;
+	const int32_t before = racers.race[i].standing;
 	if (before != 0 && standing != before) {
 		voice(i, standing < before ? RaceEvent::Positive : RaceEvent::Negative);
 	}
-	racers[i].standing = standing;
+	racers.race[i].standing = standing;
 }
 
 // The boxes of two karts (centred on the centre of mass, oriented by the body), by separating axes: the three faces
 // of each, then the nine edge pairs, which only reject. The normal is the face axis of least overlap.
 bool World::boxContact(size_t first, size_t second, Vec3& normal, float& penetration, Vec3& point) const
 {
-	const float sa = racers[first].boxScale, sb = racers[second].boxScale;
+	const float sa = racers.race[first].boxScale, sb = racers.race[second].boxScale;
 	if (sa == 0 || sb == 0) {
 		return false;
 	}
-	return boxesTouch({karts[first].rotation, karts[first].centerOfMassWorld, sa != 1 ? ContactBox * sa : ContactBox},
-		{karts[second].rotation, karts[second].centerOfMassWorld, sb != 1 ? ContactBox * sb : ContactBox}, normal, penetration, point);
+	return boxesTouch({racers.karts[first].rotation, racers.karts[first].centerOfMassWorld, sa != 1 ? ContactBox * sa : ContactBox},
+		{racers.karts[second].rotation, racers.karts[second].centerOfMassWorld, sb != 1 ? ContactBox * sb : ContactBox}, normal, penetration, point);
 }
 
 namespace {
+
+// The corners of each box at least that deep along the normal (the first's along it, the second's against it); the
+// point is their mean.
+Vec3 contactPoint(const Box& boxA, const Box& boxB, Vec3 normal, float depthA, float depthB)
+{
+	Vec3 sum{};
+	int count = 0;
+	auto corners = [&](const Box& box, float depth, float sign) {
+		const Basis& o = box.rows;
+		const Vec3 h = box.half;
+		for (int c = 0; c < 8; c++) {
+			const Vec3 off = toWorld(o, {c < 4 ? h.x : -h.x, (c & 2) ? -h.y : h.y, (c & 1) ? -h.z : h.z});
+			if ((normal.y * off.y + normal.z * off.z + normal.x * off.x) * sign >= depth) {
+				sum += box.centre + off;
+				count++;
+			}
+		}
+	};
+	corners(boxA, depthA, 1);
+	corners(boxB, depthB, -1);
+	return count ? sum * (1 / float(count)) : sum;
+}
 
 bool boxesTouch(const Box& boxA, const Box& boxB, Vec3& normal, float& penetration, Vec3& point)
 {
@@ -423,42 +461,22 @@ bool boxesTouch(const Box& boxA, const Box& boxB, Vec3& normal, float& penetrati
 		normal = -normal;
 	}
 	penetration = least;
-	const float depthA = faces[best].half - least, depthB = faces[best].projection - least;
-	// The corners of each box at least that deep along the normal; the point is their mean.
-	Vec3 sum{};
-	int count = 0;
-	auto corners = [&](const Box& box, float depth, float sign) {
-		const Basis& o = box.rows;
-		const Vec3 h = box.half;
-		for (int c = 0; c < 8; c++) {
-			const Vec3 off = o.f * (c < 4 ? h.x : -h.x) + o.s * ((c & 2) ? -h.y : h.y) + o.u * ((c & 1) ? -h.z : h.z);
-			if ((normal.y * off.y + normal.z * off.z + normal.x * off.x) * sign >= depth) {
-				sum += box.centre + off;
-				count++;
-			}
-		}
-	};
-	corners(boxA, depthA, 1);
-	corners(boxB, depthB, -1);
-	point = count ? sum * (1 / float(count)) : sum;
+	point = contactPoint(boxA, boxB, normal, faces[best].half - least, faces[best].projection - least);
 	return true;
 }
 
 } // namespace
 
-
 void World::contactSweep()
 {
-	stage = RaceEvent::Queue;
+	raceView.stage = RaceEvent::Queue;
 	contacts.clear();
-	const size_t n = karts.size();
+	const size_t n = racers.karts.size();
 	std::vector<Sphere> spheres(n);
 	for (size_t i = 0; i < n; i++) {
 		spheres[i] = carSphere(i);
 	}
-	auto sphere = [&](uint8_t i) -> Sphere {
-		return i < RockEntry ? spheres[i] : Sphere{hazards[i - RockEntry].centre, hazards[i - RockEntry].radius};
-	};
+	auto sphere = [&](uint8_t i) -> Sphere { return i < RockEntry ? spheres[i] : Sphere{scenery.hazards[i - RockEntry].centre, scenery.hazards[i - RockEntry].radius}; };
 	auto xlo = [&](uint8_t i) { return sphere(i).centre.x - sphere(i).radius; };
 	// Insertion sort by xlo, equals keeping their order.
 	for (size_t i = 1; i < contactOrder.size(); i++) {
@@ -482,7 +500,7 @@ void World::contactSweep()
 			const Sphere so = sphere(o);
 			const Vec3 d = so.centre - se.centre;
 			const float r = so.radius + se.radius;
-			if (!(d.x * d.x + d.y * d.y + d.z * d.z < r * r)) {
+			if (!(lengthSquared(d) < r * r)) {
 				continue;
 			}
 			if (e >= RockEntry || o >= RockEntry) {
@@ -503,31 +521,32 @@ void World::contactSweep()
 // A racer moved out of a contact; a physics kart only if its body can go there.
 void World::moveOut(size_t i, Vec3 move)
 {
-	Kart& k = karts[i];
-	if (playback[i].active) {
-		Playback& pl = playback[i];
-		routeMove(pl, k, visible[i], params[i], routes[size_t(pl.route)], move);
+	Kart& k = racers.karts[i];
+	if (racers.playback[i].active) {
+		Playback& pl = racers.playback[i];
+		LR_ASSERT(pl.route >= 0 && size_t(pl.route) < routes.size());
+		routeMove(pl, k, racers.visible[i], racers.params[i], routes[size_t(pl.route)], move);
 		return;
 	}
 	k.wallHits = 0;
-	saveBody(k, params[i], track);
-	const Vec3 from = visible[i].position;
-	visible[i].position = from + move;
-	k.position = visible[i].position;
+	saveBody(k, racers.params[i], track);
+	const Vec3 from = racers.visible[i].position;
+	racers.visible[i].position = from + move;
+	k.position = racers.visible[i].position;
 	hits.clear();
-	sweepBody(k, params[i], track, 0, !(k.flags & KartGhost), &hits);
+	sweepBody(k, racers.params[i], track, 0, !(k.flags & KartGhost), &hits);
 	if (k.wallHits != 0) {
-		visible[i].position = k.position = from;
+		racers.visible[i].position = k.position = from;
 	}
 	applyHits(i);
 }
 
 void World::hitRock(size_t i, size_t hazard)
 {
-	const Hazard& h = hazards[hazard];
+	const Hazard& h = scenery.hazards[hazard];
 	const HazardSpec& spec = track.hazards[hazard];
-	Racer& r = racers[i];
-	Kart& k = karts[i];
+	Racer& r = racers.race[i];
+	Kart& k = racers.karts[i];
 	Vec3 n, point;
 	float depth;
 	const float scale = r.boxScale;
@@ -538,18 +557,16 @@ void World::hitRock(size_t i, size_t hazard)
 	moveOut(i, n * depth);
 	// An impulse against a body that doesn't move (its inverse inertia as at load, QUIRK).
 	constexpr float RockInvMass = 4.99999987e-05f;
-	const Vec3 size = spec.size;
-	const Vec3 inertia = {((20000 / size.x) * (size.z * size.z + size.y * size.y)) * 0.083333336f,
-		((20000 / size.y) * (size.z * size.z + size.x * size.x)) * 0.083333336f, ((20000 / size.z) * (size.y * size.y + size.x * size.x)) * 0.083333336f};
+	const Vec3 inertia = boxInertia(20000, spec.size);
 	const Basis rockW = {{1 / inertia.x, 0, 0}, {0, 1 / inertia.y, 0}, {0, 0, 1 / inertia.z}};
 	const float num = -dot(k.velocity, n) * (0.75f + 1);
-	const float m = (params[i].invMass + RockInvMass) * dot(n, n);
+	const float m = (racers.params[i].invMass + RockInvMass) * dot(n, n);
 	const float j = num / (dot(n, turningOf(k.centerOfMassWorld, k.invInertiaWorld, point, n) + turningOf(h.centre, rockW, point, n)) + m);
-	if (playback[i].active) {
-		routeImpulse(playback[i], k, n, j);
+	if (racers.playback[i].active) {
+		routeImpulse(racers.playback[i], k, n, j);
 	}
 	else {
-		k.velocity += n * (params[i].invMass * j);
+		k.velocity += n * (racers.params[i].invMass * j);
 	}
 }
 
@@ -558,10 +575,10 @@ bool World::contact(Contact& c)
 	const size_t first = c.first, second = c.second;
 	const Vec3 n = c.normal, point = c.point;
 	const float depth = c.penetration;
-	Racer& ra = racers[first];
-	Racer& rb = racers[second];
-	Kart& ka = karts[first];
-	Kart& kb = karts[second];
+	Racer& ra = racers.race[first];
+	Racer& rb = racers.race[second];
+	Kart& ka = racers.karts[first];
+	Kart& kb = racers.karts[second];
 	if (((ra.flags | rb.flags) & RacerGhost) || ((ka.flags | kb.flags) & KartSpinOut)) {
 		return false;
 	}
@@ -569,17 +586,15 @@ bool World::contact(Contact& c)
 	moveOut(first, n * depth);
 	const Vec3 vrel = ka.velocity - kb.velocity;
 	const float num = -dot(vrel, n) * (0.75f + 1);
-	const float m = (params[first].invMass + params[second].invMass) * dot(n, n);
-	const float j = num / (dot(n, turningOf(ka.centerOfMassWorld, ka.invInertiaWorld, point, n) +
-							   turningOf(kb.centerOfMassWorld, kb.invInertiaWorld, point, n)) +
-		m);
+	const float m = (racers.params[first].invMass + racers.params[second].invMass) * dot(n, n);
+	const float j = num / (dot(n, turningOf(ka.centerOfMassWorld, ka.invInertiaWorld, point, n) + turningOf(kb.centerOfMassWorld, kb.invInertiaWorld, point, n)) + m);
 	c.impulse = j;
 	auto push = [&](size_t i, float magnitude) {
-		if (playback[i].active) {
-			routeImpulse(playback[i], karts[i], n, magnitude);
+		if (racers.playback[i].active) {
+			routeImpulse(racers.playback[i], racers.karts[i], n, magnitude);
 		}
 		else {
-			karts[i].velocity += n * (params[i].invMass * magnitude);
+			racers.karts[i].velocity += n * (racers.params[i].invMass * magnitude);
 		}
 	};
 	push(first, j);
@@ -607,18 +622,27 @@ bool World::contact(Contact& c)
 		}
 	}
 
+	contactPowers(first, second, point);
+	ra.flags |= RacerBoxRamp;
+	rb.flags |= RacerBoxRamp;
+	return true;
+}
+
+// A contact's power-ups: the shields' shoves and spins, a curse passed on.
+void World::contactPowers(size_t first, size_t second, Vec3 point)
+{
 	// A shield: at level 1 it shoves the other racer when that one is hit from the side, at 2 and 3 spins it.
 	const size_t pair[2] = {first, second};
-	const Vec3 offsets[2] = {normalize(ka.centerOfMassWorld - point), normalize(kb.centerOfMassWorld - point)};
-	if (((ra.flags ^ rb.flags) & RacerShielded) != 0) {
+	const Vec3 offsets[2] = {normalize(racers.karts[first].centerOfMassWorld - point), normalize(racers.karts[second].centerOfMassWorld - point)};
+	if (((racers.race[first].flags ^ racers.race[second].flags) & RacerShielded) != 0) {
 		for (int s = 0; s < 2; s++) {
 			const size_t own = pair[s], other = pair[1 - s];
-			if (!(racers[own].flags & RacerShielded)) {
+			if (!(racers.race[own].flags & RacerShielded)) {
 				continue;
 			}
-			const Vec3 f = visible[other].rotation.f, d = offsets[1 - s];
-			const float side = f.x * d.x + f.y * d.y + f.z * d.z;
-			switch (powers[own].shieldLevel) {
+			const Vec3 f = racers.visible[other].rotation.f, d = offsets[1 - s];
+			const float side = dot(f, d);
+			switch (racers.powers[own].shieldLevel) {
 			case 1:
 				if (side > -0.69999999f && side < 0.69999999f) {
 					shove(other, d * 200);
@@ -633,30 +657,93 @@ bool World::contact(Contact& c)
 	// A curse passes to the other racer (once a racer has had one).
 	for (int s = 0; s < 2; s++) {
 		const size_t from = pair[s], to = pair[1 - s];
-		if ((racers[from].flags & RacerCursed) && !(racers[to].flags & RacerCursed) && powers[from].cursePassed &&
-			!(racers[to].flags & RacerShielded)) {
-			curseOn(to, powers[from].curseMs);
+		if ((racers.race[from].flags & RacerCursed) && !(racers.race[to].flags & RacerCursed) && racers.powers[from].cursePassed && !(racers.race[to].flags & RacerShielded)) {
+			curseOn(to, racers.powers[from].curseMs);
 			curseOff(from);
 			break;
 		}
 	}
-	ra.flags |= RacerBoxRamp;
-	rb.flags |= RacerBoxRamp;
-	return true;
+}
+
+// An AI taunts a racer close in front (an event at its car); its next taunt's delay.
+void World::tauntNearby(size_t i)
+{
+	Racer& r = racers.race[i];
+	bool near = false;
+	for (size_t o = 0; o < racers.race.size() && !near; o++) {
+		const Vec3 d = racers.visible[o].position - racers.visible[i].position;
+		const float d2 = lengthSquared(d);
+		near = o != i && d2 < 169 && d2 > 0 && dot(racers.visible[i].rotation.f, d) * (1 / std::sqrt(d2)) > 0.30000001f;
+	}
+	r.tauntMs = near ? 2000 + 8 * draw(Draw::Taunt) : 2000;
+	if (near) {
+		const Vec3 at = racers.visible[i].position;
+		voice(i, RaceEvent::Taunt);
+		fireAt(999, 999, &at);
+	}
+}
+
+// Wrong way (players): shown after half a second facing back along the course.
+void World::updateWrongWay(size_t i, int32_t dt)
+{
+	Racer& r = racers.race[i];
+	const Kart& k = racers.karts[i];
+	if (r.ai || r.checkpoint < 0) {
+		if (r.ai) {
+			r.wrongWayMs = 0;
+			r.flags &= ~(RacerWrongWayPending | RacerWrongWayShown);
+		}
+	}
+	else if (r.flags & RacerGhost) {
+		r.wrongWayMs = 0;
+		r.flags &= ~(RacerWrongWayPending | RacerWrongWayShown);
+	}
+	else {
+		if (r.wrongWayMs != 0) {
+			if (dt >= r.wrongWayMs) {
+				r.wrongWayMs = 0;
+				r.flags &= ~RacerWrongWayShown;
+			}
+			else {
+				r.wrongWayMs -= dt;
+			}
+		}
+		const Checkpoint& c = track.checkpoints[size_t(r.checkpoint)];
+		const bool hasNext = c.next[0] != 255 || c.next[1] != 255 || c.next[2] != 255 || c.next[3] != 255;
+		const bool fine = hasNext && dotZYX(k.heading, c.normal) <= 0.2f; // the normals point back along the course
+		if (r.flags & RacerWrongWayPending) {
+			if (fine) {
+				r.wrongWayMs = 0;
+				r.flags &= ~RacerWrongWayPending;
+			}
+			else if (r.wrongWayMs == 0) {
+				r.flags = (r.flags & ~RacerWrongWayPending) | RacerWrongWayShown;
+			}
+		}
+		else if (!(r.flags & RacerWrongWayShown)) {
+			if (!fine) {
+				r.wrongWayMs = 500;
+				r.flags |= RacerWrongWayPending;
+			}
+		}
+		else if (!fine) {
+			r.wrongWayMs = 500;
+		}
+	}
 }
 
 void World::racerTimers(int32_t dt)
 {
-	stage = RaceEvent::Timers;
+	raceView.stage = RaceEvent::Timers;
 	auto countDown = [dt](int32_t& ms) { ms = std::max(0, ms - dt); };
-	for (size_t i = 0; i < racers.size(); i++) {
-		Racer& r = racers[i];
-		Kart& k = karts[i];
-		Power& pw = powers[i];
+	for (size_t i = 0; i < racers.race.size(); i++) {
+		Racer& r = racers.race[i];
+		Kart& k = racers.karts[i];
+		Power& pw = racers.powers[i];
 		if (r.flags & RacerOnGrid) {
 			continue;
 		}
-		if (r.laps < raceLaps) {
+		if (r.laps < session.raceLaps) {
 			r.lapMs[r.laps] += dt;
 		}
 		// The AI looks at its brick every 150 ms or so.
@@ -668,7 +755,7 @@ void World::racerTimers(int32_t dt)
 				consider(i);
 			}
 		}
-		if (!playback[i].active && (k.flags & KartSpinOut)) {
+		if (!racers.playback[i].active && (k.flags & KartSpinOut)) {
 			k.flags &= ~KartSpinOut;
 			k.spinOutMs = 0;
 		}
@@ -694,74 +781,19 @@ void World::racerTimers(int32_t dt)
 			r.boxScale = 1;
 		}
 		r.flags &= ~RacerBoxRamp;
-		pw.sourcePosition = visible[i].position;
-		pw.sourceForward = visible[i].rotation.f;
+		pw.sourcePosition = racers.visible[i].position;
+		pw.sourceForward = racers.visible[i].rotation.f;
 
-		// An AI taunts a racer close in front (an event at its car).
 		if (r.ai && r.tauntMs == 0) {
-			bool near = false;
-			for (size_t o = 0; o < racers.size() && !near; o++) {
-				const Vec3 d = visible[o].position - visible[i].position;
-				const float d2 = lengthSquared(d);
-				near = o != i && d2 < 169 && d2 > 0 && dot(visible[i].rotation.f, d) * (1 / std::sqrt(d2)) > 0.30000001f;
-			}
-			r.tauntMs = near ? 2000 + 8 * draw(Draw::Taunt) : 2000;
-			if (near) {
-				const Vec3 at = visible[i].position;
-				voice(i, RaceEvent::Taunt);
-				fireAt(999, 999, &at);
-			}
+			tauntNearby(i);
 		}
-
-		// Wrong way (players): shown after half a second facing back along the course.
-		if (r.ai || r.checkpoint < 0) {
-			if (r.ai) {
-				r.wrongWayMs = 0;
-				r.flags &= ~(RacerWrongWayPending | RacerWrongWayShown);
-			}
-		}
-		else if (r.flags & RacerGhost) {
-			r.wrongWayMs = 0;
-			r.flags &= ~(RacerWrongWayPending | RacerWrongWayShown);
-		}
-		else {
-			if (r.wrongWayMs != 0) {
-				if (dt >= r.wrongWayMs) {
-					r.wrongWayMs = 0;
-					r.flags &= ~RacerWrongWayShown;
-				}
-				else {
-					r.wrongWayMs -= dt;
-				}
-			}
-			const Checkpoint& c = track.checkpoints[size_t(r.checkpoint)];
-			const bool hasNext = c.next[0] != 255 || c.next[1] != 255 || c.next[2] != 255 || c.next[3] != 255;
-			const bool fine = hasNext && dotZYX(k.heading, c.normal) <= 0.2f; // the normals point back along the course
-			if (r.flags & RacerWrongWayPending) {
-				if (fine) {
-					r.wrongWayMs = 0;
-					r.flags &= ~RacerWrongWayPending;
-				}
-				else if (r.wrongWayMs == 0) {
-					r.flags = (r.flags & ~RacerWrongWayPending) | RacerWrongWayShown;
-				}
-			}
-			else if (!(r.flags & RacerWrongWayShown)) {
-				if (!fine) {
-					r.wrongWayMs = 500;
-					r.flags |= RacerWrongWayPending;
-				}
-			}
-			else if (!fine) {
-				r.wrongWayMs = 500;
-			}
-		}
+		updateWrongWay(i, dt);
 	}
 }
 
 void World::updateStandings()
 {
-	const size_t n = racers.size();
+	const size_t n = racers.race.size();
 	std::vector<uint8_t> order(n);
 	std::vector<float> prog(n), tie(n);
 	for (size_t i = 0; i < n; i++) {
@@ -784,18 +816,18 @@ void World::updateStandings()
 		while (end < n && prog[order[end]] == prog[order[g]]) {
 			end++;
 		}
-		const int16_t cp = racers[order[g]].checkpoint;
+		const int16_t cp = racers.race[order[g]].checkpoint;
 		if (end - g < 2 || cp < 0) {
 			continue;
 		}
 		const Checkpoint& c = track.checkpoints[size_t(cp)];
 		for (size_t k = g; k < end; k++) {
-			const Vec3 p = visible[order[k]].position;
+			const Vec3 p = racers.visible[order[k]].position;
 			float least = FLT_MAX;
 			for (uint8_t next : c.next) {
 				if (next != 255) {
 					const Checkpoint& nc = track.checkpoints[next];
-					least = std::min(least, nc.normal.x * p.x + nc.normal.y * p.y + nc.normal.z * p.z + nc.offset);
+					least = std::min(least, dot(nc.normal, p) + nc.offset);
 				}
 			}
 			tie[order[k]] = least;
@@ -811,7 +843,7 @@ void World::updateStandings()
 		}
 	}
 	for (size_t i = 0; i < n; i++) {
-		if (!(racers[order[i]].flags & RacerFinished)) {
+		if (!(racers.race[order[i]].flags & RacerFinished)) {
 			setStanding(order[i], int32_t(n - i));
 		}
 	}
@@ -825,27 +857,27 @@ void World::pace(int32_t dt)
 	}
 	session.paceDelay = 0;
 	float best = -1;
-	for (size_t i = 0; i < racers.size(); i++) {
-		if (!racers[i].ai && progress(i) > best) {
+	for (size_t i = 0; i < racers.race.size(); i++) {
+		if (!racers.race[i].ai && progress(i) > best) {
 			best = progress(i);
 		}
 	}
-	for (size_t i = 0; i < racers.size(); i++) {
+	for (size_t i = 0; i < racers.race.size(); i++) {
 		// With no player every racer plays at 1; else racers 1 and up (never racer 0) ahead of the best player go 5%
 		// slow, those behind 5% fast.
-		if (racers[i].flags & (RacerMagnetHeld | RacerGrabbed)) {
+		if (racers.race[i].flags & (RacerMagnetHeld | RacerGrabbed)) {
 			continue;
 		}
 		if (best == -1) {
-			routePace(playback[i], karts[i], 1);
+			routePace(racers.playback[i], racers.karts[i], 1);
 		}
 		else if (i > 0) {
 			const float p = progress(i);
 			if (p > best) {
-				routePace(playback[i], karts[i], (1 - 0.050000001f) + session.paceBonus);
+				routePace(racers.playback[i], racers.karts[i], (1 - 0.050000001f) + session.paceBonus);
 			}
 			else if (p < best) {
-				routePace(playback[i], karts[i], (0.050000001f + session.paceBonus) + 1);
+				routePace(racers.playback[i], racers.karts[i], (0.050000001f + session.paceBonus) + 1);
 			}
 		}
 	}

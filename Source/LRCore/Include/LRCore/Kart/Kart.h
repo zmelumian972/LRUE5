@@ -23,25 +23,25 @@ class Track;
 
 // What a kart is built from (the chassis, the built car or the champion's preset).
 struct KartSource {
-	float mass;          // chassis mass plus the built car's piece count, or the champion's
-	int pieceWeight = 0; // the built car's piece count; 0 for champions
-	Vec3 centerOfMass;   // local
-	Vec3 frontLeftWheel; // local; the anchor the other wheels hang from
-	float rearX;         // rear wheels' x
-	float rightY, leftY; // the rear wheels' y (right negative)
-	int handling = 50, acceleration = 80, topSpeed = 50; // chassis stats 0..100
-	float shadowWidth, shadowLength;
+	float mass = 0; // chassis mass plus the built car's piece count, or the champion's
+	int32_t pieceWeight = 0; // the built car's piece count; 0 for champions
+	Vec3 centerOfMass{}; // local
+	Vec3 frontLeftWheel{}; // local; the anchor the other wheels hang from
+	float rearX = 0; // rear wheels' x
+	float rightY = 0, leftY = 0; // the rear wheels' y (right negative)
+	int32_t handling = 50, acceleration = 80, topSpeed = 50; // chassis stats 0..100
+	float shadowWidth = 0, shadowLength = 0;
 };
 
 struct KartParams {
-	float mass, invMass, massScale;
-	Vec3 inertia, invInertia; // diagonal, body frame
-	Vec3 centerOfMass;
-	Vec3 anchor;
-	float trackWidth, wheelbase;
-	Vec3 bodyPoints[4]; // the box corners walls are swept with
-	int handling, acceleration, topSpeed;
-	float handlingScale, accelerationScale, topSpeedScale;
+	float mass = 0, invMass = 0, massScale = 0;
+	Vec3 inertia{}, invInertia{}; // diagonal, body frame
+	Vec3 centerOfMass{};
+	Vec3 anchor{};
+	float trackWidth = 0, wheelbase = 0;
+	Vec3 bodyPoints[4]{}; // the box corners walls are swept with
+	int32_t handling = 0, acceleration = 0, topSpeed = 0;
+	float handlingScale = 0, accelerationScale = 0, topSpeedScale = 0;
 };
 
 LRCORE_API KartParams makeKartParams(const KartSource& source);
@@ -49,100 +49,100 @@ LRCORE_API KartParams makeKartParams(const KartSource& source);
 enum KartFlag : uint32_t {
 	KartSteering = 1u << 0,
 	KartSpinning = 1u << 1,
-	KartSpinFresh = 1u << 2,  // the spin started this step: its timer starts next step
-	KartHover = 1u << 3,      // held up off the ground (magnets, ghosts)
-	KartPushA = 1u << 5,      // external pushes (shoves, grapples, force zones)
+	KartSpinFresh = 1u << 2, // the spin started this step: its timer starts next step
+	KartHover = 1u << 3, // held up off the ground (magnets, ghosts)
+	KartPushA = 1u << 5, // external pushes (shoves, grapples, force zones)
 	KartPushB = 1u << 6,
-	KartSpinOut = 1u << 7,    // tumbling: no ground probe depth, no surface pushes
+	KartSpinOut = 1u << 7, // tumbling: no ground probe depth, no surface pushes
 	KartAtRest = 1u << 8,
 	KartSteeringAux = 1u << 9, // cleared with KartSteering
 	KartPowerslide = 1u << 10,
-	KartYawLock = 1u << 11,   // kicked off a wall: weak grip, no thrust or turning until the yaw timer ends
-	KartGhost = 1u << 12,     // passes the track's walls
+	KartYawLock = 1u << 11, // kicked off a wall: weak grip, no thrust or turning until the yaw timer ends
+	KartGhost = 1u << 12, // passes the track's walls
 	KartBoost = 1u << 16,
 	KartRouteGhost = 1u << 17, // route playback only
-	KartPushed = 1u << 18,    // route playback only: a push sets its rate
+	KartPushed = 1u << 18, // route playback only: a push sets its rate
 	KartCurseSlow = 1u << 19,
 	KartIgnoreSurfaces = 1u << 20,
 };
 
 struct Wheel {
-	Vec3 position; // world
-	Vec3 hit;      // ground point
-	Vec3 force;    // contact force (a normal while probing)
-	Vec3 push;     // the surface's push
-	float depth2;  // squared distance of the hit above the ray's end
-	float rolling, slopeHold, friction, grip; // the surface's, or defaults
-	int16_t surface; // the last surface touched, -1 none
-	int8_t cacheSlot; // -1 none
-	bool contact, touched;
+	Vec3 position{}; // world
+	Vec3 hit{}; // ground point
+	Vec3 force{}; // contact force (a normal while probing)
+	Vec3 push{}; // the surface's push
+	float depth2 = 0; // squared distance of the hit above the ray's end
+	float rolling = 0, slopeHold = 0, friction = 0, grip = 0; // the surface's, or defaults
+	int16_t surface = 0; // the last surface touched, -1 none
+	int8_t cacheSlot = 0; // -1 none
+	bool contact = false, touched = false;
 };
 
 // Ground planes recently under the wheels: tried before a full query, and they win over it.
 struct RecentPlanes {
 	struct Slot {
-		Vec3 corners[3];
-		Vec3 normal;
-		float offset;
-		int32_t age;
-		int16_t surface;
+		Vec3 corners[3]{};
+		Vec3 normal{};
+		float offset = 0;
+		int32_t age = 0;
+		int16_t surface = 0;
 	};
-	Slot slots[8];
-	int32_t count;
+	Slot slots[8]{};
+	int32_t count = 0;
 };
 
 // What a wall hit backs up to (saved at the start of each step and after each wall bounce).
 struct KartSnapshot {
-	Vec3 position, velocity, angularMomentum, angularVelocity, heading;
-	Basis rotation, invInertiaWorld;
-	float lift, bank;
+	Vec3 position{}, velocity{}, angularMomentum{}, angularVelocity{}, heading{};
+	Basis rotation{}, invInertiaWorld{};
+	float lift = 0, bank = 0;
 	struct WheelPart {
-		Vec3 position, push;
-		float rolling, slopeHold, friction, grip;
-		int16_t surface;
-		bool contact, touched;
+		Vec3 position{}, push{};
+		float rolling = 0, slopeHold = 0, friction = 0, grip = 0;
+		int16_t surface = 0;
+		bool contact = false, touched = false;
 	} wheels[4];
-	Vec3 bodyPoints[4];
+	Vec3 bodyPoints[4]{};
 };
 
 struct Kart {
 	// Rigid body. invInertiaWorld is a matrix by rows.
-	Vec3 position, velocity, angularMomentum, angularVelocity, centerOfMassWorld;
-	Basis rotation, invInertiaWorld;
+	Vec3 position{}, velocity{}, angularMomentum{}, angularVelocity{}, centerOfMassWorld{};
+	Basis rotation{}, invInertiaWorld{};
 
 	// Ground, heading and walls.
-	Vec3 heading, groundNormal, slopeForce, wallNormal;
-	int32_t contacts; // wheels on the ground: 0, 1, 2 or 4
-	uint32_t flags;   // KartFlag
-	int32_t wallHits;
+	Vec3 heading{}, groundNormal{}, slopeForce{}, wallNormal{};
+	int32_t contacts = 0; // wheels on the ground: 0, 1, 2 or 4
+	uint32_t flags = 0; // KartFlag
+	int32_t wallHits = 0;
 
 	// Set by the driver.
-	float thrust, turnRadius, maxSpeed, dragCoefficient, gripScale;
-	float steerGain, steerAlignMin, lagLimit, slipRatio;
-	float yawRate;
+	float thrust = 0, turnRadius = 0, maxSpeed = 0, dragCoefficient = 0, gripScale = 0;
+	float steerGain = 0, steerAlignMin = 0, lagLimit = 0, slipRatio = 0;
+	float yawRate = 0;
 
 	// Velocity statistics, along and across the heading (refreshed at fixed points of the step only).
-	float speed, headingSpeed;
-	Vec3 velocityDirection, forwardVelocity, lateralVelocity;
+	float speed = 0, headingSpeed = 0;
+	Vec3 velocityDirection{}, forwardVelocity{}, lateralVelocity{};
 
-	Vec3 pushes[2]; // KartPushA, KartPushB
-	int32_t airborneMs, spinOutMs, pitchMs, yawMs, spinAlignMs;
-	float lift, liftTarget, liftRate, bank, bankTarget; // hover: height (ft) eased at liftRate (ft/s), and bank (rad)
-	Vec3 axles[2];      // hover: the front and rear axles' middles (the two probes)
-	float slideFactor;  // how far a powerslide leans the drawn car
-	float visualBank;   // the drawn car's lean (rad)
-	Vec3 bodyPoints[4]; // world, as last swept
-	Vec3 resetPosition; // where the kart goes back to when it leaves the world
-	Basis resetRotation;
-	Wheel wheels[4];
-	RecentPlanes cache;
-	KartSnapshot saved;
+	Vec3 pushes[2]{}; // KartPushA, KartPushB
+	int32_t airborneMs = 0, spinOutMs = 0, pitchMs = 0, yawMs = 0, spinAlignMs = 0;
+	float lift = 0, liftTarget = 0, liftRate = 0, bank = 0, bankTarget = 0; // hover: height (ft) eased at liftRate (ft/s), and bank (rad)
+	Vec3 axles[2]{}; // hover: the front and rear axles' middles (the two probes)
+	float slideFactor = 0; // how far a powerslide leans the drawn car
+	float visualBank = 0; // the drawn car's lean (rad)
+	Vec3 bodyPoints[4]{}; // world, as last swept
+	Vec3 resetPosition{}; // where the kart goes back to when it leaves the world
+	Basis resetRotation{};
+	Wheel wheels[4]{};
+	RecentPlanes cache{};
+	KartSnapshot saved{};
 
 	// Inputs from the rest of the game, current before each step.
-	float boundsRadius; // the visible model's (it sets the probe rays' height)
-	bool preStart, engineStarted; // held on the grid while both
-	int32_t worldCount;  // collision volumes: [0] the track, [1] the checkpoints, then dynamic ones
-	int32_t worlds[5];
+	float boundsRadius = 0; // the visible model's (it sets the probe rays' height)
+	bool preStart = false, engineStarted = false; // held on the grid while both
+	int32_t worldCount = 0; // collision volumes: [0] the track, [1] the checkpoints, then dynamic ones
+	int32_t worlds[5]{};
 };
 
 // The kart at its start pose, at rest.
@@ -154,15 +154,15 @@ struct SweepHit {
 	int16_t checkpoint; // -1: not a gate
 	bool forward;
 	bool finishLine;
-	int32_t event;      // the touch event, -1 none (event 0 is one: C1R3's "in" surface)
-	Vec3 point;         // where (world)
+	int32_t event; // the touch event, -1 none (event 0 is one: C1R3's "in" surface)
+	Vec3 point; // where (world)
 };
 
 // One body step of dt ms (1..40), with its race checks. What the sweeps met is appended to hits; the car as drawn
 // (leaning, and before the race checks put the body back) goes to drawn.
 // Each substep's wheel surfaces (in contact, rolling forward) go to surfaces.
-LRCORE_API void stepBody(Kart& kart, const KartParams& params, const Track& track, int32_t dt, std::vector<SweepHit>* hits = nullptr,
-	Pose* drawn = nullptr, std::vector<std::array<int16_t, 4>>* surfaces = nullptr);
+LRCORE_API void stepBody(Kart& kart, const KartParams& params, const Track& track, int32_t dt, std::vector<SweepHit>* hits = nullptr, Pose* drawn = nullptr,
+	std::vector<std::array<int16_t, 4>>* surfaces = nullptr);
 
 // The drawn car's pose: the body's, leaned by the visual bank (raised so the low side stays down).
 LRCORE_API Pose drawnPose(const Kart& kart, const KartParams& params);
@@ -184,7 +184,7 @@ LRCORE_API void startBoost(Kart& kart, const KartParams& params, bool boosted);
 // The heading put on the nose.
 LRCORE_API void snapHeading(Kart& kart);
 // A push (0: A, 1: B) of q (a force, times the mass scale) until ended.
-inline void startPush(Kart& k, const KartParams& p, int which, Vec3 q)
+inline void startPush(Kart& k, const KartParams& p, int32_t which, Vec3 q)
 {
 	k.pushes[which] = q * p.massScale;
 	k.flags |= which ? KartPushB : KartPushA;
@@ -194,7 +194,7 @@ inline void startPush(Kart& k, const KartParams& p, int which, Vec3 q)
 enum DriverFlag : uint32_t {
 	DriverTurbo = 1u << 0,
 	DriverSliding = 1u << 2, // powerslide
-	DriverCursed = 1u << 4,  // steering inverted, the throttle jittered
+	DriverCursed = 1u << 4, // steering inverted, the throttle jittered
 	DriverReversing = 1u << 5, // returning to the path, stuck: backing up
 	DriverReturning = 1u << 6, // an AI driving back to a route
 	DriverBrakeToStop = 1u << 7,
@@ -202,15 +202,15 @@ enum DriverFlag : uint32_t {
 };
 
 struct Driver {
-	float radius;     // the turn radius asked for, eased each step
+	float radius; // the turn radius asked for, eased each step
 	float prevRadius;
-	float thrust;     // the thrust asked for
-	uint32_t flags;   // DriverFlag
+	float thrust; // the thrust asked for
+	uint32_t flags; // DriverFlag
 	int32_t slideMs;
-	bool tightSlide;  // the brake was held when the powerslide began
-	bool drifting;    // the racer's: set with a powerslide, cleared after the step that ended it
+	bool tightSlide; // the brake was held when the powerslide began
+	bool drifting; // the racer's: set with a powerslide, cleared after the step that ended it
 	int32_t previewMs; // returning: how far along the route the point aimed at is
-	int32_t stuckMs;  // returning: time spent too slow (or reversing)
+	int32_t stuckMs; // returning: time spent too slow (or reversing)
 	int32_t jitterMs; // cursed: until the throttle's offset changes
 	float curseThrottle;
 };
@@ -236,7 +236,7 @@ enum Key : uint16_t {
 	KeyBrake = 1u << 3,
 	KeyUse = 1u << 4, // the held power-up
 	KeyCamera = 1u << 5, // the next camera view
-	KeyMap = 1u << 6,    // the next HUD gadget
+	KeyMap = 1u << 6, // the next HUD gadget
 	KeyDrift = 1u << 7,
 	KeyLookBack = 1u << 8, // held
 };
@@ -246,14 +246,13 @@ struct Controls {
 	// What the last update sent (for checking).
 	float sentSteering, sentThrottle;
 	int8_t startedDrift; // -1 none, 0 normal, 1 tight
-	int8_t endedDrift;   // calls
+	int8_t endedDrift; // calls
 	// The start boost: how long since the throttle was let go (or the brake held), and its window.
 	int32_t throttleHeldMs, boostWindowMs;
 	bool throttleDown, useDown;
 };
 
 // Once per frame, before the steps. While blocked (before the start) nothing is sent.
-LRCORE_API void updateControls(Controls& controls, uint16_t keys, bool blocked, int32_t frameMs, Driver& driver, Kart& kart,
-	const KartParams& params);
+LRCORE_API void updateControls(Controls& controls, uint16_t keys, bool blocked, int32_t frameMs, Driver& driver, Kart& kart, const KartParams& params);
 
 } // namespace lr

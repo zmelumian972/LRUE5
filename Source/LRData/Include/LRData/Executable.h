@@ -15,12 +15,12 @@
 namespace lr {
 
 struct LRDATA_API ExecutableTables {
-	std::array<uint16_t, 1024> random = {};          // the random table every stream reads (each < 1024)
-	std::array<std::string, 13> cheats;              // the cheat codes by cheat number
-	std::array<std::string, 9> languages;            // the languages' folders (lower case) by language number
-	std::array<uint32_t, 5> frameColours = {};       // the setup screens' preview-frame colours, 0xAARRGGBB
-	std::array<uint8_t, 25> frameMap = {};           // circuit/place to a frame colour
-	std::array<int32_t, 6> placePoints = {};         // circuit points by place
+	std::array<uint16_t, 1024> random = {}; // the random table every stream reads (each < 1024)
+	std::array<std::string, 13> cheats; // the cheat codes by cheat number
+	std::array<std::string, 9> languages; // the languages' folders (lower case) by language number
+	std::array<uint32_t, 5> frameColours = {}; // the setup screens' preview-frame colours, 0xAARRGGBB
+	std::array<uint8_t, 25> frameMap = {}; // circuit/place to a frame colour
+	std::array<int32_t, 6> placePoints = {}; // circuit points by place
 	std::array<std::array<float, 3>, 3> curseDrop = {}; // where the curse hazard drops
 	std::array<std::array<float, 3>, 3> lavaSpots = {};
 	std::array<float, 3> lavaStarts = {}, lavaEnds = {}; // the lava hazard's frame windows
@@ -31,7 +31,7 @@ struct LRDATA_API ExecutableTables {
 	bool operator==(const ExecutableTables&) const = default;
 
 	// Finds and reads every table; false (with why in `error`) if one isn't there: not a supported version.
-	bool locate(std::span<const uint8_t> exe, std::string& error);
+	[[nodiscard]] bool locate(std::span<const uint8_t> exe, std::string& error);
 };
 
 // The executable this was made against.

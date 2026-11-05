@@ -135,6 +135,270 @@ int16_t Menus::makeNamed(WidgetTree& t, uint32_t binding, uint32_t style, int16_
 	return make(t, data->screens[screen].layout, data->names.narrow(binding), data->names.narrow(style), parent, text);
 }
 
+namespace {
+
+// A widget's rect sized by its image where the binding leaves it zero.
+void sizeFromImage(const MenuData& data, Widget& n, int16_t image)
+{
+	if (image < 0) {
+		return;
+	}
+	const MenuData::ImageInfo& info = data.images[size_t(image)];
+	if (n.rect.right == 0) {
+		n.rect.right = n.rect.left + int32_t(info.width);
+	}
+	if (n.rect.bottom == 0) {
+		n.rect.bottom = n.rect.top + int32_t(info.height);
+	}
+}
+
+// An icon's sounds and state colours: the binding's when it has them, else the style's. (The styles' state rects, which
+// would move an icon as its state changes, are all zero: not kept.)
+void iconFrom(Widget& n, const MenuLayout::Binding& b, const MenuIcon& styleIcon)
+{
+	n.icon = true;
+	n.sounds = b.icon.hasSounds ? b.icon.sounds : styleIcon.sounds;
+	n.stateColours = b.icon.hasColours ? b.icon.colours : styleIcon.colours;
+}
+
+} // namespace
+
+int16_t Menus::makeImage(WidgetTree& t, Widget& w, const MenuLayout::Binding& b, const MenuStyles::Style& st, int16_t attachTo, bool styleColour)
+{
+	w.kind = st.kind == MenuStyles::Carousel ? Widget::Carousel : Widget::Image;
+	if (w.kind == Widget::Carousel) {
+		w.scrollMs = st.scrollMs;
+		w.pageMode = st.pageMode;
+		w.wrapAround = st.wrapAround;
+		w.carouselSounds = st.sounds;
+		w.colour = b.colour;
+		return t.add(w, attachTo);
+	}
+	// QUIRK: with the style's colour the style's image wins over the binding's own.
+	w.image = !b.images.empty() && !styleColour ? data->image(b.images[0], screen) : st.images.empty() ? int16_t(-1) : data->image(st.images[0], screen);
+	if (w.image < 0 && !b.images.empty()) {
+		w.image = data->image(b.images[0], screen);
+	}
+	sizeFromImage(*data, w, w.image);
+	return t.add(w, attachTo);
+}
+
+int16_t Menus::makeLabel(WidgetTree& t, Widget& w, const MenuLayout::Binding& b, const MenuStyles::Style& st, int16_t attachTo, int32_t text)
+{
+	w.kind = Widget::Label;
+	w.font = data->font(language, !b.fonts.empty() && !b.fonts[0].empty() ? b.fonts[0] : st.font);
+	w.wrap = b.wrap ? b.wrap : st.wrap;
+	w.centred = st.centred;
+	const int16_t made = t.add(w, attachTo);
+	if (text >= 0) {
+		setString(t, made, text);
+	}
+	return made;
+}
+
+int16_t Menus::makeFrame(WidgetTree& t, Widget& w, const MenuLayout::Binding& b, const MenuStyles::Style& st, int16_t attachTo)
+{
+	w.kind = Widget::Frame;
+	std::array<int16_t, 8> edges = {};
+	for (size_t i = 0; i < 8; i++) {
+		const std::string& name = i < b.images.size() && !b.images[i].empty() ? b.images[i] : i < st.images.size() ? st.images[i] : std::string();
+		edges[i] = data->image(name, screen);
+	}
+	const bool fromStyle = !b.hasColour && st.colours.size() >= 2;
+	const uint32_t edge = fromStyle ? st.colours[0] : b.colours.size() >= 1 ? b.colours[0] : White;
+	const uint32_t fill = fromStyle ? st.colours[1] : b.colours.size() >= 2 ? b.colours[1] : White;
+	w.colour = edge;
+	const int16_t made = t.add(w, attachTo);
+	Widget f;
+	f.kind = Widget::Quad;
+	f.id = FillId;
+	f.colour = fill;
+	if (!b.hasFill) {
+		f.flags &= ~Widget::DrawsItself;
+	}
+	t.add(f, made);
+	for (size_t i = 0; i < 8; i++) {
+		Widget e;
+		e.kind = Widget::Image;
+		e.id = EdgeId;
+		e.image = edges[i];
+		e.colour = edge;
+		t.add(e, made);
+	}
+	return made;
+}
+
+int16_t Menus::makeImageButton(WidgetTree& t, Widget& w, const MenuLayout::Binding& b, const MenuStyles::Style& st, int16_t attachTo)
+{
+	w.kind = Widget::ImageButton;
+	iconFrom(w, b, st.icon);
+	for (size_t i = 0; i < 6; i++) {
+		const std::string& name = i < b.images.size() && !b.images[i].empty() ? b.images[i] : i < st.images.size() ? st.images[i] : std::string();
+		w.images[i] = data->image(name, screen);
+	}
+	sizeFromImage(*data, w, w.images[0]);
+	const int16_t made = t.add(w, attachTo);
+	// Its image: the button's rect and its first state's look until it is drawn.
+	Widget c;
+	c.kind = Widget::Image;
+	c.id = w.id;
+	c.rect = w.rect;
+	c.image = w.images[0];
+	c.colour = w.stateColours[0];
+	t[made].child = t.add(c, made);
+	return made;
+}
+
+int16_t Menus::makeTextButton(WidgetTree& t, Widget& w, const MenuLayout::Binding& b, const MenuStyles::Style& st, int16_t attachTo, int32_t text)
+{
+	w.kind = Widget::TextButton;
+	iconFrom(w, b, st.icon);
+	const std::vector<uint32_t>& colours = b.colours.size() >= 13 ? b.colours : st.colours;
+	for (size_t i = 0; i < 6; i++) {
+		const std::string& image = i < b.images.size() && !b.images[i].empty() ? b.images[i] : st.images.size() > i ? st.images[i] : std::string();
+		const std::string& font = i < b.fonts.size() && !b.fonts[i].empty() ? b.fonts[i] : st.fonts[i];
+		w.images[i] = data->image(image, screen);
+		w.fonts[i] = data->font(language, font);
+		if (colours.size() >= 13) {
+			w.imageColours[i] = colours[1 + i];
+			if (!b.icon.hasColours) {
+				w.stateColours[i] = colours[7 + i];
+			}
+		}
+	}
+	w.maxWidth = b.wrap ? b.wrap : st.maxWidth;
+	const int16_t made = t.add(w, attachTo);
+	Widget image;
+	image.kind = Widget::Image;
+	image.id = w.id;
+	image.image = w.images[0];
+	sizeFromImage(*data, image, image.image);
+	image.colour = w.imageColours[0];
+	const int16_t c = t.add(image, made);
+	Widget label;
+	label.kind = Widget::Label;
+	label.id = w.id;
+	label.font = w.fonts[0];
+	label.colour = w.stateColours[0];
+	const int16_t l = t.add(label, made);
+	t[made].child = c;
+	t[made].label = l;
+	setString(t, made, text);
+	return made;
+}
+
+int16_t Menus::makeSelector(WidgetTree& t, const MenuLayout& layout, Widget& w, const MenuLayout::Binding& b, const MenuStyles::Style& st, int16_t attachTo)
+{
+	w.kind = Widget::Selector;
+	iconFrom(w, b, st.icon);
+	w.unselectedInput = b.unselectedInput;
+	for (size_t i = 0; i < w.itemColours.size() && i < st.colours.size(); i++) {
+		w.itemColours[i] = st.colours[i];
+	}
+	const int16_t made = t.add(w, attachTo);
+	for (size_t i = 0; i < 2; i++) {
+		const int16_t button = make(t, layout, b.buttons[i], st.buttons[i], made);
+		t[made].buttons[i] = button;
+	}
+	return made;
+}
+
+int16_t Menus::makeOptions(WidgetTree& t, const MenuLayout& layout, Widget& w, const MenuLayout::Binding& b, const MenuStyles::Style& st, int16_t attachTo)
+{
+	w.kind = Widget::Options;
+	iconFrom(w, b, st.icon);
+	w.steps = b.steps;
+	w.index = b.value;
+	w.stepSounds = b.hasEditSounds ? std::array<int32_t, 2>{b.editSounds[0], b.editSounds[1]} : std::array<int32_t, 2>{st.sounds[0], st.sounds[1]};
+	const int16_t made = t.add(w, attachTo);
+	for (size_t i = 0; i < 2; i++) {
+		const int16_t button = make(t, layout, b.buttons[i], st.buttons[i], made);
+		t[made].buttons[i] = button;
+	}
+	for (size_t i = 0; i < 2; i++) {
+		const int16_t image = make(t, layout, b.track[i], st.track[i], made);
+		(i ? t[made].thumb : t[made].track) = image;
+	}
+	setValue(t, made, w.index);
+	return made;
+}
+
+int16_t Menus::makeSceneView(WidgetTree& t, const MenuLayout& layout, Widget& w, const MenuLayout::Binding& b, int16_t parent, int16_t attachTo)
+{
+	w.kind = Widget::SceneView;
+	if (!b.frame.empty()) {
+		// A framed view: the frame at the view's rect, the view in the frame's fill.
+		const int16_t frame = make(t, layout, b.frame, "brickbox", parent);
+		if (frame >= 0) {
+			t[frame].rect = w.rect;
+			layoutFrame(t, frame);
+			const int16_t fill = t[frame].first;
+			w.rect = {0, 0, t[fill].rect.width(), t[fill].rect.height()};
+			return t.add(w, fill);
+		}
+	}
+	if (w.rect.right == 0 && w.rect.bottom == 0) {
+		w.rect.right = t[parent].rect.width();
+		w.rect.bottom = t[parent].rect.height();
+	}
+	return t.add(w, attachTo);
+}
+
+// Its scroll and sounds are its carousel style's.
+int16_t Menus::makeRing(WidgetTree& t, Widget& w, const MenuLayout::Binding& b, const MenuStyles::Style& st, int16_t attachTo)
+{
+	w.kind = Widget::Ring;
+	w.scrollMs = st.scrollMs;
+	w.carouselSounds = st.sounds;
+	w.slots = b.numbers[0];
+	w.focusSlot = b.numbers[1];
+	w.slotRects = b.slots;
+	w.spinRate = b.step;
+	w.colour = b.colour;
+	return t.add(w, attachTo);
+}
+
+// An image button, its highlight image and the style's regions.
+int16_t Menus::makeHotspot(WidgetTree& t, Widget& w, const MenuLayout::Binding& b, const MenuStyles::Style& st, int16_t attachTo)
+{
+	w.kind = Widget::Hotspot;
+	iconFrom(w, b, st.icon);
+	for (size_t i = 0; i < 6; i++) {
+		w.images[i] = i < b.images.size() ? data->image(b.images[i], screen) : -1;
+	}
+	w.image = data->image(!b.world.empty() ? b.world : st.images.empty() ? std::string() : st.images[0], screen);
+	w.regions = st.regions;
+	w.regionRects = st.regionRects;
+	sizeFromImage(*data, w, w.images[0]);
+	const int16_t made = t.add(w, attachTo);
+	Widget c;
+	c.kind = Widget::Image;
+	c.id = w.id;
+	c.rect = {0, 0, w.rect.width(), w.rect.height()};
+	c.image = w.images[0];
+	c.colour = w.stateColours[0];
+	t[made].child = t.add(c, made);
+	return made;
+}
+
+// The caret comes after it, under the same parent: a white box that blinks (sized by the field's characters).
+int16_t Menus::makeTextField(WidgetTree& t, Widget& w, const MenuLayout::Binding& b, const MenuStyles::Style& st, int16_t attachTo)
+{
+	w.kind = Widget::TextField;
+	iconFrom(w, b, st.icon);
+	w.font = data->font(language, !b.fonts.empty() && !b.fonts[0].empty() ? b.fonts[0] : st.font);
+	w.maxLength = b.maxLength;
+	w.editSounds = b.editSounds;
+	const int16_t made = t.add(w, attachTo);
+	Widget caret;
+	caret.kind = Widget::Quad;
+	caret.id = EdgeId;
+	caret.colour = White;
+	caret.blinkOn = caret.blinkOff = 1000;
+	t[made].caret = t.add(caret, attachTo);
+	return made;
+}
+
 int16_t Menus::make(WidgetTree& t, const MenuLayout& layout, std::string_view bindingName, std::string_view styleName, int16_t parent, int32_t text)
 {
 	const MenuLayout::Binding* b = layout.find(bindingName);
@@ -153,27 +417,6 @@ int16_t Menus::make(WidgetTree& t, const MenuLayout& layout, std::string_view bi
 	w.rect = b->rect;
 	const bool styleColour = !b->hasColour && !st->colours.empty() && (st->kind == MenuStyles::Image || st->kind == MenuStyles::Text);
 	w.colour = styleColour ? st->colours[0] : b->colour;
-	const auto imageOf = [&](const std::string& name) { return data->image(name, screen); };
-	const auto fontOf = [&](const std::string& name) { return data->font(language, name); };
-	const auto sizeFromImage = [&](Widget& n, int16_t image) {
-		if (image < 0) {
-			return;
-		}
-		const MenuData::ImageInfo& info = data->images[size_t(image)];
-		if (n.rect.right == 0) {
-			n.rect.right = n.rect.left + int32_t(info.width);
-		}
-		if (n.rect.bottom == 0) {
-			n.rect.bottom = n.rect.top + int32_t(info.height);
-		}
-	};
-	// An icon's sounds and state colours: the binding's when it has them, else the style's. (The styles' state rects,
-	// which would move an icon as its state changes, are all zero: not kept.)
-	const auto iconFrom = [&](Widget& n, const MenuIcon& styleIcon) {
-		n.icon = true;
-		n.sounds = b->icon.hasSounds ? b->icon.sounds : styleIcon.sounds;
-		n.stateColours = b->icon.hasColours ? b->icon.colours : styleIcon.colours;
-	};
 	// The parent: the given one, else the binding's (made already), else the root.
 	if (parent < 0 && !b->parent.empty()) {
 		const MenuLayout::Binding* pb = layout.find(b->parent);
@@ -185,227 +428,21 @@ int16_t Menus::make(WidgetTree& t, const MenuLayout& layout, std::string_view bi
 	const int16_t attachTo = b->attach ? parent : int16_t(-1);
 	int16_t made = -1;
 	switch (b->kind) {
-	case L::Image:
-		w.kind = st->kind == MenuStyles::Carousel ? Widget::Carousel : Widget::Image;
-		if (w.kind == Widget::Carousel) {
-			w.scrollMs = st->scrollMs;
-			w.pageMode = st->pageMode;
-			w.wrapAround = st->wrapAround;
-			w.carouselSounds = st->sounds;
-			w.colour = b->colour;
-			made = t.add(w, attachTo);
-			break;
-		}
-		// QUIRK: with the style's colour the style's image wins over the binding's own.
-		w.image = !b->images.empty() && !styleColour ? imageOf(b->images[0]) : st->images.empty() ? int16_t(-1) : imageOf(st->images[0]);
-		if (w.image < 0 && !b->images.empty()) {
-			w.image = imageOf(b->images[0]);
-		}
-		sizeFromImage(w, w.image);
-		made = t.add(w, attachTo);
-		break;
-	case L::Label:
-		w.kind = Widget::Label;
-		w.font = fontOf(!b->fonts.empty() && !b->fonts[0].empty() ? b->fonts[0] : st->font);
-		w.wrap = b->wrap ? b->wrap : st->wrap;
-		w.centred = st->centred;
-		made = t.add(w, attachTo);
-		if (text >= 0) {
-			setString(t, made, text);
-		}
-		break;
-	case L::Frame: {
-		w.kind = Widget::Frame;
-		std::array<int16_t, 8> edges = {};
-		for (size_t i = 0; i < 8; i++) {
-			const std::string& name = i < b->images.size() && !b->images[i].empty() ? b->images[i] : i < st->images.size() ? st->images[i] : std::string();
-			edges[i] = imageOf(name);
-		}
-		const bool fromStyle = !b->hasColour && st->colours.size() >= 2;
-		const uint32_t edge = fromStyle ? st->colours[0] : b->colours.size() >= 1 ? b->colours[0] : White;
-		const uint32_t fill = fromStyle ? st->colours[1] : b->colours.size() >= 2 ? b->colours[1] : White;
-		w.colour = edge;
-		made = t.add(w, attachTo);
-		Widget f;
-		f.kind = Widget::Quad;
-		f.id = FillId;
-		f.colour = fill;
-		if (!b->hasFill) {
-			f.flags &= ~Widget::DrawsItself;
-		}
-		t.add(f, made);
-		for (size_t i = 0; i < 8; i++) {
-			Widget e;
-			e.kind = Widget::Image;
-			e.id = EdgeId;
-			e.image = edges[i];
-			e.colour = edge;
-			t.add(e, made);
-		}
-		break;
-	}
-	case L::ImageButton: {
-		w.kind = Widget::ImageButton;
-		iconFrom(w, st->icon);
-		for (size_t i = 0; i < 6; i++) {
-			const std::string& name = i < b->images.size() && !b->images[i].empty() ? b->images[i] : i < st->images.size() ? st->images[i] : std::string();
-			w.images[i] = imageOf(name);
-		}
-		sizeFromImage(w, w.images[0]);
-		made = t.add(w, attachTo);
-		// Its image: the button's rect and its first state's look until it is drawn.
-		Widget c;
-		c.kind = Widget::Image;
-		c.id = w.id;
-		c.rect = w.rect;
-		c.image = w.images[0];
-		c.colour = w.stateColours[0];
-		t[made].child = t.add(c, made);
-		break;
-	}
-	case L::TextButton: {
-		w.kind = Widget::TextButton;
-		iconFrom(w, st->icon);
-		const std::vector<uint32_t>& colours = b->colours.size() >= 13 ? b->colours : st->colours;
-		for (size_t i = 0; i < 6; i++) {
-			const std::string& image = i < b->images.size() && !b->images[i].empty() ? b->images[i] : st->images.size() > i ? st->images[i] : std::string();
-			const std::string& font = i < b->fonts.size() && !b->fonts[i].empty() ? b->fonts[i] : st->fonts[i];
-			w.images[i] = imageOf(image);
-			w.fonts[i] = fontOf(font);
-			if (colours.size() >= 13) {
-				w.imageColours[i] = colours[1 + i];
-				if (!b->icon.hasColours) {
-					w.stateColours[i] = colours[7 + i];
-				}
-			}
-		}
-		w.maxWidth = b->wrap ? b->wrap : st->maxWidth;
-		made = t.add(w, attachTo);
-		Widget image;
-		image.kind = Widget::Image;
-		image.id = w.id;
-		image.image = w.images[0];
-		sizeFromImage(image, image.image);
-		image.colour = w.imageColours[0];
-		const int16_t c = t.add(image, made);
-		Widget label;
-		label.kind = Widget::Label;
-		label.id = w.id;
-		label.font = w.fonts[0];
-		label.colour = w.stateColours[0];
-		const int16_t l = t.add(label, made);
-		t[made].child = c;
-		t[made].label = l;
-		setString(t, made, text);
-		break;
-	}
-	case L::Selector: {
-		w.kind = Widget::Selector;
-		iconFrom(w, st->icon);
-		w.unselectedInput = b->unselectedInput;
-		for (size_t i = 0; i < w.itemColours.size() && i < st->colours.size(); i++) {
-			w.itemColours[i] = st->colours[i];
-		}
-		made = t.add(w, attachTo);
-		for (size_t i = 0; i < 2; i++) {
-			const int16_t button = make(t, layout, b->buttons[i], st->buttons[i], made);
-			t[made].buttons[i] = button;
-		}
-		break;
-	}
-	case L::Options: {
-		w.kind = Widget::Options;
-		iconFrom(w, st->icon);
-		w.steps = b->steps;
-		w.index = b->value;
-		w.stepSounds = b->hasEditSounds ? std::array<int32_t, 2>{b->editSounds[0], b->editSounds[1]}
-		                                : std::array<int32_t, 2>{st->sounds[0], st->sounds[1]};
-		made = t.add(w, attachTo);
-		for (size_t i = 0; i < 2; i++) {
-			const int16_t button = make(t, layout, b->buttons[i], st->buttons[i], made);
-			t[made].buttons[i] = button;
-		}
-		for (size_t i = 0; i < 2; i++) {
-			const int16_t image = make(t, layout, b->track[i], st->track[i], made);
-			(i ? t[made].thumb : t[made].track) = image;
-		}
-		setValue(t, made, w.index);
-		break;
-	}
-	case L::SceneView: {
-		w.kind = Widget::SceneView;
-		if (!b->frame.empty()) {
-			// A framed view: the frame at the view's rect, the view in the frame's fill.
-			const int16_t frame = make(t, layout, b->frame, "brickbox", parent);
-			if (frame >= 0) {
-				t[frame].rect = w.rect;
-				layoutFrame(t, frame);
-				const int16_t fill = t[frame].first;
-				w.rect = {0, 0, t[fill].rect.width(), t[fill].rect.height()};
-				made = t.add(w, fill);
-				break;
-			}
-		}
-		if (w.rect.right == 0 && w.rect.bottom == 0) {
-			w.rect.right = t[parent].rect.width();
-			w.rect.bottom = t[parent].rect.height();
-		}
-		made = t.add(w, attachTo);
-		break;
-	}
+	case L::Image: made = makeImage(t, w, *b, *st, attachTo, styleColour); break;
+	case L::Label: made = makeLabel(t, w, *b, *st, attachTo, text); break;
+	case L::Frame: made = makeFrame(t, w, *b, *st, attachTo); break;
+	case L::ImageButton: made = makeImageButton(t, w, *b, *st, attachTo); break;
+	case L::TextButton: made = makeTextButton(t, w, *b, *st, attachTo, text); break;
+	case L::Selector: made = makeSelector(t, layout, w, *b, *st, attachTo); break;
+	case L::Options: made = makeOptions(t, layout, w, *b, *st, attachTo); break;
+	case L::SceneView: made = makeSceneView(t, layout, w, *b, parent, attachTo); break;
 	case L::SceneReference:
 		w.kind = Widget::SceneReference;
 		made = t.add(w, attachTo);
 		break;
-	case L::Ring:
-		// Its scroll and sounds are its carousel style's.
-		w.kind = Widget::Ring;
-		w.scrollMs = st->scrollMs;
-		w.carouselSounds = st->sounds;
-		w.slots = b->numbers[0];
-		w.focusSlot = b->numbers[1];
-		w.slotRects = b->slots;
-		w.spinRate = b->step;
-		w.colour = b->colour;
-		made = t.add(w, attachTo);
-		break;
-	case L::Hotspot: {
-		// An image button, its highlight image and the style's regions.
-		w.kind = Widget::Hotspot;
-		iconFrom(w, st->icon);
-		for (size_t i = 0; i < 6; i++) {
-			w.images[i] = i < b->images.size() ? imageOf(b->images[i]) : -1;
-		}
-		w.image = imageOf(!b->world.empty() ? b->world : st->images.empty() ? std::string() : st->images[0]);
-		w.regions = st->regions;
-		w.regionRects = st->regionRects;
-		sizeFromImage(w, w.images[0]);
-		made = t.add(w, attachTo);
-		Widget c;
-		c.kind = Widget::Image;
-		c.id = w.id;
-		c.rect = {0, 0, w.rect.width(), w.rect.height()};
-		c.image = w.images[0];
-		c.colour = w.stateColours[0];
-		t[made].child = t.add(c, made);
-		break;
-	}
-	case L::TextField: {
-		// The caret comes after it, under the same parent: a white box that blinks (sized by the field's characters).
-		w.kind = Widget::TextField;
-		iconFrom(w, st->icon);
-		w.font = fontOf(!b->fonts.empty() && !b->fonts[0].empty() ? b->fonts[0] : st->font);
-		w.maxLength = b->maxLength;
-		w.editSounds = b->editSounds;
-		made = t.add(w, attachTo);
-		Widget caret;
-		caret.kind = Widget::Quad;
-		caret.id = EdgeId;
-		caret.colour = White;
-		caret.blinkOn = caret.blinkOff = 1000;
-		t[made].caret = t.add(caret, attachTo);
-		break;
-	}
+	case L::Ring: made = makeRing(t, w, *b, *st, attachTo); break;
+	case L::Hotspot: made = makeHotspot(t, w, *b, *st, attachTo); break;
+	case L::TextField: made = makeTextField(t, w, *b, *st, attachTo); break;
 	default:
 		w.kind = Widget::Region;
 		made = t.add(w, attachTo);
@@ -463,10 +500,7 @@ void Menus::layoutFrame(WidgetTree& t, int16_t frame)
 	t[piece[0]].rect = {t[piece[1]].rect.right, t[piece[1]].rect.bottom, t[piece[3]].rect.left, t[piece[7]].rect.top};
 }
 
-void Menus::setString(WidgetTree& t, int16_t w, int32_t index)
-{
-	setText(t, w, index >= 0 ? text(index) : std::u16string_view());
-}
+void Menus::setString(WidgetTree& t, int16_t w, int32_t index) { setText(t, w, index >= 0 ? text(index) : std::u16string_view()); }
 
 void Menus::relabel(WidgetTree& t, int16_t w, int32_t index)
 {
@@ -1012,159 +1046,180 @@ bool hits(const Widget& n, int32_t x, int32_t y) { return x >= 0 && x <= n.rect.
 
 // Keys on one widget (the point in its own space).
 
+// A selector or an options row: its arrows (a click on one, or the keys) step it; a press on the thumb grabs it.
+bool Menus::stepperKeyDown(WidgetTree& t, int16_t w, const MenuKey& key, int32_t x, int32_t y)
+{
+	Widget& n = t[w];
+	const uint32_t k = key.key;
+	if (!(n.state & Widget::Enabled) || (n.holding && n.holding != k) || (!(n.state & Widget::Pressed) && key.repeat)) {
+		return false;
+	}
+	uint32_t code = k;
+	if (isMouse(k)) {
+		// A click on a button is that button's step.
+		code = 0;
+		for (size_t i = 0; i < 2; i++) {
+			const int16_t b = n.buttons[i];
+			const MenuRect r = t[b].rect;
+			if (!code && hits(t[b], x - r.left, y - r.top)) {
+				code = i == 0 ? SourcePad | 0xb : SourcePad | 0xa;
+			}
+		}
+		// A press on the thumb grabs it (a held button's repeats over it grab it again).
+		if (n.kind == Widget::Options && !code && (n.state & Widget::Selected)) {
+			const Widget& thumb = t[n.thumb];
+			if (hits(thumb, x - thumb.rect.left, y - thumb.rect.top)) {
+				n.holding = k;
+				play(n.stepSounds[0]);
+				n.grabbed = true;
+				press(t, w, false, true, true);
+				return true;
+			}
+		}
+	}
+	int forward = -1;
+	if (code == (SourcePad | 7) || code == (SourcePad | 0xa) || code == (SourceAxis | 0) || code == MenuRight) {
+		forward = 1;
+	}
+	else if (code == (SourcePad | 9) || code == (SourcePad | 0xb) || code == (SourceAxis | 1) || code == MenuLeft) {
+		forward = 0;
+	}
+	if (forward < 0 || !((n.state & Widget::Selected) || n.unselectedInput)) {
+		return false;
+	}
+	const int16_t button = n.buttons[forward ? 1 : 0];
+	if (key.repeat && (t[button].state & Widget::Pressed)) {
+		n.kind == Widget::Selector ? stepSelector(t, w, forward) : stepRow(t, w, forward);
+	}
+	else if (!(n.state & Widget::Pressed)) {
+		press(t, button, true, true, false);
+		n.kind == Widget::Selector ? stepSelector(t, w, forward) : stepRow(t, w, forward);
+		press(t, w, false, false, false);
+	}
+	t[w].holding = k;
+	return true;
+}
+
+bool Menus::ringKeyDown(WidgetTree& t, int16_t w, const MenuKey& key, int32_t x, int32_t y)
+{
+	Widget& n = t[w];
+	const uint32_t k = key.key;
+	// A click on a slot brings its item to the focused slot, at once and silently.
+	if (!isMouse(k) || !hits(n, x, y) || n.values.empty()) {
+		return false;
+	}
+	const int32_t count = int32_t(n.values.size());
+	for (size_t slot = 0; slot < n.slotRects.size(); slot++) {
+		const MenuRect& r = n.slotRects[slot];
+		if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+			const int32_t to = ((int32_t(slot) + n.index - n.focusSlot) % count + count) % count;
+			if (to != n.index && !key.repeat) {
+				n.index = to;
+				if (n.parent >= 0 && t[n.parent].kind == Widget::Selector) {
+					notice(*game, t, n.parent, NoticeValue);
+				}
+			}
+			break;
+		}
+	}
+	return true;
+}
+
+bool Menus::textFieldKeyDown(WidgetTree& t, int16_t w, const MenuKey& key)
+{
+	Widget& n = t[w];
+	const uint32_t k = key.key;
+	// A typed character: Backspace erases; one the field doesn't have is refused and goes on; past the length refused.
+	if (!(n.state & Widget::Enabled) || !(n.state & Widget::Selected) || (k >> 28) != (SourceCharacter >> 28)) {
+		return false;
+	}
+	char16_t c = char16_t(k & 0xffff);
+	c = char16_t(c >= 'a' && c <= 'z' ? c - 32 : c > 0xe0 && c <= 0xff ? c - 32 : c);
+	if (c == 8) {
+		play(n.editSounds[n.text.empty() ? 3 : 2]);
+		if (!n.text.empty()) {
+			n.text.pop_back();
+			notice(*game, t, w, NoticeValue);
+		}
+		return true;
+	}
+	if (text(n.charset).find(c) == std::u16string_view::npos) {
+		play(n.editSounds[3]);
+		return false;
+	}
+	if (int32_t(n.text.size()) >= n.maxLength) {
+		play(n.editSounds[3]);
+		return true;
+	}
+	n.text += c;
+	play(n.editSounds[0]);
+	notice(*game, t, w, NoticeValue);
+	return true;
+}
+
+bool Menus::hotspotKeyDown(WidgetTree& t, int16_t w, const MenuKey& key, int32_t x, int32_t y)
+{
+	Widget& n = t[w];
+	const uint32_t k = key.key;
+	// Unpressed: a click lights the region under it and presses; Space or keypad Enter presses. Pressed: they
+	// release it, and it takes every other key.
+	constexpr uint32_t KeypadEnter = SourceKeyboard | 0x9c;
+	const bool activate = k == MenuSpace || k == KeypadEnter || k == MenuPadButton;
+	if (!(n.state & Widget::Enabled)) {
+		return false;
+	}
+	if (n.state & Widget::Pressed) {
+		if (activate) {
+			release(t, w, false, false, false);
+		}
+		return !isMouse(k);
+	}
+	if (!(n.state & Widget::Selected)) {
+		return false;
+	}
+	if (isMouse(k)) {
+		// A click lights the region under it (the screen hears it again while the button repeats); it doesn't press
+		// the button.
+		if (!hits(n, x, y)) {
+			return false;
+		}
+		if (key.repeat) {
+			if (n.lit) {
+				notice(*game, t, w, NoticeValue);
+			}
+			return true;
+		}
+		for (size_t i = 0; i < n.regions.size() && !n.lit; i++) {
+			const MenuRect& r = n.regionRects[i];
+			if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+				n.lit = n.regions[i];
+				notice(*game, t, w, NoticeValue);
+			}
+		}
+		t[w].holding = k; // (its release clears the region)
+		return true;
+	}
+	if (key.repeat) {
+		return false;
+	}
+	if (!activate) {
+		return false;
+	}
+	press(t, w, false, false, false);
+	t[w].holding = k;
+	return true;
+}
+
 bool Menus::keyDown(WidgetTree& t, int16_t w, const MenuKey& key, int32_t x, int32_t y)
 {
 	Widget& n = t[w];
 	const uint32_t k = key.key;
 	switch (n.kind) {
 	case Widget::Selector:
-	case Widget::Options: {
-		if (!(n.state & Widget::Enabled) || (n.holding && n.holding != k) || (!(n.state & Widget::Pressed) && key.repeat)) {
-			return false;
-		}
-		uint32_t code = k;
-		if (isMouse(k)) {
-			// A click on a button is that button's step.
-			code = 0;
-			for (size_t i = 0; i < 2; i++) {
-				const int16_t b = n.buttons[i];
-				const MenuRect r = t[b].rect;
-				if (!code && hits(t[b], x - r.left, y - r.top)) {
-					code = i == 0 ? SourcePad | 0xb : SourcePad | 0xa;
-				}
-			}
-			// A press on the thumb grabs it (a held button's repeats over it grab it again).
-			if (n.kind == Widget::Options && !code && (n.state & Widget::Selected)) {
-				const Widget& thumb = t[n.thumb];
-				if (hits(thumb, x - thumb.rect.left, y - thumb.rect.top)) {
-					n.holding = k;
-					play(n.stepSounds[0]);
-					n.grabbed = true;
-					press(t, w, false, true, true);
-					return true;
-				}
-			}
-		}
-		int forward = -1;
-		if (code == (SourcePad | 7) || code == (SourcePad | 0xa) || code == (SourceAxis | 0) || code == MenuRight) {
-			forward = 1;
-		}
-		else if (code == (SourcePad | 9) || code == (SourcePad | 0xb) || code == (SourceAxis | 1) || code == MenuLeft) {
-			forward = 0;
-		}
-		if (forward < 0 || !((n.state & Widget::Selected) || n.unselectedInput)) {
-			return false;
-		}
-		const int16_t button = n.buttons[forward ? 1 : 0];
-		if (key.repeat && (t[button].state & Widget::Pressed)) {
-			n.kind == Widget::Selector ? stepSelector(t, w, forward) : stepRow(t, w, forward);
-		}
-		else if (!(n.state & Widget::Pressed)) {
-			press(t, button, true, true, false);
-			n.kind == Widget::Selector ? stepSelector(t, w, forward) : stepRow(t, w, forward);
-			press(t, w, false, false, false);
-		}
-		t[w].holding = k;
-		return true;
-	}
-	case Widget::Ring: {
-		// A click on a slot brings its item to the focused slot, at once and silently.
-		if (!isMouse(k) || !hits(n, x, y) || n.values.empty()) {
-			return false;
-		}
-		const int32_t count = int32_t(n.values.size());
-		for (size_t slot = 0; slot < n.slotRects.size(); slot++) {
-			const MenuRect& r = n.slotRects[slot];
-			if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
-				const int32_t to = ((int32_t(slot) + n.index - n.focusSlot) % count + count) % count;
-				if (to != n.index && !key.repeat) {
-					n.index = to;
-					if (n.parent >= 0 && t[n.parent].kind == Widget::Selector) {
-						notice(*game, t, n.parent, NoticeValue);
-					}
-				}
-				break;
-			}
-		}
-		return true;
-	}
-	case Widget::TextField: {
-		// A typed character: Backspace erases; one the field doesn't have is refused and goes on; past the length refused.
-		if (!(n.state & Widget::Enabled) || !(n.state & Widget::Selected) || (k >> 28) != (SourceCharacter >> 28)) {
-			return false;
-		}
-		char16_t c = char16_t(k & 0xffff);
-		c = char16_t(c >= 'a' && c <= 'z' ? c - 32 : c > 0xe0 && c <= 0xff ? c - 32 : c);
-		if (c == 8) {
-			play(n.editSounds[n.text.empty() ? 3 : 2]);
-			if (!n.text.empty()) {
-				n.text.pop_back();
-				notice(*game, t, w, NoticeValue);
-			}
-			return true;
-		}
-		if (text(n.charset).find(c) == std::u16string_view::npos) {
-			play(n.editSounds[3]);
-			return false;
-		}
-		if (int32_t(n.text.size()) >= n.maxLength) {
-			play(n.editSounds[3]);
-			return true;
-		}
-		n.text += c;
-		play(n.editSounds[0]);
-		notice(*game, t, w, NoticeValue);
-		return true;
-	}
-	case Widget::Hotspot: {
-		// Unpressed: a click lights the region under it and presses; Space or keypad Enter presses. Pressed: they
-		// release it, and it takes every other key.
-		constexpr uint32_t KeypadEnter = SourceKeyboard | 0x9c;
-		const bool activate = k == MenuSpace || k == KeypadEnter || k == MenuPadButton;
-		if (!(n.state & Widget::Enabled)) {
-			return false;
-		}
-		if (n.state & Widget::Pressed) {
-			if (activate) {
-				release(t, w, false, false, false);
-			}
-			return !isMouse(k);
-		}
-		if (!(n.state & Widget::Selected)) {
-			return false;
-		}
-		if (isMouse(k)) {
-			// A click lights the region under it (the screen hears it again while the button repeats); it doesn't press
-			// the button.
-			if (!hits(n, x, y)) {
-				return false;
-			}
-			if (key.repeat) {
-				if (n.lit) {
-					notice(*game, t, w, NoticeValue);
-				}
-				return true;
-			}
-			for (size_t i = 0; i < n.regions.size() && !n.lit; i++) {
-				const MenuRect& r = n.regionRects[i];
-				if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
-					n.lit = n.regions[i];
-					notice(*game, t, w, NoticeValue);
-				}
-			}
-			t[w].holding = k; // (its release clears the region)
-			return true;
-		}
-		if (key.repeat) {
-			return false;
-		}
-		if (!activate) {
-			return false;
-		}
-		press(t, w, false, false, false);
-		t[w].holding = k;
-		return true;
-	}
+	case Widget::Options: return stepperKeyDown(t, w, key, x, y);
+	case Widget::Ring: return ringKeyDown(t, w, key, x, y);
+	case Widget::TextField: return textFieldKeyDown(t, w, key);
+	case Widget::Hotspot: return hotspotKeyDown(t, w, key, x, y);
 	case Widget::Root:
 	case Widget::ImageButton:
 	case Widget::TextButton: {
@@ -1350,7 +1405,7 @@ void Menus::tick(WidgetTree& t, int16_t w, int32_t dt)
 		}
 	}
 	if (n.kind == Widget::Ring) {
-		n.spin = std::fmod(n.spin + n.spinRate * float(dt), 6.2831855f);
+		n.spin = std::fmod(n.spin + n.spinRate * float(dt), Tau);
 		n.fresh = false;
 		if (n.scrolled && n.scrollLeft == 0) {
 			n.scrolled = false;

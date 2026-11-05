@@ -60,11 +60,11 @@ struct LRDATA_API OriginalSave {
 	static constexpr size_t RecordSize = 0x22d;
 
 	// The data of a blocked file (checksums checked): false on a bad block.
-	static bool unblock(std::span<const uint8_t> file, std::vector<uint8_t>& data);
+	[[nodiscard]] static bool unblock(std::span<const uint8_t> file, std::vector<uint8_t>& data);
 	// From the unblocked data (padded: each record on whole blocks, as in a file; else back to back): false if it's
 	// malformed. Bytes past the records are ignored.
-	bool decode(std::span<const uint8_t> data, bool padded);
-	bool decodeFile(std::span<const uint8_t> file);
+	[[nodiscard]] bool decode(std::span<const uint8_t> data, bool padded);
+	[[nodiscard]] bool decodeFile(std::span<const uint8_t> file);
 	bool operator==(const OriginalSave&) const = default;
 };
 

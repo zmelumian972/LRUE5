@@ -39,7 +39,7 @@ public:
 		FPcm Pcm;
 		int32 Channels = 1;
 		bool bLoops = false;
-		double At = 0;   // in the sample's frames
+		double At = 0; // in the sample's frames
 		double Step = 0; // its frames per output frame
 		float Left = 0, Right = 0;
 	};

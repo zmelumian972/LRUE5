@@ -8,8 +8,7 @@ namespace {
 // (backup, as the options' BACK).
 constexpr int32_t SoundSelect = 14, SoundStep = 24, SoundClose = 2;
 
-constexpr std::u16string_view Names[VideoSettings::Rows] = {u"RESOLUTION", u"WINDOW", u"VSYNC", u"FRAME CAP", u"QUALITY",
-	u"RENDER SCALE", u"FRAME SMOOTHING"};
+constexpr std::u16string_view Names[VideoSettings::Rows] = {u"RESOLUTION", u"WINDOW", u"VSYNC", u"FRAME CAP", u"QUALITY", u"RENDER SCALE", u"FRAME SMOOTHING"};
 constexpr std::u16string_view ResolutionValues[] = {u"1280X960", u"1600X1200", u"1920X1080", u"2048X1536", u"2560X1440", u"3840X2160"};
 constexpr std::u16string_view WindowValues[] = {u"WINDOWED", u"BORDERLESS", u"FULLSCREEN"};
 constexpr std::u16string_view OnOff[] = {u"ON", u"OFF"};

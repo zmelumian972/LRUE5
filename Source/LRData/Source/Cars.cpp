@@ -13,7 +13,7 @@ constexpr int TableEntry = 0x27;
 
 // .CMB
 enum : int {
-	ChassisVariant = 0x28,   // { K(0x34..0x38) "name" ... }; 0x29 is the second variant
+	ChassisVariant = 0x28, // { K(0x34..0x38) "name" ... }; 0x29 is the second variant
 	ChassisVariant2 = 0x29,
 	VariantMaterials = 0x34,
 	VariantTextures = 0x35,
@@ -24,11 +24,11 @@ enum : int {
 	ChassisCenterOfMass = 0x2a,
 	ChassisDriverMount = 0x2b,
 	ChassisMass = 0x2c,
-	ChassisUnused2d = 0x2d,  // r r
+	ChassisUnused2d = 0x2d, // r r
 	ChassisShadowSize = 0x2e, // r r
 	ChassisEnginePitch = 0x2f,
-	ChassisSkids = 0x30,     // { r r, 4 * (r r r) }
-	ChassisWheels = 0x31,    // { 4 * (r r r) }
+	ChassisSkids = 0x30, // { r r, 4 * (r r r) }
+	ChassisWheels = 0x31, // { 4 * (r r r) }
 	ChassisUnused32 = 0x32,
 	ChassisUnused33 = 0x33,
 	ChassisHandling = 0x3a,
@@ -52,19 +52,21 @@ enum : int {
 	DriverTextures = 0x29,
 	DriverModel = 0x2a,
 	DriverChampion = 0x2b,
-	DriverStats = 0x2c,  // ..0x31, one each
+	DriverStats = 0x2c, // ..0x31, one each
+	DriverNameIndex = 0x33, // its name in DRIVERS.SRF
 	DriverVoice = 0x34,
+	DriverLooks = 0x35, // ..0x39, its minifig, one each
 	DriverCharge = 0x3a, // i colour, i target
 };
 
 // .ADB
 enum : int {
-	AnimationFrames = 0x27,   // { K(0x28) positions, K(0x29) rotations, K(0x2a) key times }
-	FramePositions = 0x28,    // [n] { (r r r) ... }
-	FrameRotations = 0x29,    // [n] { (r r r r) ... }
-	FrameKeys = 0x2a,         // [n] { i ... }
-	AnimationTracks = 0x2b,   // [n] { 6 i ... }
-	PartList = 0x2c,    // [n] { K(0x2c) "name" { fields } ... }
+	AnimationFrames = 0x27, // { K(0x28) positions, K(0x29) rotations, K(0x2a) key times }
+	FramePositions = 0x28, // [n] { (r r r) ... }
+	FrameRotations = 0x29, // [n] { (r r r r) ... }
+	FrameKeys = 0x2a, // [n] { i ... }
+	AnimationTracks = 0x2b, // [n] { 6 i ... }
+	PartList = 0x2c, // [n] { K(0x2c) "name" { fields } ... }
 	PartFrames = 0x2d,
 	PartLoopFrames = 0x2e,
 	PartRate = 0x2f,
@@ -77,8 +79,7 @@ enum : int {
 float number(TokenReader& r) { return r.next(Token::Integer) ? float(r.tokens().list[r.position() - 1].integer) : r.real(); }
 
 // A table of named entries; field(r, key, entry) reads one field's values, false for a malformed one.
-template <typename T, typename Field>
-bool decodeTable(std::span<const uint8_t> bytes, std::vector<T>& out, Field field)
+template <typename T, typename Field> bool decodeTable(std::span<const uint8_t> bytes, std::vector<T>& out, Field field)
 {
 	out.clear();
 	Tokens tokens;
@@ -108,8 +109,7 @@ bool decodeTable(std::span<const uint8_t> bytes, std::vector<T>& out, Field fiel
 	return !r.failed() && r.atEnd();
 }
 
-template <typename T>
-const T* findNamed(const std::vector<T>& list, std::string_view name)
+template <typename T> const T* findNamed(const std::vector<T>& list, std::string_view name)
 {
 	for (const T& entry : list) {
 		if (entry.name == name) {
@@ -137,11 +137,11 @@ bool ChassisTable::decode(std::span<const uint8_t> bytes)
 			while (!r.failed() && !r.next(Token::Close)) {
 				const int part = r.keyword();
 				std::string* into = part == VariantMaterials ? &v.materials
-					: part == VariantTextures                 ? &v.textures
-					: part == VariantModel                    ? &v.model
-					: part == VariantSkeleton                 ? &v.skeleton
-					: part == VariantAnimation                ? &v.animation
-															  : nullptr;
+					: part == VariantTextures				 ? &v.textures
+					: part == VariantModel					 ? &v.model
+					: part == VariantSkeleton				 ? &v.skeleton
+					: part == VariantAnimation				 ? &v.animation
+															 : nullptr;
 				if (part < 0) {
 					return false;
 				}
@@ -223,17 +223,23 @@ bool DriverTable::decode(std::span<const uint8_t> bytes)
 			d.chargeColour = r.integer();
 			d.chargeTarget = r.integer();
 		}
-		else if (key == 0x33) {
+		else if (key == DriverNameIndex) {
 			d.nameIndex = r.integer();
 		}
 		else if (key == DriverVoice) {
 			d.voice = r.integer();
 		}
-		else if (key >= 0x35 && key <= 0x39) {
-			d.looks[size_t(key - 0x35)] = r.integer();
+		else if (key >= DriverLooks && key < DriverLooks + 5) {
+			d.looks[size_t(key - DriverLooks)] = r.integer();
 		}
-		else if (key == DriverMaterials || key == DriverTextures || key == DriverModel) {
-			(key == DriverMaterials ? d.materials : key == DriverTextures ? d.textures : d.model) = r.text();
+		else if (key == DriverMaterials) {
+			d.materials = r.text();
+		}
+		else if (key == DriverTextures) {
+			d.textures = r.text();
+		}
+		else if (key == DriverModel) {
+			d.model = r.text();
 		}
 		else {
 			r.skipValues(); // the other names
@@ -314,10 +320,8 @@ bool AnimationFile::decode(std::span<const uint8_t> bytes)
 	}
 	for (const Track& t : tracks) {
 		if (t.rotationFrame < 0 || t.positionFrame < 0 || t.rotationKey < 0 || t.positionKey < 0 ||
-			size_t(t.rotationFrame) + size_t(std::max(0, t.rotationKeys)) > rotations.size() ||
-			size_t(t.positionFrame) + size_t(std::max(0, t.positionKeys)) > positions.size() ||
-			size_t(t.rotationKey) + size_t(std::max(0, t.rotationKeys)) > keys.size() ||
-			size_t(t.positionKey) + size_t(std::max(0, t.positionKeys)) > keys.size()) {
+			size_t(t.rotationFrame) + size_t(std::max(0, t.rotationKeys)) > rotations.size() || size_t(t.positionFrame) + size_t(std::max(0, t.positionKeys)) > positions.size() ||
+			size_t(t.rotationKey) + size_t(std::max(0, t.rotationKeys)) > keys.size() || size_t(t.positionKey) + size_t(std::max(0, t.positionKeys)) > keys.size()) {
 			return false;
 		}
 	}

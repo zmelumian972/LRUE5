@@ -29,15 +29,15 @@ namespace lr {
 struct Image;
 
 struct LRDATA_API StringTable {
-	std::vector<uint16_t> units;   // every string, each ending with a 0
-	std::vector<uint32_t> starts;  // each string's first unit
+	std::vector<uint16_t> units; // every string, each ending with a 0
+	std::vector<uint32_t> starts; // each string's first unit
 
 	size_t size() const { return starts.size(); }
 	std::u16string_view at(size_t index) const; // empty past the end
 	// The string with each unit's low byte (the names are 8-bit text).
 	std::string narrow(size_t index) const;
 	// False on a malformed file.
-	bool decode(std::span<const uint8_t> bytes);
+	[[nodiscard]] bool decode(std::span<const uint8_t> bytes);
 	bool operator==(const StringTable&) const = default;
 };
 
@@ -46,7 +46,7 @@ struct LRDATA_API NameList {
 	std::vector<std::string> names;
 
 	// False on a malformed file.
-	bool decode(std::span<const uint8_t> bytes);
+	[[nodiscard]] bool decode(std::span<const uint8_t> bytes);
 	bool operator==(const NameList&) const = default;
 };
 
@@ -55,14 +55,14 @@ struct LRDATA_API ImageList {
 		std::string name;
 		bool flip = false, targa = false;
 		bool keyed = false;
-		uint32_t key = 0;           // 0xffRRGGBB: texels of exactly this colour are transparent
+		uint32_t key = 0; // 0xffRRGGBB: texels of exactly this colour are transparent
 		uint32_t tint = 0xffffffff;
 		bool operator==(const Entry&) const = default;
 	};
 	std::vector<Entry> images;
 
 	// False on a malformed file.
-	bool decode(std::span<const uint8_t> bytes);
+	[[nodiscard]] bool decode(std::span<const uint8_t> bytes);
 	bool operator==(const ImageList&) const = default;
 };
 
@@ -80,7 +80,7 @@ struct LRDATA_API FontList {
 	std::vector<Font> fonts;
 
 	// False on a malformed file.
-	bool decode(std::span<const uint8_t> bytes);
+	[[nodiscard]] bool decode(std::span<const uint8_t> bytes);
 	bool operator==(const FontList&) const = default;
 };
 
@@ -98,7 +98,7 @@ struct LRDATA_API FontGlyphs {
 	std::vector<Glyph> glyphs; // by code, the space (32: x 0, the space's width) among them
 
 	// False if the image holds fewer glyphs than the font lists.
-	bool scan(const Image& image, std::span<const uint16_t> chars);
+	[[nodiscard]] bool scan(const Image& image, std::span<const uint16_t> chars);
 	// The glyph for a code; a missing one is the space.
 	const Glyph& find(uint16_t code) const;
 };
@@ -138,8 +138,8 @@ struct LRDATA_API MenuStyles {
 		Kind kind = Image;
 		std::string name;
 		std::vector<std::string> images; // an image style's one, a frame's 8, a button's 6
-		std::vector<uint32_t> colours;   // an image or text style's one, a frame's 2, a text button's 13
-		std::string font;                // a text style's
+		std::vector<uint32_t> colours; // an image or text style's one, a frame's 2, a text button's 13
+		std::string font; // a text style's
 		int32_t wrap = 0;
 		bool centred = false;
 		MenuIcon icon;
@@ -149,9 +149,9 @@ struct LRDATA_API MenuStyles {
 		int32_t scrollMs = 0;
 		bool pageMode = false, wrapAround = false;
 		std::array<std::string, 2> buttons; // a selector's and an options row's previous and next button styles
-		std::string frame;                  // a selector's frame style
-		std::array<std::string, 2> track;   // an options row's track and thumb image styles
-		std::vector<int32_t> regions;       // a hotspot's ids
+		std::string frame; // a selector's frame style
+		std::array<std::string, 2> track; // an options row's track and thumb image styles
+		std::vector<int32_t> regions; // a hotspot's ids
 		std::vector<MenuRect> regionRects;
 		bool operator==(const Style&) const = default;
 	};
@@ -160,7 +160,7 @@ struct LRDATA_API MenuStyles {
 
 	const Style* find(std::string_view name) const;
 	// False on a malformed file.
-	bool decode(std::span<const uint8_t> bytes);
+	[[nodiscard]] bool decode(std::span<const uint8_t> bytes);
 	bool operator==(const MenuStyles&) const = default;
 };
 
@@ -174,7 +174,7 @@ struct LRDATA_API MenuLayout {
 		MultiState = 0x3c,
 		Hotspot = 0x3d,
 		Selector = 0x3e,
-		Ring = 0x3f,        // a 3D ring carousel
+		Ring = 0x3f, // a 3D ring carousel
 		Options = 0x40,
 		SceneView = 0x42,
 		TextField = 0x43,
@@ -199,19 +199,19 @@ struct LRDATA_API MenuLayout {
 		std::vector<std::string> images;
 		std::vector<uint32_t> colours; // a frame's 2, a text button's 13 (the widget block's colour is `colour`)
 		std::vector<std::string> fonts;
-		int32_t wrap = 0;        // a label's wrap width; a text button's max width
-		bool hasFill = true;     // a frame's
+		int32_t wrap = 0; // a label's wrap width; a text button's max width
+		bool hasFill = true; // a frame's
 		std::array<std::string, 2> buttons, track; // a selector's or options row's buttons; the row's track, thumb
-		std::string frame;       // a selector's or framed scene view's frame binding
+		std::string frame; // a selector's or framed scene view's frame binding
 		bool unselectedInput = false;
-		int32_t steps = 0, value = 0;        // an options row's
+		int32_t steps = 0, value = 0; // an options row's
 		std::array<int32_t, 4> editSounds = {}; // an options row's 2 step sounds, a text field's 4 edit sounds
 		bool hasEditSounds = false;
-		int32_t maxLength = 31;  // a text field's
-		std::string world;       // a scene view's; a scene reference's cinematic
+		int32_t maxLength = 31; // a text field's
+		std::string world; // a scene view's; a scene reference's cinematic
 		std::array<float, 9> camera = {}; // eye, target, field of view, near, far
 		std::array<int32_t, 3> numbers = {}; // a ring's slots, focused slot; a scene view's draw world, blended, clear
-		float step = 0;          // a ring's
+		float step = 0; // a ring's
 		std::vector<MenuRect> slots;
 		bool autoAdvance = false;
 		int32_t startFrame = 0;
@@ -222,7 +222,7 @@ struct LRDATA_API MenuLayout {
 
 	const Binding* find(std::string_view name) const;
 	// False on a malformed file.
-	bool decode(std::span<const uint8_t> bytes);
+	[[nodiscard]] bool decode(std::span<const uint8_t> bytes);
 	bool operator==(const MenuLayout&) const = default;
 };
 
@@ -276,7 +276,7 @@ struct LRDATA_API CinemaFile {
 		// fractions of the screen, each kept only if given (else it is centred and sized to its content), its speeds.
 		int32_t table = -1, string = -1;
 		std::string text, font, picture;
-		std::array<float, 4> place = {};        // left, top, width, height
+		std::array<float, 4> place = {}; // left, top, width, height
 		std::array<bool, 4> given = {};
 		std::array<float, 4> speed = {};
 		// The world entity it is attached to (0x5d animated, 0x5e plain, 0x5f collision; 0 none).
@@ -291,7 +291,7 @@ struct LRDATA_API CinemaFile {
 		uint8_t channel = 0x50; // 0x50 + 2·cue kind + (0 begins, 1 ends); 0x50/0x51 any kind
 		std::string cue;
 		bool start = true;
-		int32_t effect = -1;    // in effects
+		int32_t effect = -1; // in effects
 		bool operator==(const Link&) const = default;
 	};
 	std::vector<std::string> worlds; // the world databases' base names, in order
@@ -301,8 +301,8 @@ struct LRDATA_API CinemaFile {
 	std::vector<std::string> stringTables, soundBanks, imageLists;
 
 	// The scenes (false on a malformed file); then the effects file, if there is one.
-	bool decode(std::span<const uint8_t> bytes);
-	bool decodeEffects(std::span<const uint8_t> bytes);
+	[[nodiscard]] bool decode(std::span<const uint8_t> bytes);
+	[[nodiscard]] bool decodeEffects(std::span<const uint8_t> bytes);
 	bool operator==(const CinemaFile&) const = default;
 };
 
@@ -318,7 +318,7 @@ struct LRDATA_API CircuitTable {
 	std::vector<Circuit> circuits;
 
 	int32_t find(std::string_view name) const; // -1 none
-	bool decode(std::span<const uint8_t> bytes);
+	[[nodiscard]] bool decode(std::span<const uint8_t> bytes);
 	bool operator==(const CircuitTable&) const = default;
 };
 
@@ -336,7 +336,7 @@ struct LRDATA_API RaceTable {
 
 	int32_t find(std::string_view name) const; // -1 none
 	// False on a malformed file; fills each circuit's races.
-	bool decode(std::span<const uint8_t> bytes, CircuitTable& circuits);
+	[[nodiscard]] bool decode(std::span<const uint8_t> bytes, CircuitTable& circuits);
 	bool operator==(const RaceTable&) const = default;
 };
 

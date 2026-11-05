@@ -13,7 +13,7 @@ void Program::boot(const MenuData& menuData, const Cache& files, uint8_t pads, s
 	game.reset(pads);
 	for (size_t slot = 0; slot < saves.size() && slot < 2; slot++) {
 		if (!saves[slot].empty()) {
-			game.loadSlot(slot, saves[slot]);
+			(void)game.loadSlot(slot, saves[slot]); // (a file that isn't a save leaves its slot empty, as if none)
 		}
 	}
 	mode = Mode::Menus;
@@ -24,15 +24,16 @@ void Program::startRace()
 {
 	RaceBrief brief = game.brief(*data, *cache);
 	// The standings' and the dialogs' blinks run on from race to race.
-	const int32_t standingsBlink = world.blinkMs, dialogBlink = world.dialog.blinkMs;
-	if (world.simulate) {
-		world.setupSession(*cache, brief);
+	const int32_t standingsBlink = world.session.blinkMs, dialogBlink = world.session.dialog.blinkMs;
+	if (!(world.replaying() ? world.setupSession(*cache, brief) : world.setup(*cache, brief))) {
+		// The race's files are missing or malformed: the session ends and the menus start again at the main menu.
+		game.racing = false;
+		mode = Mode::Menus;
+		menus.start(*data, game, ScreenMainMenu);
+		return;
 	}
-	else {
-		world.setup(*cache, brief);
-	}
-	world.blinkMs = standingsBlink;
-	world.dialog.blinkMs = dialogBlink;
+	world.session.blinkMs = standingsBlink;
+	world.session.dialog.blinkMs = dialogBlink;
 	menus.drawLoading(brief.track);
 	mode = Mode::Race;
 	loaded = true;
@@ -69,13 +70,18 @@ void Program::frame(int32_t dt, const Input& input)
 	for (const MenuKey& k : input.keys) {
 		(k.down ? pressed : released).push_back(k.key);
 	}
-	for (size_t p = 0; p < world.keys.size() && p < input.players.size(); p++) {
-		world.keys[p] = input.players[p];
+	for (size_t p = 0; p < world.racers.keys.size() && p < input.players.size(); p++) {
+		world.racers.keys[p] = input.players[p];
 	}
-	world.update(dt, pressed, released, world.simulate ? nullptr : cache);
+	// A one-player race in a window wider than 4:3 draws Hor+: the frustum is the window's (its vertical field the
+	// original's, its width the window's).
+	if (world.raceView.cameras.size() == 1) {
+		world.raceView.cameras[0].aspect = input.windowAspect > 4.0f / 3 + 0.01f ? input.windowAspect : 4.0f / 3;
+	}
+	world.update(dt, pressed, released, world.replaying() ? nullptr : cache);
 	world.updateHuds(dt);
 	menus.drawRace(world);
-	if (world.ending == World::End::None) {
+	if (world.session.ending == Session::End::None) {
 		return;
 	}
 	// The race is over: the session's next race loads now, or the menus start again.
@@ -99,7 +105,7 @@ uint16_t Program::raceKeys(const KeyLayout& layout, std::span<const uint32_t> do
 	uint16_t keys = 0;
 	for (size_t slot = 0; slot < 9; slot++) {
 		const uint32_t binding = layout.bindings[slot];
-		const bool stick = layout.kind == 4 && slot < 2 && !binding;
+		const bool stick = layout.kind == KeyLayout::Joystick && slot < 2 && !binding;
 		keys |= held(stick ? SourceAxis | uint32_t(1 - slot) : binding) ? Bits[slot] : 0;
 	}
 	return keys;

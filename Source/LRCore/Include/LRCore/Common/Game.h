@@ -30,12 +30,12 @@ struct CarPiece {
 
 // A built racer: the license's name, the minifig's looks, the car.
 struct RacerRecord {
-	std::u16string name;               // up to 14
+	std::u16string name; // up to 14
 	std::array<uint8_t, 4> looks = {}; // face, hat, legs, torso
-	uint8_t expression = 0;            // 0..127
-	bool stockCar = false;             // a set's bare chassis or a quick build, not changed in the builder since
-	std::string chassis;               // up to 8: "ddchas0"
-	std::vector<CarPiece> pieces;      // up to 64
+	uint8_t expression = 0; // 0..127
+	bool stockCar = false; // a set's bare chassis or a quick build, not changed in the builder since
+	std::string chassis; // up to 8: "ddchas0"
+	std::vector<CarPiece> pieces; // up to 64
 	std::array<uint8_t, 7> trophies = {}; // per circuit: 0 none, 1 gold, 2 silver, 3 bronze
 	bool operator==(const RacerRecord&) const = default;
 };
@@ -51,7 +51,8 @@ struct RacerRef {
 // A player's controls: a device and nine bindings, each (source << 28 | code): source 1 keyboard (a DirectInput scan
 // code), 2 mouse, 3 joystick button, 4 joystick axis-as-button. Layouts 0 and 1 are joysticks 0 and 1, 2..4 keyboards.
 struct KeyLayout {
-	uint8_t kind = 0, subKind = 0, device = 0; // kind: 3 keyboard, 4 joystick
+	static constexpr uint8_t Keyboard = 3, Joystick = 4; // the kinds
+	uint8_t kind = 0, subKind = 0, device = 0;
 	std::array<uint32_t, 9> bindings = {};
 	bool operator==(const KeyLayout&) const = default;
 };
@@ -66,10 +67,10 @@ struct BestTime {
 struct Settings {
 	uint8_t opponents = 5, laps = 3, music = 255, sound = 255, stereo = 1, language = 0;
 	std::array<uint8_t, 2> kept = {0, 128}; // meaning unknown: carried through
-	std::array<uint8_t, 16> device = {};    // the display device (presentation's): carried through
-	uint8_t parts = 0, circuits = 0;        // unlock bits
-	uint16_t races = 0;                     // time races won
-	std::array<BestTime, 13> best;          // by record slot
+	std::array<uint8_t, 16> device = {}; // the display device (presentation's): carried through
+	uint8_t parts = 0, circuits = 0; // unlock bits
+	uint16_t races = 0; // time races won
+	std::array<BestTime, 13> best; // by record slot
 	std::array<RacerRef, 2> picks = {RacerRef{RacerList::Card0, 0}, RacerRef{RacerList::Card0, 0}}; // each player's last
 	std::array<uint8_t, 2> layout = {0, 1}; // each player's KeyLayout
 	std::array<KeyLayout, 5> layouts;
@@ -107,7 +108,6 @@ struct RaceRecord {
 
 struct LRCORE_API Game {
 	static constexpr size_t CardCapacity = 100;
-	static constexpr size_t SessionCapacity = 5;
 
 	Settings settings;
 	bool dirty = false; // the settings changed since the active slot was last written
@@ -124,9 +124,9 @@ struct LRCORE_API Game {
 	uint32_t cheats = 0;
 	uint32_t random = 0; // the gameplay random index: the menus' draws and every race's
 	uint8_t currentCard = 0; // the card new racers go to
-	RacerRecord working;     // the racer the builders edit (a copy)
+	RacerRecord working; // the racer the builders edit (a copy)
 	std::array<RacerRef, 2> chosen; // the racers chosen for the next race (and for the builders: player 1's)
-	uint8_t players = 0;            // how many are chosen
+	uint8_t players = 0; // how many are chosen
 	std::array<uint8_t, 2> views = {}; // each player's camera view as last chosen in a race (not saved)
 	bool newRacer = false, copying = false, versus = false, backToGarage = false, circuitNotice = false;
 	std::vector<RacerRecord> defaults; // MENUDATA/DEFAULT.LRS's racers (read-only, kept by reset)
@@ -194,7 +194,7 @@ struct LRCORE_API Game {
 	std::vector<uint8_t> encodeSlot(size_t slot) const;
 	// A slot's file read at the start: its racers, and its settings if it has them and no slot is active yet (it
 	// becomes active). False if the file is malformed: the slot stays unusable.
-	bool loadSlot(size_t slot, std::span<const uint8_t> bytes);
+	[[nodiscard]] bool loadSlot(size_t slot, std::span<const uint8_t> bytes);
 	// Loading every slot after the legal screen: a missing slot is made (its file returned to write), and with no slot
 	// active slot 0 becomes active (on a fresh install).
 	std::vector<std::pair<uint8_t, std::vector<uint8_t>>> openSlots();

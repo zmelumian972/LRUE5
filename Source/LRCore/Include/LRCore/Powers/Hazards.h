@@ -20,9 +20,9 @@ namespace lr {
 struct Clock {
 	float time = 0;
 	float drawn = -1; // when it was last drawn (what its skeleton shows; -1: never, its rest pose)
-	float rate = 0;             // frames per ms
+	float rate = 0; // frames per ms
 	int16_t part = -1;
-	int16_t queued = -1;        // waiting to take over (-1 none)
+	int16_t queued = -1; // waiting to take over (-1 none)
 	bool loop = false, animating = false, done = false;
 	bool queueFree() const { return queued < 0; }
 };
@@ -40,9 +40,9 @@ struct Hazard {
 		Smoke,
 		Crane,
 		Launcher,
-		Opener,     // a triggered animation that opens a wall
+		Opener, // a triggered animation that opens a wall
 		Oscillator,
-		Launchers,  // a multi-launcher
+		Launchers, // a multi-launcher
 		Rock,
 		CurseDrop,
 		Sweep,
@@ -55,18 +55,18 @@ struct Hazard {
 	State state = Idle;
 	int32_t trigger = -1;
 	int16_t member = -1; // its sphere in the trigger list, while it has one
-	Vec3 centre;         // its sphere's
+	Vec3 centre; // its sphere's
 	float radius = 0;
 	bool armed = false, landed = false, lit = false, on = false; // per type
-	int32_t timer = 0, timer2 = 0;  // per type (ms)
+	int32_t timer = 0, timer2 = 0; // per type (ms)
 	uint8_t right[3] = {}, reset[3] = {}; // the code puzzle's switches
 	uint8_t progress = 0;
-	Projectile ball;      // a launcher's
+	Projectile ball; // a launcher's
 	int8_t launch = 0, aimed = 0; // a multi-launcher's choice
-	int8_t held = -1;     // the grabber's racer
-	uint8_t grab = 0;     // the grabber: 0 open, 1 holding, 2 cooling
-	Vec3 point, muzzle;   // the rain's drop point and muzzle
-	Basis rows;           // a rolling rock's box
+	int8_t held = -1; // the grabber's racer
+	uint8_t grab = 0; // the grabber: 0 open, 1 holding, 2 cooling
+	Vec3 point, muzzle; // the rain's drop point and muzzle
+	Basis rows; // a rolling rock's box
 };
 
 // An event table resource's state (timers and forces; lap marks keep none).

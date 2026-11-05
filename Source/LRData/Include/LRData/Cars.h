@@ -18,7 +18,7 @@ namespace lr {
 struct LRDATA_API ChassisTable {
 	struct Chassis {
 		std::string name;
-		std::string model;     // the first variant's model (.GDB)
+		std::string model; // the first variant's model (.GDB)
 		std::string animation; // the first variant's part file (.ADB)
 		std::string skeleton, materials, textures; // the first variant's scene nodes (.SDB), material library, texture list
 		// The second variant (key 0x29), drawn with the car when it names a model.
@@ -42,7 +42,7 @@ struct LRDATA_API ChassisTable {
 
 	const Chassis* find(std::string_view name) const;
 	// False on a malformed file.
-	bool decode(std::span<const uint8_t> bytes);
+	[[nodiscard]] bool decode(std::span<const uint8_t> bytes);
 	bool operator==(const ChassisTable&) const = default;
 };
 
@@ -60,7 +60,7 @@ struct LRDATA_API ChampionTable {
 
 	const Champion* find(std::string_view name) const;
 	// False on a malformed file.
-	bool decode(std::span<const uint8_t> bytes);
+	[[nodiscard]] bool decode(std::span<const uint8_t> bytes);
 	bool operator==(const ChampionTable&) const = default;
 };
 
@@ -70,9 +70,9 @@ struct LRDATA_API DriverTable {
 		std::string champion;
 		std::array<int32_t, 6> stats = {}; // power-up use: red, yellow, green, blue, and two unused
 		int32_t chargeColour = 0, chargeTarget = 0; // a colour it holds until it has that many white bricks
-		int32_t nameIndex = 0;              // its name in DRIVERS.SRF
-		std::array<int32_t, 5> looks = {};  // its minifig: K(0x35)..K(0x39)
-		int32_t voice = 0;                  // its voice in the race's second voice bank
+		int32_t nameIndex = 0; // its name in DRIVERS.SRF
+		std::array<int32_t, 5> looks = {}; // its minifig: K(0x35)..K(0x39)
+		int32_t voice = 0; // its voice in the race's second voice bank
 		std::string materials, textures, model; // its driver model (on the shared PELVIS skeleton)
 		bool operator==(const Driver&) const = default;
 	};
@@ -80,7 +80,7 @@ struct LRDATA_API DriverTable {
 
 	const Driver* find(std::string_view name) const;
 	// False on a malformed file.
-	bool decode(std::span<const uint8_t> bytes);
+	[[nodiscard]] bool decode(std::span<const uint8_t> bytes);
 	bool operator==(const DriverTable&) const = default;
 };
 
@@ -105,7 +105,7 @@ struct LRDATA_API AnimationFile {
 	std::vector<Track> tracks;
 
 	// False on a malformed file.
-	bool decode(std::span<const uint8_t> bytes);
+	[[nodiscard]] bool decode(std::span<const uint8_t> bytes);
 	bool operator==(const AnimationFile&) const = default;
 };
 

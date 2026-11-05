@@ -1,0 +1,8 @@
+# The UE layer: UE's conventions (braces on their own line for types and namespaces), otherwise the repo's style.
+BasedOnStyle: InheritParentConfig
+BraceWrapping:
+  AfterClass: true
+  AfterStruct: true
+  AfterNamespace: true
+  AfterEnum: true
+  AfterUnion: true

@@ -105,7 +105,13 @@ bool Image::decodeBmp(std::span<const uint8_t> bytes)
 	}
 	// 4-bit rows end on a whole byte (an odd width leaves a nibble over).
 	const size_t pixels = size_t(width) * height, stride = depth == 4 ? (width + 1) & ~1u : width;
-	const size_t size = depth == 4 ? stride / 2 * height : depth == 8 ? pixels : pixels * 3;
+	size_t size = pixels * 3; // 24-bit
+	if (depth == 4) {
+		size = stride / 2 * height;
+	}
+	else if (depth == 8) {
+		size = pixels;
+	}
 	std::vector<uint8_t> raw;
 	if (!unpack(bytes, at, raw, size)) {
 		return false;

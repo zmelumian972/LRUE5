@@ -31,7 +31,7 @@ struct LRDATA_API Tokens {
 	std::vector<char> text; // NUL-terminated strings
 
 	// False on a malformed stream.
-	bool decode(std::span<const uint8_t> bytes);
+	[[nodiscard]] bool decode(std::span<const uint8_t> bytes);
 	std::string_view textOf(const Token& token) const { return text.data() + token.text; }
 };
 
@@ -39,7 +39,10 @@ struct LRDATA_API Tokens {
 // the end.
 class LRDATA_API TokenReader {
 public:
-	explicit TokenReader(const Tokens& tokens) : m_tokens(tokens) {}
+	explicit TokenReader(const Tokens& tokens)
+		: m_tokens(tokens)
+	{
+	}
 
 	bool atEnd() const { return m_at >= m_tokens.list.size(); }
 	bool failed() const { return m_failed; }
@@ -50,8 +53,7 @@ public:
 	void expect(Token::Kind kind);
 	int32_t integer();
 	float real();
-	template <size_t N>
-	std::array<float, N> reals()
+	template <size_t N> std::array<float, N> reals()
 	{
 		std::array<float, N> v;
 		for (float& x : v) {
@@ -65,7 +67,7 @@ public:
 	uint32_t openCounted();
 	void close() { expect(Token::Close); }
 	void skipCounted(); // a whole "[ n ] { ... }"
-	void skipBlock();   // a whole "{ ... }", nested blocks included
+	void skipBlock(); // a whole "{ ... }", nested blocks included
 	size_t position() const { return m_at; }
 	void seek(size_t position) { m_at = position; }
 	const Tokens& tokens() const { return m_tokens; }

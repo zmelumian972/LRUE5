@@ -30,9 +30,9 @@ struct LRDATA_API Model {
 
 	Vertices kind = Vertices::Plain;
 	std::vector<float> positions; // xyz per vertex
-	std::vector<float> uvs;       // uv per vertex (not PositionsOnly)
-	std::vector<uint8_t> colors;  // rgba per vertex (Colored; Plain and Lit: white)
-	std::vector<float> normals;   // xyz per vertex (Lit)
+	std::vector<float> uvs; // uv per vertex (not PositionsOnly)
+	std::vector<uint8_t> colors; // rgba per vertex (Colored; Plain and Lit: white)
+	std::vector<float> normals; // xyz per vertex (Lit)
 	std::vector<Section> sections;
 	std::vector<uint16_t> vertexParts; // per vertex: the part current when it was loaded (0 never loaded)
 	std::vector<std::string> materials;
@@ -40,7 +40,7 @@ struct LRDATA_API Model {
 	uint32_t faceCount = 0;
 
 	// False on a malformed file.
-	bool decode(std::span<const uint8_t> bytes);
+	[[nodiscard]] bool decode(std::span<const uint8_t> bytes);
 	bool operator==(const Model&) const = default;
 };
 
@@ -64,7 +64,7 @@ struct LRDATA_API HeadLibrary {
 	std::vector<Head> heads;
 
 	const Head* find(std::string_view name) const; // case-insensitive
-	bool decode(std::span<const uint8_t> bytes);
+	[[nodiscard]] bool decode(std::span<const uint8_t> bytes);
 	bool operator==(const HeadLibrary&) const = default;
 };
 

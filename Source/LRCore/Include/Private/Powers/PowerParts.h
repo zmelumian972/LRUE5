@@ -9,13 +9,27 @@ namespace lr {
 
 // Each kind's states after Ready (1), before Done (6).
 enum : uint8_t {
-	TurboIgnite = 2, TurboBoosting, TurboFading,
-	WarpStarting = 2, WarpActive,
-	ShieldActive = 3, ShieldFading,
-	TrapArmed = 2, TrapActive, TrapFading, // oil slick, magnet (its active is its hold), curse
-	DynamiteArmed = 2, DynamiteThrown, DynamiteSecond, DynamiteThird,
-	ShotArmed = 2, ShotFlying, HookPulling, HookReeling, // cannonball, hook, missile (rising: armed)
-	BoltRamp = 2, BoltSustain, BoltFade,
+	TurboIgnite = 2,
+	TurboBoosting,
+	TurboFading,
+	WarpStarting = 2,
+	WarpActive,
+	ShieldActive = 3,
+	ShieldFading,
+	TrapArmed = 2,
+	TrapActive,
+	TrapFading, // oil slick, magnet (its active is its hold), curse
+	DynamiteArmed = 2,
+	DynamiteThrown,
+	DynamiteSecond,
+	DynamiteThird,
+	ShotArmed = 2,
+	ShotFlying,
+	HookPulling,
+	HookReeling, // cannonball, hook, missile (rising: armed)
+	BoltRamp = 2,
+	BoltSustain,
+	BoltFade,
 };
 
 constexpr int32_t PoolSizes[Action::Kinds] = {3, 4, 3, 2, 4, 3, 3, 9, 5, 6, 3};

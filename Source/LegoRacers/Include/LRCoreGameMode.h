@@ -1,6 +1,6 @@
 #pragma once
 
-// The game on the rewrite's core (LRCore's Program): UE boots it at the legal screen with the save files it
+// The game on LRCore's Program: UE boots it at the legal screen with the save files it
 // finds, feeds it the keyboard, mouse and pads, paints its 640x480 draw list on the CPU as the original's device drew it
 // (lr::paint) into textures between its 3D views and scales them to the window (4:3, pillarboxed), poses
 // the menus' 3D views and draws the race in the Classic look from World and its show (LRCoreRace.h), plays
@@ -9,10 +9,12 @@
 // Its files: the data cache of the player's install (LRCoreGameData.h); meshes and sounds are made from it at runtime.
 // The saves:
 // <Saved>/Save, as <slot>/racers.lrsave.
+// An unattended run's harness (LRCoreHarness.h) can drive it: its own keys, saves and pads, a log, shots.
 
 #include "CoreMinimal.h"
 #include "GameFramework/GameModeBase.h"
 #include "GameFramework/HUD.h"
+#include "LRCoreRun.h"
 #include "LRCoreGameMode.generated.h"
 
 class ACameraActor;
@@ -25,7 +27,6 @@ class UTexture2D;
 class UTextureRenderTarget2D;
 class ULRRaceMixer;
 class ULRRaceView;
-struct FLRCoreRun;
 
 UCLASS()
 class ALRCoreGameMode : public AGameModeBase
@@ -41,7 +42,7 @@ public:
 	void DrawScreen(UCanvas* Canvas);
 
 private:
-	FLRCoreRun* Run = nullptr; // the program, its files and the input state (plain C++)
+	TUniquePtr<FLRCoreRun> Run; // the program, its files and the input state (plain C++)
 
 	// The 2D layers: under the first 3D view, then over each; the 3D views' targets and captures, one per view.
 	UPROPERTY()
@@ -70,6 +71,7 @@ private:
 	bool Boot();
 	void StepFrame(int32 FrameIndex);
 	void RunVideo();
+	void OpenVideo();
 	void Sounds();
 	void PaintLayers();
 	void WriteSaves();

@@ -3,6 +3,7 @@
 
 #include "LRCore/Show/ShowState.h"
 
+#include "Common/Assert.h"
 #include "LRCore/Race/World.h"
 #include "LRData/Cache.h"
 #include "LRData/Cars.h"
@@ -26,9 +27,34 @@ bool named(const std::array<char, 9>& name) { return name[0] != 0; }
 std::string folderOf(const std::string& path) { return path.substr(0, path.rfind('/') + 1); }
 
 // A file of the track's folder, else of COMMON (the race files' rule).
-std::string found(const Cache& cache, const std::string& dir, const std::string& name)
+std::string found(const Cache& cache, const std::string& dir, const std::string& name) { return cache.has(dir + name) ? dir + name : Common + name; }
+
+// The wheels a racer's skid marks come from: all four spinning, the back two on a turbo, else one side's pair, by
+// which way the car slides; a wheel off the ground for over 150 ms lays none.
+uint8_t skiddingWheels(const World& world, size_t i, Show::Visuals& v, int32_t ms)
 {
-	return cache.has(dir + name) ? dir + name : Common + name;
+	const Kart& k = world.racers.karts[i];
+	const Pose& car = world.racers.visible[i];
+	uint8_t wheels = 0;
+	if (v.skidding && !(world.racers.race[i].flags & RacerGhost)) {
+		if (v.spinning) {
+			wheels = 15;
+		}
+		else if (v.turbo) {
+			wheels = 4 | 8;
+		}
+		else {
+			const Vec3 dir = k.velocityDirection;
+			wheels = dot(car.rotation.s, dir) > 0 ? (2 | 8) : (1 | 4);
+		}
+		for (size_t w = 0; w < 4; w++) {
+			v.liftedMs[w] = k.wheels[w].contact ? 0 : v.liftedMs[w] + ms;
+			if (v.liftedMs[w] > 150) {
+				wheels &= uint8_t(~(1u << w));
+			}
+		}
+	}
+	return wheels;
 }
 
 } // namespace
@@ -42,52 +68,20 @@ uint16_t Show::draw(Draw why, int16_t racer)
 	return randomTable(random);
 }
 
-bool Show::load(const Cache& cache, const World& world)
+// The chassis' shadow and skid sizes, by racer.
+void Show::loadChassis(const Cache& cache, const World& world)
 {
-	const uint32_t keep = random;
-	const float volume = effectsVolume;
-	auto* watch = drawWatch;
-	void* context = drawContext;
-	*this = {};
-	random = keep, drawWatch = watch, drawContext = context, effectsVolume = volume;
-	const std::string& track = world.brief.track;
-	const std::string dir = "GAMEDATA/" + track + "/";
-	RaceFile race;
-	if (!cache.get(dir + track + ".RAB", race)) {
-		return false;
-	}
-	// The effect sets: the race's (EMITTER.EMB) and the track's, each with its world's material animation and libraries
-	// (GLOBAL.WDB's, the track's LOCAL.WDB's).
-	const std::string worlds[2] = {race.globalWorld, race.localWorld};
-	for (size_t s = 0; s < 2; s++) {
-		EffectSet& set = sets[s];
-		set.slots.assign(SetSlots[s], {});
-		set.handles.fill(-1);
-		if (!race.emitterFiles[s].empty()) {
-			cache.get(found(cache, dir, binaryName(race.emitterFiles[s])), set.file);
-		}
-		SceneFile scene;
-		if (!worlds[s].empty() && cache.get(found(cache, dir, binaryName(worlds[s])), scene)) {
-			const std::string folder = folderOf(found(cache, dir, binaryName(worlds[s])));
-			if (!scene.materialAnimations.empty()) {
-				cache.get(folder + binaryName(scene.materialAnimations[0]) + ".MAB", set.tracks);
-			}
-			for (size_t l = 0; l < scene.materialLibraries.size() && l < 2; l++) {
-				set.libraries[l] = folder + binaryName(scene.materialLibraries[l]) + ".MDB";
-			}
-		}
-	}
-	// The chassis' shadow and skid sizes, by racer.
 	ChassisTable chassisTable;
 	ChampionTable champions;
 	DriverTable drivers;
-	cache.get(Common + "CHASSIS.CMB", chassisTable);
-	cache.get(Common + "CHAMPS.CCB", champions);
-	cache.get(Common + "DRIVERS.DDB", drivers);
-	const size_t n = world.karts.size();
+	// (World::setup has read the three already.)
+	(void)cache.get(Common + "CHASSIS.CMB", chassisTable);
+	(void)cache.get(Common + "CHAMPS.CCB", champions);
+	(void)cache.get(Common + "DRIVERS.DDB", drivers);
+	const size_t n = world.racers.karts.size();
 	m_chassis.assign(n, {});
-	for (size_t i = 0; i < n && i < world.brief.slots.size(); i++) {
-		const RaceBrief::Slot& slot = world.brief.slots[i];
+	for (size_t i = 0; i < n && i < world.session.brief.slots.size(); i++) {
+		const RaceBrief::Slot& slot = world.session.brief.slots[i];
 		const DriverTable::Driver* driver = slot.driver.empty() ? nullptr : drivers.find(slot.driver);
 		const ChampionTable::Champion* champion = driver ? champions.find(driver->champion) : nullptr;
 		if (const ChassisTable::Chassis* c = chassisTable.find(champion ? champion->chassis : slot.chassis)) {
@@ -101,10 +95,11 @@ bool Show::load(const Cache& cache, const World& world)
 			}
 		}
 	}
-	visuals.assign(n, {});
-	shadowAlpha.assign(n, {});
-	scarMs.assign(world.explosions.size(), -1);
-	// The ground the decals lie on: the track's collision triangles in the world, in cells of 16 ft.
+}
+
+// The ground the decals lie on: the track's collision triangles in the world, in cells of 16 ft.
+void Show::groundCells(const World& world)
+{
 	if (world.track.trackVolume < world.track.volumes.size()) {
 		const Track::Volume& v = world.track.volumes[world.track.trackVolume];
 		if (v.mesh < world.track.meshes.size()) {
@@ -140,6 +135,49 @@ bool Show::load(const Cache& cache, const World& world)
 			}
 		}
 	}
+}
+
+bool Show::load(const Cache& cache, const World& world)
+{
+	const uint32_t keep = random;
+	const float volume = effectsVolume;
+	auto* watch = drawWatch;
+	void* context = drawContext;
+	*this = {};
+	random = keep, drawWatch = watch, drawContext = context, effectsVolume = volume;
+	const std::string& track = world.session.brief.track;
+	const std::string dir = "GAMEDATA/" + track + "/";
+	RaceFile race;
+	if (!cache.get(dir + track + ".RAB", race)) {
+		return false;
+	}
+	// The effect sets: the race's (EMITTER.EMB) and the track's, each with its world's material animation and libraries
+	// (GLOBAL.WDB's, the track's LOCAL.WDB's).
+	const std::string worlds[2] = {race.globalWorld, race.localWorld};
+	for (size_t s = 0; s < 2; s++) {
+		EffectSet& set = sets[s];
+		set.slots.assign(SetSlots[s], {});
+		set.handles.fill(-1);
+		if (!race.emitterFiles[s].empty()) {
+			(void)cache.get(found(cache, dir, binaryName(race.emitterFiles[s])), set.file); // (none: no emitters)
+		}
+		SceneFile scene;
+		if (!worlds[s].empty() && cache.get(found(cache, dir, binaryName(worlds[s])), scene)) {
+			const std::string folder = folderOf(found(cache, dir, binaryName(worlds[s])));
+			if (!scene.materialAnimations.empty()) {
+				(void)cache.get(folder + binaryName(scene.materialAnimations[0]) + ".MAB", set.tracks); // (none: no tracks)
+			}
+			for (size_t l = 0; l < scene.materialLibraries.size() && l < 2; l++) {
+				set.libraries[l] = folder + binaryName(scene.materialLibraries[l]) + ".MDB";
+			}
+		}
+	}
+	loadChassis(cache, world);
+	const size_t n = world.racers.karts.size();
+	visuals.assign(n, {});
+	shadowAlpha.assign(n, {});
+	scarMs.assign(world.powerUps.explosions.size(), -1);
+	groundCells(world);
 	// The sky: its first state.
 	if (!race.skyFile.empty() && cache.get(dir + binaryName(race.skyFile), sky) && !sky.states.empty()) {
 		hasSky = true;
@@ -152,8 +190,7 @@ bool Show::load(const Cache& cache, const World& world)
 
 // --- The effect sets ---
 
-EffectHandle Show::spawn(const World& world, int s, const char* name, Owner owner, const Vec3* at, EffectSlot::Place where, int16_t racer,
-	uint8_t wheel)
+EffectHandle Show::spawn(const World& world, int32_t s, const char* name, Owner owner, const Vec3* at, EffectSlot::Place where, int16_t racer, uint8_t wheel)
 {
 	// Either set (2): the race's first.
 	if (s == 2) {
@@ -295,6 +332,42 @@ void Show::bubble(EffectSlot& slot)
 	slot.bubbled = true;
 }
 
+// An emitter's interval up: a particle emitted at the slot's place unless its chance draw says no (true if one was).
+bool Show::emitParticle(const World& world, EffectSlot& slot, const EmitterFile::Emitter& em)
+{
+	drawingFor = em.name + " " + std::to_string(slot.owner.kind) + "/" + std::to_string(slot.owner.index);
+	const uint16_t x = draw(Draw::ParticleChance);
+	if ((x & 255) < em.chance) {
+		return false;
+	}
+	const uint16_t y = draw(Draw::ParticlePoint);
+	slot.emissions++;
+	place(world, slot);
+	ShowParticle p;
+	p.position = slot.position;
+	if (!em.launches.empty()) {
+		const std::array<float, 3>& l = em.launches[y % em.launches.size()];
+		p.velocity = toWorld(slot.rotation, vec(l)) + slot.velocity;
+	}
+	else {
+		p.velocity = slot.velocity;
+	}
+	if (!slot.anchored) {
+		slot.anchor = p.position;
+		slot.anchored = true;
+	}
+	if (slot.particles.size() >= MostParticles) {
+		// The oldest (the first with the greatest age, newest first) is reused.
+		size_t oldest = 0;
+		for (size_t k = 1; k < slot.particles.size(); k++) {
+			oldest = slot.particles[k].age > slot.particles[oldest].age ? k : oldest;
+		}
+		slot.particles.erase(slot.particles.begin() + std::ptrdiff_t(oldest));
+	}
+	slot.particles.insert(slot.particles.begin(), p);
+	return true;
+}
+
 void Show::updateSets(const World& world, int32_t ms)
 {
 	for (EffectSlot& slot : sets[0].slots) {
@@ -310,6 +383,7 @@ void Show::updateSets(const World& world, int32_t ms)
 			}
 			bool emitted = false;
 			if (slot.emitter >= 0) {
+				LR_ASSERT(size_t(slot.emitter) < set.file.emitters.size());
 				const EmitterFile::Emitter& em = set.file.emitters[size_t(slot.emitter)];
 				slot.timerMs += ms;
 				slot.ageMs += ms;
@@ -317,6 +391,7 @@ void Show::updateSets(const World& world, int32_t ms)
 					// It finishes by itself; its particles aren't aged this frame (QUIRK).
 					slot.emitter = -1;
 					if (slot.handle >= 0) {
+						LR_ASSERT(size_t(slot.handle) < set.handles.size());
 						set.handles[size_t(slot.handle)] = -1;
 						slot.handle = -1;
 					}
@@ -329,36 +404,7 @@ void Show::updateSets(const World& world, int32_t ms)
 					continue;
 				}
 				if (slot.timerMs >= em.intervalMs) {
-					drawingFor = em.name + " " + std::to_string(slot.owner.kind) + "/" + std::to_string(slot.owner.index);
-					const uint16_t x = draw(Draw::ParticleChance);
-					if ((x & 255) >= em.chance) {
-						const uint16_t y = draw(Draw::ParticlePoint);
-						slot.emissions++;
-						emitted = true;
-						place(world, slot);
-						ShowParticle p;
-						p.position = slot.position;
-						if (!em.launches.empty()) {
-							const std::array<float, 3>& l = em.launches[y % em.launches.size()];
-							p.velocity = slot.rotation.f * l[0] + slot.rotation.s * l[1] + slot.rotation.u * l[2] + slot.velocity;
-						}
-						else {
-							p.velocity = slot.velocity;
-						}
-						if (!slot.anchored) {
-							slot.anchor = p.position;
-							slot.anchored = true;
-						}
-						if (slot.particles.size() >= MostParticles) {
-							// The oldest (the first with the greatest age, newest first) is reused.
-							size_t oldest = 0;
-							for (size_t k = 1; k < slot.particles.size(); k++) {
-								oldest = slot.particles[k].age > slot.particles[oldest].age ? k : oldest;
-							}
-							slot.particles.erase(slot.particles.begin() + std::ptrdiff_t(oldest));
-						}
-						slot.particles.insert(slot.particles.begin(), p);
-					}
+					emitted = emitParticle(world, slot, em);
 					slot.timerMs = 0;
 				}
 			}
@@ -366,11 +412,12 @@ void Show::updateSets(const World& world, int32_t ms)
 				slot.timerMs += ms;
 				slot.ageMs += ms;
 			}
-			(void) emitted;
+			(void)emitted;
 			if (slot.particles.empty() && slot.finishPending) {
 				slot.active = false;
 				continue;
 			}
+			LR_ASSERT(slot.look >= 0 && size_t(slot.look) < set.file.emitters.size());
 			const int32_t life = set.file.emitters[size_t(slot.look)].lifeMs;
 			const Vec3 a = vec(set.file.emitters[size_t(slot.look)].acceleration);
 			const float t = float(ms) / 1000;
@@ -379,8 +426,7 @@ void Show::updateSets(const World& world, int32_t ms)
 				p.position += p.velocity * t + a * (0.5f * t * t);
 				p.velocity += a * t;
 			}
-			slot.particles.erase(std::remove_if(slot.particles.begin(), slot.particles.end(), [&](const ShowParticle& p) { return p.age > life; }),
-				slot.particles.end());
+			slot.particles.erase(std::remove_if(slot.particles.begin(), slot.particles.end(), [&](const ShowParticle& p) { return p.age > life; }), slot.particles.end());
 		}
 	}
 }
@@ -388,7 +434,7 @@ void Show::updateSets(const World& world, int32_t ms)
 // Where a slot sits this frame.
 void Show::place(const World& world, EffectSlot& slot)
 {
-	const size_t n = world.karts.size();
+	const size_t n = world.racers.karts.size();
 	switch (slot.place) {
 	case EffectSlot::AtPoint: break;
 	case EffectSlot::Wheel:
@@ -399,8 +445,8 @@ void Show::place(const World& world, EffectSlot& slot)
 			break;
 		}
 		const size_t r = size_t(slot.racer);
-		const Pose& car = world.visible[r];
-		const Kart& k = world.karts[r];
+		const Pose& car = world.racers.visible[r];
+		const Kart& k = world.racers.karts[r];
 		slot.rotation = car.rotation;
 		if (slot.place == EffectSlot::Wheel) {
 			slot.position = k.wheels[slot.wheel & 3].position;
@@ -421,16 +467,16 @@ void Show::place(const World& world, EffectSlot& slot)
 		break;
 	}
 	case EffectSlot::OilSlick: {
-		if (slot.racer >= 0 && size_t(slot.racer) < world.actions.size()) {
-			slot.position = world.actions[size_t(slot.racer)].point + slot.offset;
+		if (slot.racer >= 0 && size_t(slot.racer) < world.powerUps.actions.size()) {
+			slot.position = world.powerUps.actions[size_t(slot.racer)].point + slot.offset;
 		}
 		slot.rotation = {};
 		slot.velocity = {};
 		break;
 	}
 	case EffectSlot::Dynamite: {
-		if (slot.racer >= 0 && size_t(slot.racer) < world.actions.size()) {
-			const Action& a = world.actions[size_t(slot.racer)];
+		if (slot.racer >= 0 && size_t(slot.racer) < world.powerUps.actions.size()) {
+			const Action& a = world.powerUps.actions[size_t(slot.racer)];
 			const float angle = a.phase;
 			const float c = std::cos(angle), s = std::sin(angle);
 			const Basis rows = {{c, 0, -s}, {0, 1, 0}, {s, 0, c}};
@@ -451,57 +497,9 @@ void Show::apply(const World& world, const RaceEvent& e)
 	const bool racer = e.owner.kind == Owner::Racer && e.owner.index >= 0 && size_t(e.owner.index) < n;
 	const size_t i = racer ? size_t(e.owner.index) : 0;
 	switch (e.kind) {
-	case RaceEvent::Spawn: {
-		const char* name = e.name.data();
-		EffectSlot::Place where = EffectSlot::AtPoint;
-		int16_t follows = -1;
-		const bool action = e.owner.kind == Owner::Action && e.owner.index >= 0 && size_t(e.owner.index) < world.actions.size();
-		const Action* a = action ? &world.actions[size_t(e.owner.index)] : nullptr;
-		if (std::strcmp(name, "oilbub") == 0 && a) {
-			where = EffectSlot::OilSlick, follows = e.owner.index;
-		}
-		else if (std::strcmp(name, "dynsprk") == 0 && a) {
-			where = EffectSlot::Dynamite, follows = e.owner.index;
-		}
-		else if (std::strcmp(name, "trbsmke") == 0 && a && a->owner >= 0) {
-			where = EffectSlot::Exhaust, follows = a->owner;
-		}
-		else if (std::strcmp(name, "cannsmk") == 0 && a && a->owner >= 0 && a->emplacement < 0) {
-			where = EffectSlot::AboveOwner, follows = a->owner;
-		}
-		Vec3 at = e.place;
-		// A hazard's spawn without a place: at its model.
-		if (e.owner.kind == Owner::Hazard && isZero(at) && e.owner.index >= 0 && size_t(e.owner.index) < world.hazards.size()) {
-			const int16_t m = world.track.hazards[size_t(e.owner.index)].model;
-			if (m >= 0 && size_t(m) < world.track.animated.size()) {
-				at = world.track.animated[size_t(m)].pose.position;
-			}
-		}
-		const EffectHandle h = spawn(world, e.set, name, e.owner, &at, where, follows);
-		if (h.held()) {
-			owned.push_back({e.owner, h});
-		}
-		break;
-	}
+	case RaceEvent::Spawn: spawnFor(world, e); break;
 	case RaceEvent::Finish:
-	case RaceEvent::Release:
-		for (size_t k = 0; k < owned.size();) {
-			if (owned[k].first == e.owner) {
-				EffectHandle h = owned[k].second;
-				// (An oil slick's frame moves its bubbles before its time runs out.)
-				const int16_t s = sets[size_t(h.set)].handles[size_t(h.index)];
-				if (s >= 0 && sets[size_t(h.set)].slots[size_t(s)].place == EffectSlot::OilSlick && !sets[size_t(h.set)].slots[size_t(s)].bubbled &&
-					sets[size_t(h.set)].slots[size_t(s)].slickWas && e.stage == RaceEvent::Powers) {
-					bubble(sets[size_t(h.set)].slots[size_t(s)]);
-				}
-				e.kind == RaceEvent::Finish ? finish(h) : release(h);
-				owned.erase(owned.begin() + std::ptrdiff_t(k));
-			}
-			else {
-				k++;
-			}
-		}
-		break;
+	case RaceEvent::Release: letGoOf(e); break;
 	case RaceEvent::StopEffects: stopAll(); break;
 	case RaceEvent::DustStart: {
 		if (!racer) {
@@ -539,58 +537,120 @@ void Show::apply(const World& world, const RaceEvent& e)
 		break;
 	case RaceEvent::Landed:
 		if (racer) {
-			const Vec3 at = world.visible[i].position;
+			const Vec3 at = world.racers.visible[i].position;
 			spawn(world, 0, "carland", e.owner, &at, EffectSlot::AtPoint, -1);
 		}
 		break;
 	case RaceEvent::Sparks: spawn(world, 0, "carsprk", e.owner, &e.place, EffectSlot::AtPoint, -1); break;
-	case RaceEvent::WheelParticle: {
-		if (!racer) {
-			break;
-		}
-		Visuals& v = visuals[i];
-		const size_t w = size_t(e.value) & 3;
-		if (!named(e.name)) {
-			release(v.wheels[w]);
-			v.wanted[w] = {};
-			break;
-		}
-		if (v.wheels[w].held() && v.wanted[w] == e.name) {
-			break;
-		}
-		release(v.wheels[w]);
-		v.wanted[w] = e.name;
-		v.wheels[w] = spawn(world, 2, e.name.data(), e.owner, nullptr, EffectSlot::Wheel, int16_t(i), uint8_t(w));
-		break;
-	}
-	case RaceEvent::Sky: {
-		if (!hasSky) {
-			break;
-		}
-		if (e.flags & 1) {
-			domeShown = false;
-		}
-		if (e.flags & 2) {
-			domeShown = true;
-		}
-		if (e.flags & 4) {
-			worldShown = false;
-		}
-		if (e.flags & 8) {
-			worldShown = true;
-		}
-		const int32_t to = named(e.name) ? sky.find(e.name.data()) : -1;
-		if (to >= 0 && to != skyState) {
-			blendFrom = skyState;
-			blendMs = 0;
-			blendLength = std::max(0, e.value);
-			skyState = to;
-			skyKey = 0;
-			skyMs = 0;
+	case RaceEvent::WheelParticle:
+		if (racer) {
+			wheelParticle(world, e, i);
 		}
 		break;
-	}
+	case RaceEvent::Sky: skyEvent(e); break;
 	default: break; // (sounds and voices: the show's sound half)
+	}
+}
+
+// Spawn: the named effect at the event's place, some following their action or its owner (held while the owner is).
+void Show::spawnFor(const World& world, const RaceEvent& e)
+{
+	const char* name = e.name.data();
+	EffectSlot::Place where = EffectSlot::AtPoint;
+	int16_t follows = -1;
+	const bool action = e.owner.kind == Owner::Action && e.owner.index >= 0 && size_t(e.owner.index) < world.powerUps.actions.size();
+	const Action* a = action ? &world.powerUps.actions[size_t(e.owner.index)] : nullptr;
+	if (std::strcmp(name, "oilbub") == 0 && a) {
+		where = EffectSlot::OilSlick, follows = e.owner.index;
+	}
+	else if (std::strcmp(name, "dynsprk") == 0 && a) {
+		where = EffectSlot::Dynamite, follows = e.owner.index;
+	}
+	else if (std::strcmp(name, "trbsmke") == 0 && a && a->owner >= 0) {
+		where = EffectSlot::Exhaust, follows = a->owner;
+	}
+	else if (std::strcmp(name, "cannsmk") == 0 && a && a->owner >= 0 && a->emplacement < 0) {
+		where = EffectSlot::AboveOwner, follows = a->owner;
+	}
+	Vec3 at = e.place;
+	// A hazard's spawn without a place: at its model.
+	if (e.owner.kind == Owner::Hazard && isZero(at) && e.owner.index >= 0 && size_t(e.owner.index) < world.scenery.hazards.size()) {
+		const int16_t m = world.track.hazards[size_t(e.owner.index)].model;
+		if (m >= 0 && size_t(m) < world.track.animated.size()) {
+			at = world.track.animated[size_t(m)].pose.position;
+		}
+	}
+	const EffectHandle h = spawn(world, e.set, name, e.owner, &at, where, follows);
+	if (h.held()) {
+		owned.push_back({e.owner, h});
+	}
+}
+
+// Finish or Release: the owner's held effects let go.
+void Show::letGoOf(const RaceEvent& e)
+{
+	for (size_t k = 0; k < owned.size();) {
+		if (owned[k].first == e.owner) {
+			EffectHandle h = owned[k].second;
+			// (An oil slick's frame moves its bubbles before its time runs out.)
+			const int16_t s = sets[size_t(h.set)].handles[size_t(h.index)];
+			if (s >= 0 && sets[size_t(h.set)].slots[size_t(s)].place == EffectSlot::OilSlick && !sets[size_t(h.set)].slots[size_t(s)].bubbled &&
+				sets[size_t(h.set)].slots[size_t(s)].slickWas && e.stage == RaceEvent::Powers) {
+				bubble(sets[size_t(h.set)].slots[size_t(s)]);
+			}
+			e.kind == RaceEvent::Finish ? finish(h) : release(h);
+			owned.erase(owned.begin() + std::ptrdiff_t(k));
+		}
+		else {
+			k++;
+		}
+	}
+}
+
+// A racer's wheel's particle (by surface): released when it changes or goes, spawned anew.
+void Show::wheelParticle(const World& world, const RaceEvent& e, size_t i)
+{
+	Visuals& v = visuals[i];
+	const size_t w = size_t(e.value) & 3;
+	if (!named(e.name)) {
+		release(v.wheels[w]);
+		v.wanted[w] = {};
+		return;
+	}
+	if (v.wheels[w].held() && v.wanted[w] == e.name) {
+		return;
+	}
+	release(v.wheels[w]);
+	v.wanted[w] = e.name;
+	v.wheels[w] = spawn(world, 2, e.name.data(), e.owner, nullptr, EffectSlot::Wheel, int16_t(i), uint8_t(w));
+}
+
+// The sky's dome and world shown or hidden, and a blend to another sky state.
+void Show::skyEvent(const RaceEvent& e)
+{
+	if (!hasSky) {
+		return;
+	}
+	if (e.flags & 1) {
+		domeShown = false;
+	}
+	if (e.flags & 2) {
+		domeShown = true;
+	}
+	if (e.flags & 4) {
+		worldShown = false;
+	}
+	if (e.flags & 8) {
+		worldShown = true;
+	}
+	const int32_t to = named(e.name) ? sky.find(e.name.data()) : -1;
+	if (to >= 0 && to != skyState) {
+		blendFrom = skyState;
+		blendMs = 0;
+		blendLength = std::max(0, e.value);
+		skyState = to;
+		skyKey = 0;
+		skyMs = 0;
 	}
 }
 
@@ -613,7 +673,7 @@ void Show::retries(const World& world, bool hazards)
 			const EventResource& r = world.track.events[i];
 			const Owner o{Owner::TrackEvent, int16_t(i)};
 			if (m_wanting[i] && !holds(o)) {
-				const EffectHandle h = spawn(world, 2, r.name.data(), o, &world.events[i].at, EffectSlot::AtPoint, -1);
+				const EffectHandle h = spawn(world, 2, r.name.data(), o, &world.scenery.events[i].at, EffectSlot::AtPoint, -1);
 				if (h.held()) {
 					owned.push_back({o, h});
 				}
@@ -621,8 +681,8 @@ void Show::retries(const World& world, bool hazards)
 		}
 		return;
 	}
-	for (size_t i = 0; i < world.hazards.size() && i < m_hazardsOn.size(); i++) {
-		const Hazard& hz = world.hazards[i];
+	for (size_t i = 0; i < world.scenery.hazards.size() && i < m_hazardsOn.size(); i++) {
+		const Hazard& hz = world.scenery.hazards[i];
 		const Owner o{Owner::Hazard, int16_t(i)};
 		if (m_hazardsOn[i] && hz.on && !holds(o)) {
 			RaceEvent e;
@@ -644,11 +704,10 @@ void Show::carVisuals(const World& world)
 		// Wheel particles still wanted without a handle: tried again.
 		for (size_t w = 0; w < 4; w++) {
 			if (named(v.wanted[w]) && !v.wheels[w].held()) {
-				v.wheels[w] = spawn(world, 2, v.wanted[w].data(), {Owner::Racer, int16_t(i), uint8_t(w)}, nullptr, EffectSlot::Wheel, int16_t(i),
-					uint8_t(w));
+				v.wheels[w] = spawn(world, 2, v.wanted[w].data(), {Owner::Racer, int16_t(i), uint8_t(w)}, nullptr, EffectSlot::Wheel, int16_t(i), uint8_t(w));
 			}
 		}
-		if (world.racers[i].flags & RacerGhost) {
+		if (world.racers.race[i].flags & RacerGhost) {
 			continue;
 		}
 		if (v.dust.held()) {
@@ -685,7 +744,7 @@ void Show::carVisuals(const World& world)
 
 void Show::moveParticles(const World& world, int32_t ms)
 {
-	(void) ms;
+	(void)ms;
 	for (EffectSet& set : sets) {
 		for (EffectSlot& slot : set.slots) {
 			if (slot.active && slot.emitter >= 0 && slot.place != EffectSlot::OilSlick) {
@@ -696,29 +755,29 @@ void Show::moveParticles(const World& world, int32_t ms)
 	// A held snowfall's or smoke vent's particle: one draw each frame and its place.
 	for (const auto& [o, h] : owned) {
 		const int16_t s = o.kind == Owner::Hazard && h.held() ? sets[size_t(h.set)].handles[size_t(h.index)] : -1;
-		if (s < 0 || size_t(o.index) >= world.hazards.size()) {
+		if (s < 0 || size_t(o.index) >= world.scenery.hazards.size()) {
 			continue;
 		}
 		EffectSlot& slot = sets[size_t(h.set)].slots[size_t(s)];
-		if (world.hazards[size_t(o.index)].type == Hazard::Snow && !world.cameras.empty()) {
+		if (world.scenery.hazards[size_t(o.index)].type == Hazard::Snow && !world.raceView.cameras.empty()) {
 			// 100 ft ahead of camera 0, 40 ft up (z up: the camera's down row's z
 			// taken away; the flakes fall 42-48 ft in their life, so they cross the view), (x % 200) - 100 ft
 			// sideways.
 			const int32_t x = int16_t(draw(Draw::Hazard));
 			Vec3 right, down, look;
-			world.cameras[0].shownRows(right, down, look);
-			slot.position = world.cameras[0].shownEye() + look * 100.0f + right * float(x % 200 - 100);
+			world.raceView.cameras[0].shownRows(right, down, look);
+			slot.position = world.raceView.cameras[0].shownEye() + look * 100.0f + right * float(x % 200 - 100);
 			slot.position.z -= 40.0f * down.z;
 		}
-		else if (world.hazards[size_t(o.index)].type == Hazard::Smoke) {
+		else if (world.scenery.hazards[size_t(o.index)].type == Hazard::Smoke) {
 			// One of four points of "dp_def" (the executable's, not the hazard file's entity), in bone 0's frame.
-			static const Vec3 Offsets[4] = {{-24.450001f, 26.74f, -19.559999f}, {-35.720001f, 9.4099998f, -18.41f},
-				{-6.9000001f, -9.1300001f, -15.49f}, {4.3699999f, 8.54f, -16.65f}};
+			static const Vec3 Offsets[4] = {{-24.450001f, 26.74f, -19.559999f}, {-35.720001f, 9.4099998f, -18.41f}, {-6.9000001f, -9.1300001f, -15.49f},
+				{4.3699999f, 8.54f, -16.65f}};
 			const uint16_t x = draw(Draw::Hazard);
 			const int16_t m = world.track.animatedOf("dp_def");
 			if (m >= 0) {
 				const AnimatedModel& model = world.track.animated[size_t(m)];
-				const Clock& c = world.clocks[size_t(m)];
+				const Clock& c = world.scenery.clocks[size_t(m)];
 				const Animation* a = model.animation >= 0 ? &world.track.animations[size_t(model.animation)] : nullptr;
 				const Pose bone = world.nodeLocal(model, a, 0, c.part, c.drawn, c.loop);
 				Vec3 at = Offsets[x & 3];
@@ -841,20 +900,28 @@ void Show::project(Decal& d, Vec3 centre, Vec3 along, float width, float length)
 void Show::updateDecals(const World& world, int32_t ms)
 {
 	decals.clear();
-	const size_t n = world.karts.size();
+	carShadows(world);
+	skidMarks(world, ms);
+	trailDecals(ms);
+	groundMarks(world);
+}
+
+void Show::carShadows(const World& world)
+{
+	const size_t n = world.racers.karts.size();
 	// The cars' shadows: at the car's bounds centre, 6 up, 8 x 9 (the chassis') times its scale, along its -row 1;
 	// alpha per camera by the eye's distance.
 	for (size_t i = 0; i < n; i++) {
 		shadowAlpha[i] = {0, 0};
-		if (world.racers[i].flags & RacerGhost) {
+		if (world.racers.race[i].flags & RacerGhost) {
 			continue;
 		}
-		const Pose& car = world.visible[i];
-		const float scale = world.powers.empty() ? 1.0f : world.powers[i].carScale;
-		const Vec3 centre = toWorld(car.rotation, world.carBounds[i].centre) + car.position;
+		const Pose& car = world.racers.visible[i];
+		const float scale = world.racers.powers.empty() ? 1.0f : world.racers.powers[i].carScale;
+		const Vec3 centre = toWorld(car.rotation, world.racers.carBounds[i].centre) + car.position;
 		bool any = false;
-		for (size_t c = 0; c < world.cameras.size() && c < 2; c++) {
-			const Vec3 d = world.cameras[c].shownEye() - centre;
+		for (size_t c = 0; c < world.raceView.cameras.size() && c < 2; c++) {
+			const Vec3 d = world.raceView.cameras[c].shownEye() - centre;
 			const float d2 = lengthSquared(d);
 			float a = 0;
 			if (d2 < 2500) {
@@ -877,86 +944,84 @@ void Show::updateDecals(const World& world, int32_t ms)
 		// The shadow's length along the car's forward (its -row 1 is its width's direction).
 		project(dcl, centre + Vec3{0, 0, 6}, car.rotation.f, ch.shadowWidth * scale, ch.shadowLength * scale);
 	}
-	// Skid marks (players only): which wheels, laying pieces, the trails' fading.
-	for (size_t i = 0; i < n; i++) {
+}
+
+// Skid marks (players only): which wheels, laying pieces.
+void Show::skidMarks(const World& world, int32_t ms)
+{
+	for (size_t i = 0; i < world.racers.karts.size(); i++) {
 		Visuals& v = visuals[i];
-		const Kart& k = world.karts[i];
-		const Pose& car = world.visible[i];
-		uint8_t wheels = 0;
-		if (v.skidding && !(world.racers[i].flags & RacerGhost)) {
-			if (v.spinning) {
-				wheels = 15;
-			}
-			else if (v.turbo) {
-				wheels = 4 | 8;
-			}
-			else {
-				const Vec3 dir = k.velocityDirection;
-				wheels = dot(car.rotation.s, dir) > 0 ? (2 | 8) : (1 | 4);
-			}
-			for (size_t w = 0; w < 4; w++) {
-				v.liftedMs[w] = k.wheels[w].contact ? 0 : v.liftedMs[w] + ms;
-				if (v.liftedMs[w] > 150) {
-					wheels &= uint8_t(~(1u << w));
-				}
-			}
-		}
-		v.skidWheels = wheels;
+		v.skidWheels = skiddingWheels(world, i, v, ms);
 		for (uint8_t w = 0; w < 4; w++) {
-			// The trail of this racer's wheel, if one lays it.
-			Trail* t = nullptr;
-			for (Trail& x : trails) {
-				t = x.racer == int16_t(i) && x.wheel == w && !x.fading ? &x : t;
-			}
-			const bool on = wheels & (1u << w);
-			const bool turbo = v.turbo && world.racers[i].player;
-			if (t && (!on || t->spinning != v.spinning || t->turbo != turbo)) {
-				if (on) {
-					*t = {}; // (the mode changed: released at once)
-				}
-				else {
-					t->fading = true; // (skid effects stopped: it fades)
-					t->fadeMs = 0;
-				}
-				t = nullptr;
-			}
-			if (!on) {
-				continue;
-			}
-			const Vec3 at = toWorld(car.rotation, m_chassis[i].skidPoints[w]) + car.position;
-			if (!t) {
-				for (Trail& x : trails) {
-					if (x.racer < 0) {
-						t = &x;
-						break;
-					}
-				}
-				if (!t) {
-					continue;
-				}
-				*t = {};
-				t->racer = int16_t(i), t->wheel = w, t->spinning = v.spinning, t->turbo = turbo;
-				t->anchor = at;
-			}
-			const int32_t length = t->spinning ? 250 : 1000;
-			for (Trail::Piece& p : t->pieces) {
-				p.ageMs += ms;
-			}
-			t->pieces.erase(std::remove_if(t->pieces.begin(), t->pieces.end(), [&](const Trail::Piece& p) { return p.ageMs > length; }), t->pieces.end());
-			if (lengthSquared(at - t->anchor) >= 0.01f) {
-				// A new piece from the anchor to the wheel; the live one is re-laid each frame.
-				if (t->live) {
-					t->pieces.push_back(t->current);
-					if (t->pieces.size() > 3) {
-						t->pieces.erase(t->pieces.begin());
-					}
-				}
-				t->current = {t->anchor, at, 0};
-				t->live = true;
-				t->anchor = at;
-			}
+			layTrail(world, i, w, ms);
 		}
 	}
+}
+
+// The trail of a racer's wheel: released or set fading when the wheel stops laying or the mode changes, else a piece
+// laid from its anchor to the wheel.
+void Show::layTrail(const World& world, size_t i, uint8_t w, int32_t ms)
+{
+	const Visuals& v = visuals[i];
+	const Pose& car = world.racers.visible[i];
+	const uint8_t wheels = v.skidWheels;
+	// The trail of this racer's wheel, if one lays it.
+	Trail* t = nullptr;
+	for (Trail& x : trails) {
+		t = x.racer == int16_t(i) && x.wheel == w && !x.fading ? &x : t;
+	}
+	const bool on = wheels & (1u << w);
+	const bool turbo = v.turbo && world.racers.race[i].player;
+	if (t && (!on || t->spinning != v.spinning || t->turbo != turbo)) {
+		if (on) {
+			*t = {}; // (the mode changed: released at once)
+		}
+		else {
+			t->fading = true; // (skid effects stopped: it fades)
+			t->fadeMs = 0;
+		}
+		t = nullptr;
+	}
+	if (!on) {
+		return;
+	}
+	const Vec3 at = toWorld(car.rotation, m_chassis[i].skidPoints[w]) + car.position;
+	if (!t) {
+		for (Trail& x : trails) {
+			if (x.racer < 0) {
+				t = &x;
+				break;
+			}
+		}
+		if (!t) {
+			return;
+		}
+		*t = {};
+		t->racer = int16_t(i), t->wheel = w, t->spinning = v.spinning, t->turbo = turbo;
+		t->anchor = at;
+	}
+	const int32_t length = t->spinning ? 250 : 1000;
+	for (Trail::Piece& p : t->pieces) {
+		p.ageMs += ms;
+	}
+	t->pieces.erase(std::remove_if(t->pieces.begin(), t->pieces.end(), [&](const Trail::Piece& p) { return p.ageMs > length; }), t->pieces.end());
+	if (lengthSquared(at - t->anchor) >= 0.01f) {
+		// A new piece from the anchor to the wheel; the live one is re-laid each frame.
+		if (t->live) {
+			t->pieces.push_back(t->current);
+			if (t->pieces.size() > 3) {
+				t->pieces.erase(t->pieces.begin());
+			}
+		}
+		t->current = {t->anchor, at, 0};
+		t->live = true;
+		t->anchor = at;
+	}
+}
+
+// The trails' decals, fading over a second once their wheels stop.
+void Show::trailDecals(int32_t ms)
+{
 	for (Trail& t : trails) {
 		if (t.racer < 0) {
 			continue;
@@ -989,9 +1054,14 @@ void Show::updateDecals(const World& world, int32_t ms)
 			project(dcl, (p.from + p.to) * 0.5f + Vec3{0, 0, 6}, step, width, length);
 		}
 	}
+}
+
+// The marks things leave on the ground.
+void Show::groundMarks(const World& world)
+{
 	// Explosion scars: the flash's width, 180 while exploding, then down to 0 over 5 s.
-	for (size_t e = 0; e < world.explosions.size(); e++) {
-		const Explosion& x = world.explosions[e];
+	for (size_t e = 0; e < world.powerUps.explosions.size(); e++) {
+		const Explosion& x = world.powerUps.explosions[e];
 		if (!x.scar || x.state == Explosion::Idle) {
 			continue;
 		}
@@ -1006,8 +1076,8 @@ void Show::updateDecals(const World& world, int32_t ms)
 		project(dcl, x.centre + Vec3{0, 0, 6}, {1, 0, 0}, size, size);
 	}
 	// Oil slicks while active.
-	for (size_t a = 0; a < world.actions.size(); a++) {
-		const Action& x = world.actions[a];
+	for (size_t a = 0; a < world.powerUps.actions.size(); a++) {
+		const Action& x = world.powerUps.actions[a];
 		if (x.kind != Action::Oil || x.state != TrapActive) {
 			continue;
 		}
@@ -1077,7 +1147,7 @@ void Show::advance(const World& world, int32_t ms)
 	for (EffectSlot& slot : sets[0].slots) {
 		slot.bubbled = false;
 	}
-	const std::vector<RaceEvent>& events = world.raceEvents;
+	const std::vector<RaceEvent>& events = world.raceView.raceEvents;
 	size_t e = 0;
 	for (; e < events.size(); e++) {
 		const RaceEvent::Stage st = events[e].stage;
@@ -1115,17 +1185,17 @@ void Show::advance(const World& world, int32_t ms)
 	for (; e < events.size(); e++) {
 		apply(world, events[e]);
 	}
-	m_wanting.assign(world.events.size(), 0);
-	for (size_t i = 0; i < world.track.events.size() && i < world.events.size(); i++) {
-		m_wanting[i] = world.track.events[i].kind == EventResource::Particle && world.events[i].phase == EventState::Active;
+	m_wanting.assign(world.scenery.events.size(), 0);
+	for (size_t i = 0; i < world.track.events.size() && i < world.scenery.events.size(); i++) {
+		m_wanting[i] = world.track.events[i].kind == EventResource::Particle && world.scenery.events[i].phase == EventState::Active;
 	}
-	m_hazardsOn.assign(world.hazards.size(), 0);
-	for (size_t i = 0; i < world.hazards.size(); i++) {
-		m_hazardsOn[i] = (world.hazards[i].type == Hazard::Snow || world.hazards[i].type == Hazard::Smoke) && world.hazards[i].on;
+	m_hazardsOn.assign(world.scenery.hazards.size(), 0);
+	for (size_t i = 0; i < world.scenery.hazards.size(); i++) {
+		m_hazardsOn[i] = (world.scenery.hazards[i].type == Hazard::Snow || world.scenery.hazards[i].type == Hazard::Smoke) && world.scenery.hazards[i].on;
 	}
 	for (EffectSlot& slot : sets[0].slots) {
-		slot.slickWas = slot.place == EffectSlot::OilSlick && slot.racer >= 0 && size_t(slot.racer) < world.actions.size() &&
-			world.actions[size_t(slot.racer)].state == TrapActive;
+		slot.slickWas = slot.place == EffectSlot::OilSlick && slot.racer >= 0 && size_t(slot.racer) < world.powerUps.actions.size() &&
+			world.powerUps.actions[size_t(slot.racer)].state == TrapActive;
 	}
 	if (!world.paused()) {
 		carVisuals(world);

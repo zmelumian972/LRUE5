@@ -2,6 +2,7 @@
 // timers; the step queue (timed waits, and the trigger list racers are swept against each step) with its shared budget
 // of 100 entries; the touch spheres' and positional spheres' events.
 
+#include "Common/Assert.h"
 #include "LRCore/Race/World.h"
 
 #include <algorithm>
@@ -12,7 +13,7 @@ namespace {
 
 constexpr size_t QueueEntries = 100;
 
-size_t entries(const World& w) { return w.waits.size() + w.waitsWalked + w.contactOrder.size() + w.memberOrder.size(); }
+size_t entries(const World& w) { return w.triggers.waits.size() + w.triggers.waitsWalked + w.contactOrder.size() + w.triggers.memberOrder.size(); }
 
 // A random length: below 1023 a remainder, above it a multiple.
 int32_t randomLength(int32_t length, int32_t x) { return length > 1023 ? x * (length / 1023) : x % length; }
@@ -47,7 +48,7 @@ void chain(World& w, const int32_t chains[3], EventState::Phase from, int32_t to
 void endTimer(World& w, size_t index)
 {
 	const EventResource& r = w.track.events[index];
-	EventState& s = w.events[index];
+	EventState& s = w.scenery.events[index];
 	if (s.remainingMs == 0 && !s.held) {
 		const EventState::Phase from = s.phase;
 		s.phase = EventState::Ended;
@@ -57,7 +58,7 @@ void endTimer(World& w, size_t index)
 
 void startTimer(World& w, size_t index)
 {
-	EventState& s = w.events[index];
+	EventState& s = w.scenery.events[index];
 	s.remainingMs = w.track.events[index].durationMs;
 	s.phase = EventState::Active;
 	chain(w, w.track.events[index].chains, EventState::Idle, w.track.events[index].chains[1]);
@@ -67,7 +68,7 @@ void startTimer(World& w, size_t index)
 void timerStart(World& w, size_t index)
 {
 	const EventResource& r = w.track.events[index];
-	const EventState::Phase phase = w.events[index].phase;
+	const EventState::Phase phase = w.scenery.events[index].phase;
 	if (!r.onEnd && (phase == EventState::Idle || phase == EventState::Ended)) {
 		startTimer(w, index);
 	}
@@ -76,7 +77,7 @@ void timerStart(World& w, size_t index)
 void timerEnd(World& w, size_t index)
 {
 	const EventResource& r = w.track.events[index];
-	const EventState::Phase phase = w.events[index].phase;
+	const EventState::Phase phase = w.scenery.events[index].phase;
 	if (r.onEnd && (phase == EventState::Idle || phase == EventState::Ended)) {
 		startTimer(w, index);
 		if (!r.noEnd) {
@@ -92,7 +93,7 @@ void timerEnd(World& w, size_t index)
 void pushStart(World& w, size_t index, size_t racer)
 {
 	const EventResource& r = w.track.events[index];
-	EventState& s = w.events[index];
+	EventState& s = w.scenery.events[index];
 	if (r.onEnd || !(s.phase == EventState::Idle || s.phase == EventState::Ended) || !s.armed) {
 		return;
 	}
@@ -106,7 +107,7 @@ void pushStart(World& w, size_t index, size_t racer)
 void pushEnd(World& w, size_t index, size_t racer)
 {
 	const EventResource& r = w.track.events[index];
-	EventState& s = w.events[index];
+	EventState& s = w.scenery.events[index];
 	if (s.phase == EventState::Idle || r.noEnd) {
 		return;
 	}
@@ -144,7 +145,7 @@ void markEnd(World& w, int32_t event)
 void showStart(World& w, size_t index, const Vec3* at)
 {
 	const EventResource& r = w.track.events[index];
-	EventState& s = w.events[index];
+	EventState& s = w.scenery.events[index];
 	const Owner owner{Owner::TrackEvent, int16_t(index)};
 	switch (r.kind) {
 	case EventResource::Sound: {
@@ -190,7 +191,7 @@ void showStart(World& w, size_t index, const Vec3* at)
 void showEnd(World& w, size_t index)
 {
 	const EventResource& r = w.track.events[index];
-	EventState& s = w.events[index];
+	EventState& s = w.scenery.events[index];
 	const Owner owner{Owner::TrackEvent, int16_t(index)};
 	const EventState::Phase from = s.phase;
 	s.phase = EventState::Idle;
@@ -211,14 +212,13 @@ void showEnd(World& w, size_t index)
 	}
 }
 
-
 // A part animation queues a part on its entity's playback; its phase follows the entity's part.
 void queuePart(World& w, int16_t entity, int32_t part)
 {
 	if (entity < 0 || part < 0) {
 		return;
 	}
-	Clock& c = w.clocks[size_t(entity)];
+	Clock& c = w.scenery.clocks[size_t(entity)];
 	c.queued = int16_t(part);
 	c.loop = false; // (the current part finishes)
 	c.done = false;
@@ -233,8 +233,8 @@ void partStart(World& w, size_t index)
 void partEnd(World& w, size_t index)
 {
 	const EventResource& r = w.track.events[index];
-	EventState& s = w.events[index];
-	const int32_t c = r.entity >= 0 ? w.clocks[size_t(r.entity)].part : -1;
+	EventState& s = w.scenery.events[index];
+	const int32_t c = r.entity >= 0 ? w.scenery.clocks[size_t(r.entity)].part : -1;
 	if (s.phase != EventState::Idle && c != r.parts[1] && !(r.parts[3] != -1 && c == r.parts[3])) {
 		queuePart(w, r.entity, r.parts[3] != -1 ? r.parts[3] : r.parts[1]);
 	}
@@ -244,14 +244,14 @@ void partEnd(World& w, size_t index)
 void partUpdate(World& w, size_t index)
 {
 	const EventResource& r = w.track.events[index];
-	EventState& s = w.events[index];
+	EventState& s = w.scenery.events[index];
 	if (s.phase == EventState::EndPending) {
 		partEnd(w, index);
 	}
 	if (r.entity < 0) {
 		return;
 	}
-	const Clock& clock = w.clocks[size_t(r.entity)];
+	const Clock& clock = w.scenery.clocks[size_t(r.entity)];
 	const int32_t c = clock.part;
 	const int32_t active = r.parts[0], idle = r.parts[1], start = r.parts[2], end = r.parts[3];
 	if (clock.queueFree()) {
@@ -298,9 +298,10 @@ void nodeTransform(World& w, size_t index)
 	if (r.entity < 0 || r.collision < 0) {
 		return;
 	}
+	LR_ASSERT(size_t(r.entity) < w.track.animated.size() && size_t(r.entity) < w.scenery.clocks.size() && size_t(r.collision) < w.track.volumes.size());
 	const AnimatedModel& m = w.track.animated[size_t(r.entity)];
 	const Animation* a = m.animation >= 0 ? &w.track.animations[size_t(m.animation)] : nullptr;
-	const Clock& c = w.clocks[size_t(r.entity)];
+	const Clock& c = w.scenery.clocks[size_t(r.entity)];
 	const Pose local = sampleNode(m.nodes, a, size_t(r.node), c.part, c.time, c.loop);
 	Track::Volume& v = w.track.volumes[size_t(r.collision)];
 	v.position = toWorld(m.pose.rotation, local.position * m.scale) + m.pose.position;
@@ -313,7 +314,7 @@ void showModel(World& w, const EventResource& r, bool shown)
 	if (r.entity < 0) {
 		return;
 	}
-	std::array<float, 3>& d = r.plain ? w.modelDistances[size_t(r.entity)] : w.animatedDistances[size_t(r.entity)];
+	std::array<float, 3>& d = r.plain ? w.scenery.modelDistances[size_t(r.entity)] : w.scenery.animatedDistances[size_t(r.entity)];
 	d = shown ? (r.plain ? w.track.modelDistances[size_t(r.entity)] : w.track.animated[size_t(r.entity)].distances) : std::array<float, 3>{-1, -1, -1};
 }
 
@@ -321,7 +322,7 @@ void showModel(World& w, const EventResource& r, bool shown)
 void kindStart(World& w, size_t index, const Vec3* at)
 {
 	const EventResource& r = w.track.events[index];
-	EventState& s = w.events[index];
+	EventState& s = w.scenery.events[index];
 	switch (r.kind) {
 	case EventResource::PartAnimation: partStart(w, index); break;
 	case EventResource::NodeTransform:
@@ -339,7 +340,7 @@ void kindStart(World& w, size_t index, const Vec3* at)
 void kindEnd(World& w, size_t index)
 {
 	const EventResource& r = w.track.events[index];
-	EventState& s = w.events[index];
+	EventState& s = w.scenery.events[index];
 	switch (r.kind) {
 	case EventResource::PartAnimation: partEnd(w, index); break;
 	case EventResource::NodeTransform: {
@@ -360,7 +361,7 @@ void kindEnd(World& w, size_t index)
 void kindStartAt(World& w, size_t index, const Vec3* at)
 {
 	const EventResource& r = w.track.events[index];
-	const EventState::Phase phase = w.events[index].phase;
+	const EventState::Phase phase = w.scenery.events[index].phase;
 	if (!r.onEnd && (phase == EventState::Idle || phase == EventState::Ended)) {
 		kindStart(w, index, at);
 	}
@@ -369,7 +370,7 @@ void kindStartAt(World& w, size_t index, const Vec3* at)
 void kindEndAt(World& w, size_t index, const Vec3* at)
 {
 	const EventResource& r = w.track.events[index];
-	const EventState::Phase phase = w.events[index].phase;
+	const EventState::Phase phase = w.scenery.events[index].phase;
 	if (r.onEnd && (phase == EventState::Idle || phase == EventState::Ended)) {
 		kindStart(w, index, at);
 		if (!r.noEnd) {
@@ -386,7 +387,7 @@ void kindEndAt(World& w, size_t index, const Vec3* at)
 void timerFired(World& w, size_t index, int32_t elapsed)
 {
 	const TrackTimer& t = w.track.timers[index];
-	TrackTimerState& s = w.timers[index];
+	TrackTimerState& s = w.scenery.timers[index];
 	if (t.event != -1) {
 		if (s.on) {
 			w.endAt(t.event, nullptr);
@@ -416,23 +417,25 @@ int16_t World::addMember(Member m)
 		return -1;
 	}
 	int16_t id;
-	if (!freeMembers.empty()) {
-		id = int16_t(freeMembers.back());
-		freeMembers.pop_back();
-		members[size_t(id)] = m;
+	if (!triggers.freeMembers.empty()) {
+		id = int16_t(triggers.freeMembers.back());
+		triggers.freeMembers.pop_back();
+		LR_ASSERT(size_t(id) < triggers.members.size());
+		triggers.members[size_t(id)] = m;
 	}
 	else {
-		id = int16_t(members.size());
-		members.push_back(m);
+		id = int16_t(triggers.members.size());
+		triggers.members.push_back(m);
 	}
-	memberOrder.insert(memberOrder.begin(), uint16_t(id));
+	triggers.memberOrder.insert(triggers.memberOrder.begin(), uint16_t(id));
 	return id;
 }
 
 void World::killMember(int16_t& id)
 {
 	if (id >= 0) {
-		members[size_t(id)].dead = true;
+		LR_ASSERT(size_t(id) < triggers.members.size());
+		triggers.members[size_t(id)].dead = true;
 		id = -1;
 	}
 }
@@ -442,18 +445,18 @@ bool World::schedule(Wait wait)
 	if (entries(*this) >= QueueEntries) {
 		return false; // (silently dropped: that timer stops for good)
 	}
-	waits.insert(waits.begin(), wait);
+	triggers.waits.insert(triggers.waits.begin(), wait);
 	return true;
 }
 
 void World::runWaits(int32_t dt)
 {
-	stage = RaceEvent::Queue;
+	raceView.stage = RaceEvent::Queue;
 	// Newest first: one scheduled during the walk goes at the head and waits for the next step. A wait is dropped
 	// after it fires, so it counts against the queue's entries until then.
 	std::vector<Wait> walk, kept;
-	walk.swap(waits);
-	waitsWalked = walk.size();
+	walk.swap(triggers.waits);
+	triggers.waitsWalked = walk.size();
 	for (Wait& w : walk) {
 		w.elapsedMs += dt;
 		if (w.elapsedMs < w.lengthMs) {
@@ -466,10 +469,10 @@ void World::runWaits(int32_t dt)
 		else {
 			endShove(w.ref);
 		}
-		waitsWalked--;
+		triggers.waitsWalked--;
 	}
-	waitsWalked = 0;
-	waits.insert(waits.end(), kept.begin(), kept.end());
+	triggers.waitsWalked = 0;
+	triggers.waits.insert(triggers.waits.end(), kept.begin(), kept.end());
 }
 
 void World::startAt(int32_t x, const Vec3* at)
@@ -477,7 +480,7 @@ void World::startAt(int32_t x, const Vec3* at)
 	fireAt(x, -1, at);
 	for (size_t t = 0; t < track.targets.size(); t++) {
 		if (x != -1 && track.targets[t].disabledBy == x) {
-			targetsOn[t] = 0;
+			powerUps.targetsOn[t] = 0;
 		}
 	}
 }
@@ -487,8 +490,8 @@ void World::endAt(int32_t x, const Vec3* at) { fireAt(-1, x, at); }
 // (-1: no event; startAt and endAt are fireAt with one of them.)
 void World::fireAt(int32_t s, int32_t e, const Vec3* at)
 {
-	if (eventWatch) {
-		eventWatch(*this, s, e, at, eventContext);
+	if (observer.to) {
+		observer.to->onEvent(*this, s, e, at);
 	}
 	// The positional kinds in their order (sounds, part animations, particles, sky states, timers, node transforms, model
 	// distances; material animations are in no file).
@@ -518,13 +521,13 @@ void World::fireAt(int32_t s, int32_t e, const Vec3* at)
 			timerStart(*this, i);
 		}
 		if (s != -1 && r.holdEvent == s) {
-			events[i].held = true;
+			scenery.events[i].held = true;
 		}
 		if (e != -1 && r.id == e) {
 			timerEnd(*this, i);
 		}
 		if (e != -1 && r.holdEvent == e) {
-			events[i].held = false;
+			scenery.events[i].held = false;
 		}
 	}
 	each(EventResource::NodeTransform);
@@ -538,7 +541,7 @@ void World::fireAt(int32_t s, int32_t e, const Vec3* at)
 	for (size_t i = 0; i < track.events.size(); i++) {
 		const EventResource& r = track.events[i];
 		if (r.kind == EventResource::Force) {
-			events[i].armed = s != -1 && r.armingEvent == s ? true : e != -1 && r.armingEvent == e ? false : events[i].armed;
+			scenery.events[i].armed = s != -1 && r.armingEvent == s ? true : e != -1 && r.armingEvent == e ? false : scenery.events[i].armed;
 		}
 	}
 	hazardEvent(s, e, at, -1, false);
@@ -555,16 +558,16 @@ void World::fireFor(int32_t s, int32_t e, size_t racer)
 		if (r.kind != EventResource::Colour) {
 			continue;
 		}
-		EventState& st = events[i];
+		EventState& st = scenery.events[i];
 		const auto start = [&] {
-			if (!r.onEntity && racer < tinted.size()) {
-				tinted[racer] = !r.clear;
+			if (!r.onEntity && racer < raceView.tinted.size()) {
+				raceView.tinted[racer] = !r.clear;
 			}
 			chain(*this, r.chains, EventState::Idle, r.chains[1]);
 		};
 		const auto end = [&] {
-			if (!r.clear && !r.onEntity && racer < tinted.size()) {
-				tinted[racer] = 0;
+			if (!r.clear && !r.onEntity && racer < raceView.tinted.size()) {
+				raceView.tinted[racer] = 0;
 			}
 			const EventState::Phase from = st.phase;
 			st.phase = EventState::Ended;
@@ -603,14 +606,14 @@ void World::fireFor(int32_t s, int32_t e, size_t racer)
 			}
 		}
 	}
-	hazardEvent(s, e, &visible[racer].position, int(racer), false);
+	hazardEvent(s, e, &racers.visible[racer].position, int32_t(racer), false);
 }
 
 void World::forceEnd(int32_t y)
 {
 	for (size_t i = 0; i < track.events.size(); i++) {
 		if (track.events[i].id == y && track.events[i].kind != EventResource::Link) {
-			events[i].phase = EventState::EndPending;
+			scenery.events[i].phase = EventState::EndPending;
 		}
 	}
 	hazardEvent(-1, y, nullptr, -1, true);
@@ -618,7 +621,7 @@ void World::forceEnd(int32_t y)
 
 void World::eventFrame(int32_t ms)
 {
-	stage = RaceEvent::Events;
+	raceView.stage = RaceEvent::Events;
 	// The event table, kind by kind: sounds, particles and sky states forced or begun end; part
 	// animations follow their entities; timers count down and end once run and not held; node transforms move their
 	// collision; model distances and forces forced end.
@@ -630,14 +633,14 @@ void World::eventFrame(int32_t ms)
 			if (kind == EventResource::PartAnimation) {
 				partUpdate(*this, i);
 			}
-			else if (events[i].phase == EventState::EndPending) {
+			else if (scenery.events[i].phase == EventState::EndPending) {
 				showEnd(*this, i);
 			}
 		}
 	}
 	for (size_t i = 0; i < track.events.size(); i++) {
 		const EventResource& r = track.events[i];
-		EventState& s = events[i];
+		EventState& s = scenery.events[i];
 		if (r.kind == EventResource::Timer) {
 			if (s.phase == EventState::EndPending) {
 				endTimer(*this, i);
@@ -651,9 +654,9 @@ void World::eventFrame(int32_t ms)
 		}
 	}
 	for (size_t i = 0; i < track.events.size(); i++) {
-		if (track.events[i].kind == EventResource::NodeTransform && events[i].phase != EventState::Idle) {
+		if (track.events[i].kind == EventResource::NodeTransform && scenery.events[i].phase != EventState::Idle) {
 			// (QUIRK: a forced end still moves it this once.)
-			if (events[i].phase == EventState::EndPending) {
+			if (scenery.events[i].phase == EventState::EndPending) {
 				kindEnd(*this, i);
 			}
 			nodeTransform(*this, i);
@@ -661,7 +664,7 @@ void World::eventFrame(int32_t ms)
 	}
 	for (size_t i = 0; i < track.events.size(); i++) {
 		const EventResource& r = track.events[i];
-		EventState& s = events[i];
+		EventState& s = scenery.events[i];
 		if (r.kind == EventResource::ModelDistance && s.phase == EventState::EndPending) {
 			kindEnd(*this, i);
 		}
@@ -671,10 +674,10 @@ void World::eventFrame(int32_t ms)
 		}
 	}
 	hazardFrame(ms);
-	stage = RaceEvent::Events;
+	raceView.stage = RaceEvent::Events;
 	// The track timers' first delays: when one runs out, its first wait (an on length) is scheduled.
-	for (size_t t = 0; t < timers.size(); t++) {
-		TrackTimerState& s = timers[t];
+	for (size_t t = 0; t < scenery.timers.size(); t++) {
+		TrackTimerState& s = scenery.timers[t];
 		if (s.delayMs <= 0) {
 			continue;
 		}
@@ -690,10 +693,10 @@ void World::eventFrame(int32_t ms)
 
 void World::endTouchFrame()
 {
-	stage = RaceEvent::Events;
+	raceView.stage = RaceEvent::Events;
 	// Positional spheres that went untouched for a frame end their events.
-	for (size_t s = 0; s < places.size(); s++) {
-		PlaceState& p = places[s];
+	for (size_t s = 0; s < triggers.places.size(); s++) {
+		PlaceState& p = triggers.places[s];
 		const TouchSphere& t = track.places[s];
 		if (p.active && !p.touched) {
 			p.active = false;
@@ -704,9 +707,9 @@ void World::endTouchFrame()
 		p.touched = false;
 	}
 	// The touch spheres: likewise at their centre; and racers that left end their events.
-	for (size_t s = 0; s < touchInside.size(); s++) {
+	for (size_t s = 0; s < triggers.touchInside.size(); s++) {
 		const TouchSphere& t = track.touchSpheres[s];
-		PlaceState& p = touchPlaces[s];
+		PlaceState& p = triggers.touchPlaces[s];
 		if (p.active && !p.touched) {
 			p.active = false;
 			if (t.event != -1) {
@@ -714,10 +717,10 @@ void World::endTouchFrame()
 			}
 		}
 		p.touched = false;
-		const uint8_t left = touchLast[s] & ~touchInside[s] & 63;
-		touchLast[s] = touchInside[s];
-		touchInside[s] = 0;
-		for (size_t i = 0; i < racers.size() && t.event != -1; i++) {
+		const uint8_t left = triggers.touchLast[s] & ~triggers.touchInside[s] & 63;
+		triggers.touchLast[s] = triggers.touchInside[s];
+		triggers.touchInside[s] = 0;
+		for (size_t i = 0; i < racers.race.size() && t.event != -1; i++) {
 			if (left & (1u << i)) {
 				endFor(t.event, i);
 			}
@@ -725,35 +728,83 @@ void World::endTouchFrame()
 	}
 }
 
-void World::touchRacers(const Sphere* spheres)
+namespace {
+
+// The dead members leave the list (their slots free for the next added, in the list's order); the rest keep theirs.
+void pruneMembers(World& w)
 {
-	stage = RaceEvent::Queue;
-	auto prune = [&] {
-		for (size_t n = 0; n < memberOrder.size();) {
-			if (members[memberOrder[n]].dead) {
-				freeMembers.push_back(memberOrder[n]);
-				memberOrder.erase(memberOrder.begin() + long(n));
-			}
-			else {
-				n++;
-			}
+	size_t kept = 0;
+	for (size_t n = 0; n < w.triggers.memberOrder.size(); n++) {
+		const uint16_t m = w.triggers.memberOrder[n];
+		LR_ASSERT(m < w.triggers.members.size());
+		if (w.triggers.members[m].dead) {
+			w.triggers.freeMembers.push_back(m);
 		}
-	};
-	prune();
-	// Insertion sort by the lowest x, equals keeping their order.
-	auto xlo = [&](uint16_t m) { return members[m].centre.x - members[m].radius; };
-	for (size_t n = 1; n < memberOrder.size(); n++) {
-		const uint16_t e = memberOrder[n];
+		else {
+			w.triggers.memberOrder[kept++] = m;
+		}
+	}
+	w.triggers.memberOrder.resize(kept);
+}
+
+// Insertion sort by the lowest x, equals keeping their order.
+void sortMembers(World& w)
+{
+	auto xlo = [&](uint16_t m) { return w.triggers.members[m].centre.x - w.triggers.members[m].radius; };
+	for (size_t n = 1; n < w.triggers.memberOrder.size(); n++) {
+		const uint16_t e = w.triggers.memberOrder[n];
 		size_t j = n;
-		while (j > 0 && xlo(e) < xlo(memberOrder[j - 1])) {
-			memberOrder[j] = memberOrder[j - 1];
+		while (j > 0 && xlo(e) < xlo(w.triggers.memberOrder[j - 1])) {
+			w.triggers.memberOrder[j] = w.triggers.memberOrder[j - 1];
 			j--;
 		}
-		memberOrder[j] = e;
+		w.triggers.memberOrder[j] = e;
 	}
-	// The list as it is now: a member added by a touch waits for the next step.
-	const std::vector<uint16_t> list = memberOrder;
+}
+
+} // namespace
+
+// A racer touching a touch sphere: on its lap (or any), it collides with the sphere's world (if it has one) while
+// touching it and 150 ms after; the sphere's event starts at its centre once, and for the racer as it enters.
+void World::touchSphere(size_t sphere, size_t i)
+{
+	LR_ASSERT(sphere < track.touchSpheres.size() && sphere < triggers.touchPlaces.size() && sphere < triggers.touchInside.size() && sphere < triggers.touchLast.size());
+	const TouchSphere& t = track.touchSpheres[sphere];
+	if (t.lap >= 0 && racers.race[i].laps != t.lap) {
+		return;
+	}
 	const size_t volumes = track.volumes.size();
+	if (t.world >= 0 && size_t(t.world) < volumes) {
+		// The racer collides with the sphere's world while touching it (and 150 ms after).
+		LR_ASSERT(i * volumes + size_t(t.world) < racers.worldMs.size());
+		int32_t& ms = racers.worldMs[i * volumes + size_t(t.world)];
+		Kart& k = racers.karts[i];
+		if (ms == 0 && std::find(k.worlds, k.worlds + k.worldCount, t.world) == k.worlds + k.worldCount && k.worldCount < 5) {
+			k.worlds[k.worldCount++] = t.world;
+		}
+		ms = 150;
+	}
+	PlaceState& p = triggers.touchPlaces[sphere];
+	if (!p.active && t.event != -1) {
+		startAt(t.event, &t.centre);
+	}
+	p.active = p.touched = true;
+	const uint8_t bit = uint8_t(1u << i);
+	const bool was = triggers.touchLast[sphere] & bit;
+	triggers.touchInside[sphere] |= bit;
+	if (!was && t.event != -1) {
+		startFor(t.event, i);
+	}
+}
+
+void World::touchRacers(const Sphere* spheres)
+{
+	raceView.stage = RaceEvent::Queue;
+	pruneMembers(*this);
+	sortMembers(*this);
+	// The list as it is now: a member added by a touch (put at the front) waits for the next step.
+	const size_t listed = triggers.memberOrder.size();
+	const auto at = [&](size_t n) { return triggers.memberOrder[triggers.memberOrder.size() - listed + n]; };
 	for (uint8_t i : contactOrder) {
 		if (i >= RockEntry) {
 			continue;
@@ -761,12 +812,12 @@ void World::touchRacers(const Sphere* spheres)
 		const Sphere& g = spheres[i];
 		const float lo = g.centre.x - g.radius, hi = g.radius + g.centre.x;
 		size_t n = 0;
-		while (n < list.size() && members[list[n]].radius + members[list[n]].centre.x < lo) {
+		while (n < listed && triggers.members[at(n)].radius + triggers.members[at(n)].centre.x < lo) {
 			n++;
 		}
-		for (; n < list.size(); n++) {
-			const Member& m = members[list[n]];
-			if (m.dead || (m.playersOnly && racers[i].ai)) {
+		for (; n < listed; n++) {
+			const Member& m = triggers.members[at(n)];
+			if (m.dead || (m.playersOnly && racers.race[i].ai)) {
 				continue;
 			}
 			if (m.centre.x - m.radius > hi) {
@@ -774,39 +825,14 @@ void World::touchRacers(const Sphere* spheres)
 			}
 			const Vec3 d = m.centre - g.centre;
 			const float r = m.radius + g.radius;
-			if (!(d.x * d.x + d.y * d.y + d.z * d.z < r * r)) {
+			if (!(lengthSquared(d) < r * r)) {
 				continue;
 			}
 			switch (m.kind) {
-			case Member::TouchSphere: {
-				const TouchSphere& t = track.touchSpheres[m.ref];
-				if (t.lap >= 0 && racers[i].laps != t.lap) {
-					break;
-				}
-				if (t.world >= 0 && size_t(t.world) < volumes) {
-					// The racer collides with the sphere's world while touching it (and 150 ms after).
-					int32_t& ms = worldMs[i * volumes + size_t(t.world)];
-					Kart& k = karts[i];
-					if (ms == 0 && std::find(k.worlds, k.worlds + k.worldCount, t.world) == k.worlds + k.worldCount && k.worldCount < 5) {
-						k.worlds[k.worldCount++] = t.world;
-					}
-					ms = 150;
-				}
-				PlaceState& p = touchPlaces[m.ref];
-				if (!p.active && t.event != -1) {
-					startAt(t.event, &t.centre);
-				}
-				p.active = p.touched = true;
-				const uint8_t bit = uint8_t(1u << i);
-				const bool was = touchLast[m.ref] & bit;
-				touchInside[m.ref] |= bit;
-				if (!was && t.event != -1) {
-					startFor(t.event, i);
-				}
-				break;
-			}
+			case Member::TouchSphere: touchSphere(m.ref, i); break;
 			case Member::Positional: {
-				PlaceState& p = places[m.ref];
+				LR_ASSERT(m.ref < triggers.places.size() && m.ref < track.places.size());
+				PlaceState& p = triggers.places[m.ref];
 				const TouchSphere& t = track.places[m.ref];
 				if (!p.active && t.event != -1) {
 					startAt(t.event, &t.centre);
@@ -822,7 +848,7 @@ void World::touchRacers(const Sphere* spheres)
 			}
 		}
 	}
-	prune();
+	pruneMembers(*this);
 }
 
 // The event table, the track timers, the trigger list's spheres, at load: timers ended, the touch spheres (each put
@@ -833,32 +859,32 @@ void setupEventTable(World& w)
 {
 	// The world databases as loaded: the models' draw distances, the bound material tracks running (looping, at their
 	// files' rates).
-	w.animatedDistances.resize(w.track.animated.size());
+	w.scenery.animatedDistances.resize(w.track.animated.size());
 	for (size_t m = 0; m < w.track.animated.size(); m++) {
-		w.animatedDistances[m] = w.track.animated[m].distances;
+		w.scenery.animatedDistances[m] = w.track.animated[m].distances;
 	}
-	w.modelDistances = w.track.modelDistances;
-	w.materials.assign(w.track.materialTracks.size(), {});
+	w.scenery.modelDistances = w.track.modelDistances;
+	w.raceView.materials.assign(w.track.materialTracks.size(), {});
 	for (const Track::MaterialBinding& b : w.track.materialBindings) {
-		World::MaterialState& m = w.materials[size_t(b.track)];
+		RaceView::MaterialState& m = w.raceView.materials[size_t(b.track)];
 		m.assigned = m.looping = true;
 		m.rate = w.track.materialTracks[size_t(b.track)].rate;
 		m.shown = 0;
 	}
 	for (const Sprite& s : w.track.sprites) {
 		if (s.track >= 0) {
-			World::MaterialState& m = w.materials[size_t(s.track)];
+			RaceView::MaterialState& m = w.raceView.materials[size_t(s.track)];
 			m.assigned = m.looping = true;
 			m.rate = w.track.materialTracks[size_t(s.track)].rate;
 			m.shown = 0;
 		}
 	}
-	w.events.assign(w.track.events.size(), {});
-	w.tinted.assign(w.racers.size(), 0);
+	w.scenery.events.assign(w.track.events.size(), {});
+	w.raceView.tinted.assign(w.racers.race.size(), 0);
 	for (size_t i = 0; i < w.track.events.size(); i++) {
 		const EventResource& r = w.track.events[i];
-		w.events[i].phase = r.kind == EventResource::Timer || r.kind == EventResource::Colour ? EventState::Ended : EventState::Idle;
-		w.events[i].at = r.position;
+		w.scenery.events[i].phase = r.kind == EventResource::Timer || r.kind == EventResource::Colour ? EventState::Ended : EventState::Idle;
+		w.scenery.events[i].at = r.position;
 		if (r.kind == EventResource::ModelDistance && !r.hide) {
 			showModel(w, r, false); // (shown only while active)
 		}
@@ -867,8 +893,8 @@ void setupEventTable(World& w)
 
 void setupEvents(World& w)
 {
-	w.touchPlaces.assign(w.track.touchSpheres.size(), {});
-	w.places.assign(w.track.places.size(), {});
+	w.triggers.touchPlaces.assign(w.track.touchSpheres.size(), {});
+	w.triggers.places.assign(w.track.places.size(), {});
 	std::vector<size_t> byFile(w.track.touchSpheres.size());
 	for (size_t s = 0; s < byFile.size(); s++) {
 		byFile[s] = s;
@@ -882,11 +908,11 @@ void setupEvents(World& w)
 		const TouchSphere& t = w.track.places[s];
 		w.addMember({t.centre, t.radius, Member::Positional, t.playersOnly, false, uint16_t(s)});
 	}
-	w.timers.assign(w.track.timers.size(), {});
+	w.scenery.timers.assign(w.track.timers.size(), {});
 	for (size_t t = 0; t < w.track.timers.size(); t++) {
 		const TrackTimer& timer = w.track.timers[t];
 		const int32_t length = timer.randomOff ? randomLength(timer.offMs, w.draw(Draw::TrackTimer)) : timer.offMs;
-		w.timers[t].delayMs = timer.delayMs;
+		w.scenery.timers[t].delayMs = timer.delayMs;
 		if (timer.delayMs == 0) {
 			w.schedule({length, 0, Wait::TrackTimer, uint8_t(t)});
 		}

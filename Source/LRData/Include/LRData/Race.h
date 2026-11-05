@@ -22,25 +22,25 @@
 namespace lr {
 
 struct LRDATA_API RaceFile {
-	std::string name;            // display name
-	std::string collisionFile;   // the world database (.WDB) holding the collision volumes
-	std::string trackVolume;     // the entity in it that is the track's collision
-	std::string checkpointFile;  // checkpoints (.CPB); empty if none
+	std::string name; // display name
+	std::string collisionFile; // the world database (.WDB) holding the collision volumes
+	std::string trackVolume; // the entity in it that is the track's collision
+	std::string checkpointFile; // checkpoints (.CPB); empty if none
 	std::string checkpointVolume; // the entity holding the checkpoint gates; empty if none
-	std::string surfaceFile;     // the surface table (.TMB); empty if none
-	std::string startGridFile;   // .SPB
-	std::string touchFile;       // the racers' touch spheres (.TRB)
-	std::string eventFile;       // .EVB
-	std::string introCamera;     // the animated camera the intro flies along; empty: no flyby
+	std::string surfaceFile; // the surface table (.TMB); empty if none
+	std::string startGridFile; // .SPB
+	std::string touchFile; // the racers' touch spheres (.TRB)
+	std::string eventFile; // .EVB
+	std::string introCamera; // the animated camera the intro flies along; empty: no flyby
 	std::array<float, 3> startCamera = {}, startLook = {1, 0, 0}, startDown = {0, 0, -1}; // the cameras before the race
-	std::string scene;           // the track's world database of models (.WDB): animated scenery
-	std::string sharedScene;     // the "blended" world database beside it
-	std::string powerupFile;     // the bricks (.PWB)
-	std::string powerupScene;    // the power-ups' models (.WDB)
-	std::string positionalFile;  // spheres that start events at a place (.TRB)
-	std::string timerFile;       // .TIB
-	std::string hazardFile;      // .HZB
-	std::string targetFile;      // .TGB; empty if none
+	std::string scene; // the track's world database of models (.WDB): animated scenery
+	std::string sharedScene; // the "blended" world database beside it
+	std::string powerupFile; // the bricks (.PWB)
+	std::string powerupScene; // the power-ups' models (.WDB)
+	std::string positionalFile; // spheres that start events at a place (.TRB)
+	std::string timerFile; // .TIB
+	std::string hazardFile; // .HZB
+	std::string targetFile; // .TGB; empty if none
 	std::array<std::string, 2> emitterFiles; // the race's and the track's effect sets (.EMB)
 	std::string effectsBank, voiceBank, ambientBank; // the race's sound banks (.SBK): effects, the second voice, the track's
 	std::array<float, 4> mapBounds = {1023, 1023, -1023, -1023}; // the HUD map's: min x, max y, max x, min y
@@ -50,7 +50,7 @@ struct LRDATA_API RaceFile {
 	std::string skyFile, skyWorld, globalWorld, localWorld;
 
 	// False on a malformed file.
-	bool decode(std::span<const uint8_t> bytes);
+	[[nodiscard]] bool decode(std::span<const uint8_t> bytes);
 	bool operator==(const RaceFile&) const = default;
 };
 
@@ -66,7 +66,7 @@ struct LRDATA_API StartGrid {
 	std::vector<Place> places; // by place index
 
 	// False on a malformed file, or one missing a place below the highest.
-	bool decode(std::span<const uint8_t> bytes);
+	[[nodiscard]] bool decode(std::span<const uint8_t> bytes);
 	bool operator==(const StartGrid&) const = default;
 };
 
@@ -79,7 +79,7 @@ struct LRDATA_API RouteFile {
 		int8_t dz;
 		int8_t rotation[4]; // x y z w, times 1/127
 		int8_t left, right; // widths, eighths of a foot
-		uint8_t kind;       // top 2 bits: ground contacts (3 means 4); the rest: length in 32 ms
+		uint8_t kind; // top 2 bits: ground contacts (3 means 4); the rest: length in 32 ms
 		bool operator==(const Point&) const = default;
 	};
 	std::array<float, 3> start = {}, loop = {};
@@ -89,7 +89,7 @@ struct LRDATA_API RouteFile {
 	std::vector<Point> points;
 
 	// False on a malformed file, or one whose loop point is past its points.
-	bool decode(std::span<const uint8_t> bytes);
+	[[nodiscard]] bool decode(std::span<const uint8_t> bytes);
 	bool operator==(const RouteFile&) const = default;
 };
 
@@ -104,7 +104,7 @@ struct LRDATA_API CheckpointFile {
 	std::vector<Checkpoint> checkpoints;
 
 	// False on a malformed file.
-	bool decode(std::span<const uint8_t> bytes);
+	[[nodiscard]] bool decode(std::span<const uint8_t> bytes);
 	bool operator==(const CheckpointFile&) const = default;
 };
 
@@ -112,10 +112,10 @@ struct LRDATA_API TouchFile {
 	struct Sphere {
 		std::array<float, 3> centre = {};
 		float radius = 0;
-		int32_t event = 0;     // started for a racer that enters; -1 none
+		int32_t event = 0; // started for a racer that enters; -1 none
 		bool playersOnly = false;
 		bool projectilesOnly = false;
-		std::string world;     // a collision entity the racer collides with while touching; empty none
+		std::string world; // a collision entity the racer collides with while touching; empty none
 		bool lapGated = false; // only a racer with `lap` completed laps touches it
 		int32_t lap = 0;
 		bool operator==(const Sphere&) const = default;
@@ -123,7 +123,7 @@ struct LRDATA_API TouchFile {
 	std::vector<Sphere> spheres;
 
 	// False on a malformed file.
-	bool decode(std::span<const uint8_t> bytes);
+	[[nodiscard]] bool decode(std::span<const uint8_t> bytes);
 	bool operator==(const TouchFile&) const = default;
 };
 
@@ -149,7 +149,7 @@ struct LRDATA_API EventFile {
 	struct Resource {
 		Kind kind = Sounds;
 		int32_t id = 0;
-		bool onEnd = false;  // reacts to its event's end instead of its start
+		bool onEnd = false; // reacts to its event's end instead of its start
 		bool noEnd = false;
 		std::array<int32_t, 3> chains = {-1, -1, -1}; // started as it starts, while active, as it ends
 		// Timers.
@@ -191,7 +191,7 @@ struct LRDATA_API EventFile {
 	std::vector<Resource> resources; // by section, in file order within each
 
 	// False on a malformed file.
-	bool decode(std::span<const uint8_t> bytes);
+	[[nodiscard]] bool decode(std::span<const uint8_t> bytes);
 	bool operator==(const EventFile&) const = default;
 };
 
@@ -207,7 +207,7 @@ struct LRDATA_API PowerupFile {
 	std::vector<std::array<float, 3>> whiteBricks;
 
 	// False on a malformed file.
-	bool decode(std::span<const uint8_t> bytes);
+	[[nodiscard]] bool decode(std::span<const uint8_t> bytes);
 	bool operator==(const PowerupFile&) const = default;
 };
 
@@ -221,7 +221,7 @@ struct LRDATA_API TargetFile {
 	std::vector<Point> points;
 
 	// False on a malformed file.
-	bool decode(std::span<const uint8_t> bytes);
+	[[nodiscard]] bool decode(std::span<const uint8_t> bytes);
 	bool operator==(const TargetFile&) const = default;
 };
 
@@ -237,7 +237,7 @@ struct LRDATA_API TimerFile {
 	std::vector<Timer> timers;
 
 	// False on a malformed file.
-	bool decode(std::span<const uint8_t> bytes);
+	[[nodiscard]] bool decode(std::span<const uint8_t> bytes);
 	bool operator==(const TimerFile&) const = default;
 };
 
@@ -246,18 +246,18 @@ struct LRDATA_API HazardFile {
 	struct Hazard {
 		int32_t type = 0;
 		int32_t trigger = -1;
-		std::string entity;                 // the animated model it follows
-		std::vector<std::string> entities;  // a triggered animation's
-		std::string surface;                // the surface a triggered animation opens
+		std::string entity; // the animated model it follows
+		std::vector<std::string> entities; // a triggered animation's
+		std::string surface; // the surface a triggered animation opens
 		std::array<float, 3> source = {}, target = {}, triggerPoint = {};
 		float triggerRadius = 0;
 		std::vector<std::array<float, 4>> launches, targets; // a multi-launcher's: x y z and an event
-		std::array<float, 2> scroll = {};   // an oscillator's
-		float startFrame = 0;               // a rolling rock's animation phase
-		std::array<float, 3> size = {};     // and box
-		int32_t periodMs = 0;               // a sweep cannon's
+		std::array<float, 2> scroll = {}; // an oscillator's
+		float startFrame = 0; // a rolling rock's animation phase
+		std::array<float, 3> size = {}; // and box
+		int32_t periodMs = 0; // a sweep cannon's
 		std::array<float, 3> sweep = {};
-		int32_t intervalMs = 0;             // a cannonball rain's, and its balls' material
+		int32_t intervalMs = 0; // a cannonball rain's, and its balls' material
 		std::string material;
 		float strength = 0, low = 0, high = 0; // a grabber's pull and claw frames
 		bool operator==(const Hazard&) const = default;
@@ -265,7 +265,7 @@ struct LRDATA_API HazardFile {
 	std::vector<Hazard> hazards;
 
 	// False on a malformed file.
-	bool decode(std::span<const uint8_t> bytes);
+	[[nodiscard]] bool decode(std::span<const uint8_t> bytes);
 	bool operator==(const HazardFile&) const = default;
 };
 
@@ -280,7 +280,7 @@ struct LRDATA_API GhostFile {
 	std::vector<std::array<int8_t, 4>> rotations;
 
 	// False on a malformed file.
-	bool decode(std::span<const uint8_t> bytes, bool mirrored);
+	[[nodiscard]] bool decode(std::span<const uint8_t> bytes, bool mirrored);
 	bool operator==(const GhostFile&) const = default;
 };
 
@@ -295,12 +295,12 @@ struct LRDATA_API EmitterFile {
 		uint8_t chance = 0;
 		std::array<float, 3> acceleration = {};
 		std::vector<std::array<float, 3>> launches;
-		float width = 1, height = 1;  // start size across and up the screen
+		float width = 1, height = 1; // start size across and up the screen
 		float growWidth = 0, growHeight = 0;
-		int32_t track = -1;           // a material animation track, -1 none
+		int32_t track = -1; // a material animation track, -1 none
 		int32_t lifeMs = 0, durationMs = -1;
 		float radius = 0;
-		std::string material;         // a fixed material (no track)
+		std::string material; // a fixed material (no track)
 		uint8_t priority = 0;
 		bool operator==(const Emitter&) const = default;
 	};
@@ -308,7 +308,7 @@ struct LRDATA_API EmitterFile {
 
 	int32_t find(std::string_view name) const; // exact on up to 8 characters; -1 none
 	// False on a malformed file.
-	bool decode(std::span<const uint8_t> bytes);
+	[[nodiscard]] bool decode(std::span<const uint8_t> bytes);
 	bool operator==(const EmitterFile&) const = default;
 };
 
@@ -331,7 +331,7 @@ struct LRDATA_API SkyFile {
 
 	int32_t find(std::string_view name) const; // -1 none
 	// False on a malformed file.
-	bool decode(std::span<const uint8_t> bytes);
+	[[nodiscard]] bool decode(std::span<const uint8_t> bytes);
 	bool operator==(const SkyFile&) const = default;
 };
 
@@ -343,7 +343,7 @@ struct LRDATA_API LoadingScreen {
 	std::vector<std::array<float, 2>> dots;
 
 	// False on a malformed file.
-	bool decode(std::span<const uint8_t> bytes);
+	[[nodiscard]] bool decode(std::span<const uint8_t> bytes);
 	bool operator==(const LoadingScreen&) const = default;
 };
 

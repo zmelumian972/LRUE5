@@ -139,30 +139,19 @@ template <class V> void fields(V& v, Texture& x) { v(x.width, x.height, x.rgba);
 template <class V> void fields(V& v, ExecutableTables& x) { v(x.random, x.cheats, x.languages, x.frameColours, x.frameMap, x.placePoints, x.curseDrop, x.lavaSpots, x.lavaStarts, x.lavaEnds, x.builderEyes, x.builderStepX, x.builderStepY); }
 // clang-format on
 
-template <class T>
-inline constexpr bool IsPlain = std::is_arithmetic_v<T> || std::is_enum_v<T>;
+template <class T> inline constexpr bool IsPlain = std::is_arithmetic_v<T> || std::is_enum_v<T>;
 
-template <class T>
-struct IsVector : std::false_type {};
-template <class T, class A>
-struct IsVector<std::vector<T, A>> : std::true_type {};
-template <class T>
-struct IsArray : std::false_type {};
-template <class T, size_t N>
-struct IsArray<std::array<T, N>> : std::true_type {};
-template <class T>
-struct IsString : std::false_type {};
-template <class C>
-struct IsString<std::basic_string<C>> : std::true_type {};
+template <class T> struct IsVector : std::false_type {};
+template <class T, class A> struct IsVector<std::vector<T, A>> : std::true_type {};
+template <class T> struct IsArray : std::false_type {};
+template <class T, size_t N> struct IsArray<std::array<T, N>> : std::true_type {};
+template <class T> struct IsString : std::false_type {};
+template <class C> struct IsString<std::basic_string<C>> : std::true_type {};
 
 struct RecordWriter {
 	std::vector<uint8_t>& out;
 
-	template <class... T>
-	void operator()(T&... items)
-	{
-		(put(items), ...);
-	}
+	template <class... T> void operator()(T&... items) { (put(items), ...); }
 	void raw(const void* data, size_t size)
 	{
 		const uint8_t* p = static_cast<const uint8_t*>(data);
@@ -173,8 +162,7 @@ struct RecordWriter {
 		const uint32_t c = uint32_t(n);
 		raw(&c, 4);
 	}
-	template <class T>
-	void put(T& x)
+	template <class T> void put(T& x)
 	{
 		if constexpr (IsPlain<T>) {
 			raw(&x, sizeof(T));
@@ -210,11 +198,7 @@ struct RecordReader {
 	size_t at = 0;
 	bool failed = false;
 
-	template <class... T>
-	void operator()(T&... items)
-	{
-		(get(items), ...);
-	}
+	template <class... T> void operator()(T&... items) { (get(items), ...); }
 	bool raw(void* data, size_t size)
 	{
 		if (failed || !fits(in, at, size)) {
@@ -237,8 +221,7 @@ struct RecordReader {
 		}
 		return c;
 	}
-	template <class T>
-	void get(T& x)
+	template <class T> void get(T& x)
 	{
 		if constexpr (IsPlain<T>) {
 			raw(&x, sizeof(T));

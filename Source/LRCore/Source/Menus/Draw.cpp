@@ -17,8 +17,7 @@ namespace {
 constexpr MenuRect Screen640 = {0, 0, 640, 480};
 
 // The text's lines (split at '\n').
-template <typename Each>
-void forEachLine(std::u16string_view text, Each each)
+template <typename Each> void forEachLine(std::u16string_view text, Each each)
 {
 	size_t start = 0;
 	for (;;) {
@@ -134,11 +133,10 @@ void Menus::drawImage(int16_t image, MenuRect dest, MenuRect source, const MenuR
 {
 	MenuRect clip = Screen640;
 	if (clipTo) {
-		clip = {std::max(clip.left, clipTo->left), std::max(clip.top, clipTo->top), std::min(clip.right, clipTo->right),
-			std::min(clip.bottom, clipTo->bottom)};
+		clip = {std::max(clip.left, clipTo->left), std::max(clip.top, clipTo->top), std::min(clip.right, clipTo->right), std::min(clip.bottom, clipTo->bottom)};
 	}
-	if (image < 0 || clip.width() <= 0 || clip.height() <= 0 || dest.width() <= 0 || dest.height() <= 0 || source.width() <= 0 ||
-		source.height() <= 0 || dest.left > clip.right || dest.top > clip.bottom || dest.right <= clip.left || dest.bottom <= clip.top) {
+	if (image < 0 || clip.width() <= 0 || clip.height() <= 0 || dest.width() <= 0 || dest.height() <= 0 || source.width() <= 0 || source.height() <= 0 || dest.left > clip.right ||
+		dest.top > clip.bottom || dest.right <= clip.left || dest.bottom <= clip.top) {
 		return;
 	}
 	const float kx = float(dest.width()) / float(source.width()), ky = float(dest.height()) / float(source.height());
@@ -172,13 +170,11 @@ void Menus::drawImage(int16_t image, MenuRect dest, MenuRect source, const MenuR
 namespace {
 
 // One run of glyphs at (x, y), scaled, clipped: its quads appended. False if nothing could be drawn.
-bool glyphRun(const MenuData::Font& f, std::u16string_view text, int32_t x, int32_t y, float sx, float sy, MenuRect clip,
-	std::vector<MenuGlyph>& out)
+bool glyphRun(const MenuData::Font& f, std::u16string_view text, int32_t x, int32_t y, float sx, float sy, MenuRect clip, std::vector<MenuGlyph>& out)
 {
 	clip = {std::max(0, clip.left), std::max(0, clip.top), std::min(640, clip.right), std::min(480, clip.bottom)};
 	const int32_t H = int32_t(f.glyphs.height);
-	if (sx <= 0 || sy <= 0 || clip.width() <= 0 || clip.height() <= 0 || x > clip.right || y > clip.bottom ||
-		y + int32_t(float(H) * sy) < clip.top) {
+	if (sx <= 0 || sy <= 0 || clip.width() <= 0 || clip.height() <= 0 || x > clip.right || y > clip.bottom || y + int32_t(float(H) * sy) < clip.top) {
 		return false;
 	}
 	const int32_t bottom = y + int32_t(float(H) * sy);
@@ -315,12 +311,13 @@ void Menus::drawQuad(MenuRect r, uint32_t colour, int32_t alpha)
 	elements.push_back(std::move(e));
 }
 
-void Menus::draw(WidgetTree& t, int16_t w, MenuRect view, MenuRect scr)
+namespace {
+
+// The view (in the widget's parent) clipped to the widget's rect r, and the screen rect with it; false when they miss.
+bool clipView(const MenuRect& r, MenuRect& view, MenuRect& scr)
 {
-	Widget& n = t[w];
-	const MenuRect r = n.rect;
 	if (view.left >= r.right || view.right <= r.left || view.top >= r.bottom || view.bottom <= r.top) {
-		return;
+		return false;
 	}
 	if (view.left < r.left) {
 		scr.left += r.left - view.left;
@@ -338,6 +335,18 @@ void Menus::draw(WidgetTree& t, int16_t w, MenuRect view, MenuRect scr)
 		scr.bottom -= view.bottom - r.bottom;
 		view.bottom = r.bottom;
 	}
+	return true;
+}
+
+} // namespace
+
+void Menus::draw(WidgetTree& t, int16_t w, MenuRect view, MenuRect scr)
+{
+	Widget& n = t[w];
+	const MenuRect r = n.rect;
+	if (!clipView(r, view, scr)) {
+		return;
+	}
 	const MenuRect v = {view.left - r.left + n.offsetX, view.top - r.top + n.offsetY, view.right - r.left + n.offsetX, view.bottom - r.top + n.offsetY};
 	if (!(n.flags & Widget::Visible)) {
 		return;
@@ -353,18 +362,10 @@ void Menus::draw(WidgetTree& t, int16_t w, MenuRect view, MenuRect scr)
 		return;
 	}
 	switch (n.kind) {
-	case Widget::Image: {
-		// Stretched to the rect: the source is the view's part of it.
-		const MenuData::ImageInfo* info = n.image >= 0 ? &data->images[size_t(n.image)] : nullptr;
-		const int32_t rw = r.width(), rh = r.height();
-		n.scaleX = info && rw > 0 ? float(info->width) / float(rw) : 0;
-		n.scaleY = info && rh > 0 ? float(info->height) / float(rh) : 0;
-		const MenuRect source = {int32_t(float(v.left) * n.scaleX), int32_t(float(v.top) * n.scaleY), int32_t(float(v.right) * n.scaleX),
-			int32_t(float(v.bottom) * n.scaleY)};
-		drawImage(n.image, scr, source, nullptr, n.colour);
+	case Widget::Image:
+		drawStretched(n, v, scr);
 		children(v);
 		return;
-	}
 	case Widget::ImageButton:
 	case Widget::Hotspot:
 		// Its image takes the state's image and colour, at the button's size; a hotspot's lit region its highlight.
@@ -375,39 +376,14 @@ void Menus::draw(WidgetTree& t, int16_t w, MenuRect view, MenuRect scr)
 			c.rect = {0, 0, r.width(), r.height()};
 		}
 		children(v);
-		for (size_t i = 0; n.kind == Widget::Hotspot && n.lit && i < n.regions.size(); i++) {
-			if (n.regions[i] != n.lit) {
-				continue;
-			}
-			const MenuRect g = n.regionRects[i];
-			const MenuRect part = {std::max(g.left, 0), std::max(g.top, 0), std::min(g.right, r.width()), std::min(g.bottom, r.height())};
-			const MenuRect dest = {scr.left - v.left + part.left, scr.top - v.top + part.top, scr.left - v.left + part.right, scr.top - v.top + part.bottom};
-			drawImage(n.image, dest, part, &scr, 0xffffffff);
+		if (n.kind == Widget::Hotspot) {
+			drawLitRegion(n, v, scr);
 		}
 		return;
-	case Widget::TextField: {
-		// The text from the field's left, centred in its height less 4 px and fitted; the caret placed after it.
-		const int32_t fh = n.font >= 0 ? int32_t(data->languages[language].fonts[size_t(n.font)].glyphs.height) : 0;
-		const int32_t tw = lineWidth(n.font, n.text);
-		const MenuRect inner = {v.left, v.top, v.right, v.bottom - 4};
-		MenuRect text = {0, 0, tw, fh};
-		centre(inner, text);
-		const int32_t x = scr.left, y = scr.top - v.top + text.top;
-		drawText(n.font, n.text, {x, y, x + text.width(), y + text.height()}, {scr.left, scr.top, scr.right, scr.bottom - 4}, n.colour);
-		if (n.caret >= 0) {
-			// Beside the field while it is selected; shown while there is room for more.
-			const bool selected = n.state & Widget::Selected;
-			if (selected != (t[n.caret].parent >= 0)) {
-				selected ? t.adopt(n.caret, n.parent) : t.detach(n.caret); // (back as the last child)
-			}
-			Widget& caret = t[n.caret];
-			const int32_t cw = caret.rect.width();
-			caret.rect = {r.left + tw, r.bottom - 6, r.left + tw + cw, r.bottom - 2};
-			show(t, n.caret, int32_t(n.text.size()) < n.maxLength);
-		}
+	case Widget::TextField:
+		drawTextField(t, n, v, scr);
 		children(v);
 		return;
-	}
 	case Widget::TextButton:
 		t[n.child].image = n.images[look];
 		t[n.child].colour = n.imageColours[look];
@@ -415,89 +391,153 @@ void Menus::draw(WidgetTree& t, int16_t w, MenuRect view, MenuRect scr)
 		t[n.label].colour = n.stateColours[look];
 		children(v);
 		return;
-	case Widget::Label: {
-		if (n.wrapping) {
-			drawWrapped(n.font, n.text, scr.left - v.left, scr.top - v.top, n.wrap, n.centred, scr, n.colour);
-			children(v);
-			return;
-		}
-		int32_t lines = 0;
-		forEachLine(n.text, [&](std::u16string_view) { lines++; });
-		const float lineH = float(r.height()) / float(lines);
-		const int32_t fh = n.font >= 0 ? int32_t(data->languages[language].fonts[size_t(n.font)].glyphs.height) : 0;
-		int32_t i = 0;
-		forEachLine(n.text, [&](std::u16string_view line) {
-			const MenuRect box = {0, int32_t(float(i) * lineH), r.width(), int32_t(float(i + 1) * lineH)};
-			MenuRect text = {0, 0, lineWidth(n.font, line), fh};
-			centre(box, text);
-			const int32_t dx = scr.left - v.left, dy = scr.top - v.top;
-			text = {text.left + dx, text.top + dy, text.right + dx, text.bottom + dy};
-			drawText(n.font, line, text, scr, n.colour);
-			i++;
-		});
+	case Widget::Label:
+		drawLabel(n, v, scr);
 		children(v);
 		return;
-	}
 	case Widget::Quad:
 		if (!n.blinkedOff) {
 			drawQuad(scr, n.colour, -1);
 		}
 		children(v);
 		return;
-	case Widget::Carousel: {
+	case Widget::Carousel:
 		children(v);
-		if (!n.wrapAround) {
-			return;
-		}
-		int32_t extent = 0;
-		for (int16_t c = n.first; c >= 0; c = t[c].next) {
-			extent = t[c].rect.right;
-		}
-		const int32_t cw = r.width();
-		if (n.pageMode && cw > 0) {
-			extent = (extent + cw - 1) / cw * cw;
-		}
-		if (cw + n.offsetX > extent) {
-			children({v.left - extent, v.top, v.right - extent, v.bottom});
+		if (n.wrapAround) {
+			drawWrapAround(t, n, v, scr);
 		}
 		return;
-	}
 	case Widget::SceneReference:
-		// A cinematic over the screen, or the setup screens' preview.
-		if (cinematicScreen()) {
-			drawCinema();
-		}
-		else {
-			MenuElement e;
-			e.kind = MenuElement::View3D;
-			const MenuRect g = global(t, w);
-			e.dest = {float(g.left), float(g.top), float(g.right), float(g.bottom)};
-			e.widget = n.id;
-			e.scene = int32_t(scenes.size());
-			describeScene(n, scenes.emplace_back());
-			scenes.back().aspect = (e.dest[2] - e.dest[0]) / std::max(1.0f, e.dest[3] - e.dest[1]);
-			lightScene(scenes.back(), nullptr);
-			elements.push_back(std::move(e));
-		}
-		children(v);
-		return;
 	case Widget::SceneView:
-	case Widget::Ring: {
-		const MenuRect g = global(t, w);
-		MenuElement e;
-		e.kind = MenuElement::View3D;
-		e.dest = {float(std::max(0, g.left)), float(std::max(0, g.top)), float(std::min(640, g.right)), float(std::min(480, g.bottom))};
-		e.widget = n.id;
-		e.scene = int32_t(scenes.size());
-		describeScene(n, scenes.emplace_back());
-		scenes.back().aspect = (e.dest[2] - e.dest[0]) / std::max(1.0f, e.dest[3] - e.dest[1]);
-		lightScene(scenes.back(), n.kind == Widget::Ring ? &n : nullptr);
-		elements.push_back(std::move(e));
+	case Widget::Ring:
+		drawView(t, w);
 		children(v);
 		return;
-	}
 	default: children(v); return;
 	}
+}
+
+// An image widget: stretched to the rect, the source the view's part of it.
+void Menus::drawStretched(Widget& n, MenuRect v, MenuRect scr)
+{
+	const MenuRect r = n.rect;
+	const MenuData::ImageInfo* info = n.image >= 0 ? &data->images[size_t(n.image)] : nullptr;
+	const int32_t rw = r.width(), rh = r.height();
+	n.scaleX = info && rw > 0 ? float(info->width) / float(rw) : 0;
+	n.scaleY = info && rh > 0 ? float(info->height) / float(rh) : 0;
+	const MenuRect source = {int32_t(float(v.left) * n.scaleX), int32_t(float(v.top) * n.scaleY), int32_t(float(v.right) * n.scaleX), int32_t(float(v.bottom) * n.scaleY)};
+	drawImage(n.image, scr, source, nullptr, n.colour);
+}
+
+// A hotspot's lit region: its image's part under the region's rect.
+void Menus::drawLitRegion(const Widget& n, MenuRect v, MenuRect scr)
+{
+	const MenuRect r = n.rect;
+	for (size_t i = 0; n.lit && i < n.regions.size(); i++) {
+		if (n.regions[i] != n.lit) {
+			continue;
+		}
+		const MenuRect g = n.regionRects[i];
+		const MenuRect part = {std::max(g.left, 0), std::max(g.top, 0), std::min(g.right, r.width()), std::min(g.bottom, r.height())};
+		const MenuRect dest = {scr.left - v.left + part.left, scr.top - v.top + part.top, scr.left - v.left + part.right, scr.top - v.top + part.bottom};
+		drawImage(n.image, dest, part, &scr, 0xffffffff);
+	}
+}
+
+// A text field: the text from the field's left, centred in its height less 4 px and fitted; the caret placed after it.
+void Menus::drawTextField(WidgetTree& t, const Widget& n, MenuRect v, MenuRect scr)
+{
+	const MenuRect r = n.rect;
+	const int32_t fh = n.font >= 0 ? int32_t(data->languages[language].fonts[size_t(n.font)].glyphs.height) : 0;
+	const int32_t tw = lineWidth(n.font, n.text);
+	const MenuRect inner = {v.left, v.top, v.right, v.bottom - 4};
+	MenuRect text = {0, 0, tw, fh};
+	centre(inner, text);
+	const int32_t x = scr.left, y = scr.top - v.top + text.top;
+	drawText(n.font, n.text, {x, y, x + text.width(), y + text.height()}, {scr.left, scr.top, scr.right, scr.bottom - 4}, n.colour);
+	if (n.caret >= 0) {
+		// Beside the field while it is selected; shown while there is room for more.
+		const bool selected = n.state & Widget::Selected;
+		if (selected != (t[n.caret].parent >= 0)) {
+			selected ? t.adopt(n.caret, n.parent) : t.detach(n.caret); // (back as the last child)
+		}
+		Widget& caret = t[n.caret];
+		const int32_t cw = caret.rect.width();
+		caret.rect = {r.left + tw, r.bottom - 6, r.left + tw + cw, r.bottom - 2};
+		show(t, n.caret, int32_t(n.text.size()) < n.maxLength);
+	}
+}
+
+// A label: wrapped, or each line centred in its share of the rect's height.
+void Menus::drawLabel(const Widget& n, MenuRect v, MenuRect scr)
+{
+	if (n.wrapping) {
+		drawWrapped(n.font, n.text, scr.left - v.left, scr.top - v.top, n.wrap, n.centred, scr, n.colour);
+		return;
+	}
+	const MenuRect r = n.rect;
+	int32_t lines = 0;
+	forEachLine(n.text, [&](std::u16string_view) { lines++; });
+	const float lineH = float(r.height()) / float(lines);
+	const int32_t fh = n.font >= 0 ? int32_t(data->languages[language].fonts[size_t(n.font)].glyphs.height) : 0;
+	int32_t i = 0;
+	forEachLine(n.text, [&](std::u16string_view line) {
+		const MenuRect box = {0, int32_t(float(i) * lineH), r.width(), int32_t(float(i + 1) * lineH)};
+		MenuRect text = {0, 0, lineWidth(n.font, line), fh};
+		centre(box, text);
+		const int32_t dx = scr.left - v.left, dy = scr.top - v.top;
+		text = {text.left + dx, text.top + dy, text.right + dx, text.bottom + dy};
+		drawText(n.font, line, text, scr, n.colour);
+		i++;
+	});
+}
+
+// A wrapping carousel's items again past its last one (a whole page on, paging), while the view reaches there.
+void Menus::drawWrapAround(WidgetTree& t, const Widget& n, MenuRect v, MenuRect scr)
+{
+	int32_t extent = 0;
+	for (int16_t c = n.first; c >= 0; c = t[c].next) {
+		extent = t[c].rect.right;
+	}
+	const int32_t cw = n.rect.width();
+	if (n.pageMode && cw > 0) {
+		extent = (extent + cw - 1) / cw * cw;
+	}
+	if (cw + n.offsetX > extent) {
+		for (int16_t c = n.first; c >= 0; c = t[c].next) {
+			draw(t, c, {v.left - extent, v.top, v.right - extent, v.bottom}, scr);
+		}
+	}
+}
+
+// A scene reference (a cinematic over the screen, or the setup screens' preview), a scene view or a ring.
+void Menus::drawView(WidgetTree& t, int16_t w)
+{
+	const Widget& n = t[w];
+	const MenuRect g = global(t, w);
+	if (n.kind != Widget::SceneReference) {
+		addView(n, {float(std::max(0, g.left)), float(std::max(0, g.top)), float(std::min(640, g.right)), float(std::min(480, g.bottom))}, n.kind == Widget::Ring ? &n : nullptr);
+	}
+	else if (cinematicScreen()) {
+		drawCinema();
+	}
+	else {
+		addView(n, {float(g.left), float(g.top), float(g.right), float(g.bottom)}, nullptr);
+	}
+}
+
+// A 3D view's element at dest (the screen's pixels), its scene described from the widget and lit (a ring by its own).
+void Menus::addView(const Widget& n, std::array<float, 4> dest, const Widget* ring)
+{
+	MenuElement e;
+	e.kind = MenuElement::View3D;
+	e.dest = dest;
+	e.widget = n.id;
+	e.scene = int32_t(scenes.size());
+	describeScene(n, scenes.emplace_back());
+	scenes.back().aspect = (e.dest[2] - e.dest[0]) / std::max(1.0f, e.dest[3] - e.dest[1]);
+	lightScene(scenes.back(), ring);
+	elements.push_back(std::move(e));
 }
 
 void Menus::drawFrame()
@@ -562,10 +602,7 @@ std::u16string number(int32_t n)
 } // namespace
 
 // A line of the race's font at (x, y), its own size.
-void Menus::drawLine(int16_t font, std::u16string_view text, int32_t x, int32_t y, uint32_t colour)
-{
-	drawScaled(font, text, x, y, 1, 1, colour);
-}
+void Menus::drawLine(int16_t font, std::u16string_view text, int32_t x, int32_t y, uint32_t colour) { drawScaled(font, text, x, y, 1, 1, colour); }
 
 void Menus::drawLoading(std::string_view track)
 {
@@ -574,8 +611,8 @@ void Menus::drawLoading(std::string_view track)
 		return;
 	}
 	// The screen as the race redraws it while it loads: the name centred, then as many dots as it has got through.
-	static constexpr float Progress[27] = {0, 0.05f, 0.1f, 0.24f, 0.26f, 0.34f, 0.36f, 0.38f, 0.4f, 0.42f, 0.45f, 0.48f, 0.51f, 0.54f,
-		0.56f, 0.6f, 0.7f, 0.75f, 0.77f, 0.8f, 0.84f, 0.86f, 0.88f, 0.9f, 0.93f, 0.97f, 1.0f};
+	static constexpr float Progress[27] = {0, 0.05f, 0.1f, 0.24f, 0.26f, 0.34f, 0.36f, 0.38f, 0.4f, 0.42f, 0.45f, 0.48f, 0.51f, 0.54f, 0.56f, 0.6f, 0.7f, 0.75f, 0.77f, 0.8f, 0.84f,
+		0.86f, 0.88f, 0.9f, 0.93f, 0.97f, 1.0f};
 	const MenuData::Language& lang = data->languages[language];
 	const int16_t font = int16_t(lang.raceFonts);
 	const std::u16string_view name = lang.game.at(size_t(l->screen.name));
@@ -603,8 +640,293 @@ void Menus::drawTriangle(int16_t image, const std::array<std::array<float, 4>, 3
 	elements.push_back(std::move(e));
 }
 
+namespace {
+
+constexpr uint32_t HudWhite = 0xffffffff;
+
+// The HUD's images by number (-1 past the list).
+int16_t hudImage(const MenuData& data, size_t n) { return n < data.hudImages.size() ? data.hudImages[n] : int16_t(-1); }
+
+// The gadget and banner scale: smaller in split screen.
+float hudScale(const World& w) { return w.raceView.cameras.size() > 1 ? 0.8f : 1.0f; }
+
+} // namespace
+
+// The banner: the countdown's digits and GO growing, or FINISH, centred at x on the row y.
+void Menus::drawHudBanner(const World& w, size_t p, int32_t cx, int32_t y)
+{
+	const Hud& h = w.raceView.huds[p];
+	const MenuData::Language& lang = data->languages[language];
+	const int16_t ignum = data->raceFont(language, "ignum");
+	std::u16string text;
+	float scale = hudScale(w);
+	uint32_t colour = HudWhite;
+	if (h.banner > 0) {
+		const int32_t s = h.banner / 1000;
+		colour = 0xffffff00;
+		if (s < 3) {
+			text = std::u16string(1, char16_t(u'3' - s));
+			scale *= float(1000 * (s + 1) - h.banner) * 1.8f * 0.001f;
+		}
+		else if (s < 5) {
+			text = lang.game.at(41);
+			scale *= s == 3 ? 1.8f : float(5000 - h.banner) * 0.0018f;
+		}
+	}
+	else {
+		text = lang.game.at(40);
+	}
+	if (!text.empty()) {
+		drawScaled(ignum, text, cx - (int32_t(float(lineWidth(ignum, text)) * scale) >> 1), y - (int32_t(64.0f * scale) >> 2), scale, scale, colour);
+	}
+}
+
+// The power-up frame: a colour or a white brick held.
+void Menus::drawPowerFrame(const World& w, size_t racer, MenuRect view)
+{
+	const Power& pw = w.racers.powers[racer];
+	if (pw.held == NoColour && pw.whiteCount <= 0) {
+		return;
+	}
+	const int32_t level = std::min<int32_t>(pw.whiteCount, 3);
+	const int32_t fx = view.left + (view.width() >> 5), fy = view.bottom - 74;
+	static constexpr int32_t Icons[5] = {-1, 2, 16, 20, 6};
+	static constexpr uint32_t Tints[5] = {0xffffffff, 0xffff0000, 0xff5050ff, 0xff00ff00, 0xffffff00};
+	const size_t colour = std::min<size_t>(pw.held, 4);
+	drawImage(hudImage(*data, 11), {fx, fy, fx + 64, fy + 64}, {0, 0, 64, 64}, nullptr, HudWhite);
+	drawImage(hudImage(*data, 12), {fx, fy, fx + 64, fy + 64}, {0, 0, 64, 64}, nullptr, Tints[colour]);
+	if (Icons[colour] >= 0) {
+		drawImage(hudImage(*data, size_t(Icons[colour] + level)), {fx + 15, fy + 22, fx + 47, fy + 54}, {0, 0, 32, 32}, nullptr, HudWhite);
+	}
+	if (level > 0) {
+		drawImage(hudImage(*data, size_t(12 + level)), {fx + 24, fy, fx + 88, fy + 64}, {0, 0, 64, 64}, nullptr, HudWhite);
+	}
+}
+
+// The speedometer: its dial, the needle (two triangles), the hub.
+void Menus::drawSpeedometer(const World& w, size_t p, MenuRect view)
+{
+	const float ms = hudScale(w);
+	const int32_t vr = view.right, vb = view.bottom;
+	const int32_t wd = int32_t(128 * ms);
+	drawImage(hudImage(*data, 0), {vr - wd - 2, vb - wd - 2, vr - 2, vb - 2}, {0, 0, 128, 128}, nullptr, HudWhite);
+	const float hx = float(vr - ((52 * wd) >> 7) - 2), hy = float(vb - ((52 * wd) >> 7) - 2);
+	const float theta = std::clamp(w.raceView.huds[p].speed * 18.0f, 0.0f, 3.4f) + 2.25f;
+	const auto at = [&](float length, float angle) { return std::array<float, 4>{hx + length * std::cos(angle) * ms, hy + length * std::sin(angle) * ms, -1, -1}; };
+	const std::array<float, 4> tip = at(45, theta), left = at(7, theta + 2.0943952f), right = at(7, theta + 4.1887903f);
+	const std::array<float, 4> hub = {hx, hy, -1, -1};
+	drawTriangle(-1, {right, tip, hub}, {0xff969696, 0xff969696, 0xffc8c8c8}, view);
+	drawTriangle(-1, {left, hub, tip}, {HudWhite, 0xffc8c8c8, HudWhite}, view);
+	const int32_t size = int32_t(16 * ms);
+	const int32_t dx = int32_t(hx) - (size >> 1), dy = int32_t(hy) - (size >> 1);
+	drawImage(hudImage(*data, 1), {dx, dy, dx + size, dy + size}, {0, 0, 16, 16}, nullptr, HudWhite);
+}
+
+// A racer's dot on a map (red for player 2's AI rival and the time race's record ghost).
+void Menus::drawMapDot(const World& w, int32_t x, int32_t y, bool red, MenuRect view)
+{
+	const int32_t row = w.raceView.cameras.size() > 1 ? 16 : 0;
+	drawImage(hudImage(*data, 10), {x - 8, y - 8, x + 8, y + 8}, {red ? 16 : 0, row, (red ? 16 : 0) + 16, row + 16}, &view, HudWhite);
+}
+
+// The whole map, north up, in the viewport's corner: the others' dots, the ghosts' in a time race, this racer's arrow.
+void Menus::drawFixedMap(const World& w, size_t p, const MenuData::Loading& track, MenuRect view)
+{
+	const size_t i = size_t(w.raceView.cameras[p].racer);
+	const std::array<float, 4>& b = track.mapBounds; // min x, max y, max x, min y
+	const float minX = b[0], maxY = b[1], maxX = b[2], minY = b[3];
+	const bool mirrored = w.session.brief.mirrored;
+	const int32_t ox = view.right - 15, oy = view.bottom - 15;
+	const float g = 128.0f / std::max(maxX - minX, maxY - minY) * hudScale(w);
+	const float ry = mirrored ? -maxY : minY;
+	const auto toMap = [&](Vec3 at, int32_t& x, int32_t& y) {
+		x = ox + int32_t((at.x - maxX) * g);
+		y = oy + int32_t((ry - at.y) * g);
+	};
+	if (track.map >= 0) {
+		const float x0 = float(ox) + (minX - maxX) * g, top = float(oy) + (minY - maxY) * g, x1 = float(ox), bottom = float(oy);
+		const float vTop = mirrored ? 0.0f : 0.999f, vBottom = mirrored ? 0.999f : 0.0f;
+		const std::array<uint32_t, 3> c = {0xc8ffffff, 0xc8ffffff, 0xc8ffffff};
+		drawTriangle(track.map, {{{x0, top, 0, vTop}, {x1, top, 0.999f, vTop}, {x1, bottom, 0.999f, vBottom}}}, c, view);
+		drawTriangle(track.map, {{{x0, bottom, 0, vBottom}, {x0, top, 0, vTop}, {x1, bottom, 0.999f, vBottom}}}, c, view);
+	}
+	for (size_t j = w.racers.race.size(); j-- > 0;) {
+		if (j != i) {
+			int32_t x, y;
+			toMap(w.racers.visible[j].position, x, y);
+			drawMapDot(w, x, y, j == 1 && w.racers.race[1].ai, view);
+		}
+	}
+	if (w.session.brief.mode == RaceBrief::Mode::TimeRace) {
+		const auto ghost = [&](const GhostRun& run, bool valid, bool red) {
+			Vec3 at;
+			Quat q;
+			if (valid && !run.finished && w.ghostAt(run, at, q)) {
+				int32_t x, y;
+				toMap(at, x, y);
+				drawMapDot(w, x, y, red, view);
+			}
+		};
+		ghost(w.session.timeRace.record, w.session.timeRace.recordValid, true);
+		ghost(w.session.timeRace.best, w.session.timeRace.bestValid, false);
+	}
+	int32_t x, y;
+	toMap(w.racers.visible[i].position, x, y);
+	const Vec3 f = w.racers.visible[i].rotation.f;
+	const float len = std::sqrt(f.x * f.x + f.y * f.y);
+	const float dx = len > 0 ? f.x / len : 1, dy = len > 0 ? -f.y / len : 0, nx = dy, ny = -dx;
+	const auto arrow = [&](float tip, float back, float half, uint32_t colour) {
+		const float ax = float(x), ay = float(y);
+		drawTriangle(-1,
+			{{{ax - back * dx + half * nx, ay - back * dy + half * ny, -1, -1}, {ax + tip * dx, ay + tip * dy, -1, -1},
+				{ax - back * dx - half * nx, ay - back * dy - half * ny, -1, -1}}},
+			{colour, colour, colour}, view);
+	};
+	arrow(9.5f, 6.5f, 5.5f, 0xff000000);
+	arrow(8.0f, 5.0f, 4.0f, 0xff00ff00);
+}
+
+// The rotating map: ahead is up, around this racer, inside its box.
+void Menus::drawRotatingMap(const World& w, size_t p, const MenuData::Loading& track, MenuRect view)
+{
+	const PlayerCamera& cam = w.raceView.cameras[p];
+	const size_t i = size_t(cam.racer);
+	const std::array<float, 4>& b = track.mapBounds; // min x, max y, max x, min y
+	const float minX = b[0], maxY = b[1], maxX = b[2], minY = b[3];
+	const bool mirrored = w.session.brief.mirrored;
+	const float ms = hudScale(w);
+	const Vec3 me = w.racers.visible[i].position;
+	const int32_t size = int32_t(128 * ms);
+	const MenuRect box = {view.right - 15 - size, view.bottom - 15 - size, view.right - 15, view.bottom - 15};
+	const float bx = float(box.left + box.right) * 0.5f, by = float(box.top + box.bottom) * 0.5f;
+	Vec3 r_, d_, l_;
+	cam.shownRows(r_, d_, l_);
+	const float vlen = std::sqrt(l_.x * l_.x + l_.y * l_.y);
+	const float ddx = vlen > 0 ? l_.x / vlen * 0.12f * ms : 0, ddy = vlen > 0 ? l_.y / vlen * 0.12f * ms : 0;
+	const auto toBox = [&](float x, float y, float& sx, float& sy) {
+		const float ex = x - me.x, ey = y - me.y;
+		sx = bx + (ex * ddy - ey * ddx);
+		sy = by - (ex * ddx + ey * ddy);
+	};
+	if (track.map >= 0) {
+		const float yTop = mirrored ? -minY : maxY, yBottom = mirrored ? -maxY : minY;
+		const float vTop = mirrored ? 0.0f : 0.999f, vBottom = mirrored ? 0.999f : 0.0f;
+		std::array<std::array<float, 4>, 4> c;
+		toBox(minX, yTop, c[0][0], c[0][1]);
+		toBox(maxX, yTop, c[1][0], c[1][1]);
+		toBox(maxX, yBottom, c[2][0], c[2][1]);
+		toBox(minX, yBottom, c[3][0], c[3][1]);
+		c[0][2] = 0, c[1][2] = 0.999f, c[2][2] = 0.999f, c[3][2] = 0;
+		c[0][3] = c[1][3] = vTop, c[2][3] = c[3][3] = vBottom;
+		const std::array<uint32_t, 3> colour = {0xc8ffffff, 0xc8ffffff, 0xc8ffffff};
+		drawTriangle(track.map, {c[0], c[1], c[3]}, colour, box);
+		drawTriangle(track.map, {c[3], c[1], c[2]}, colour, box);
+	}
+	for (size_t j = w.racers.race.size(); j-- > 0;) {
+		if (j != i) {
+			float sx, sy;
+			toBox(w.racers.visible[j].position.x, w.racers.visible[j].position.y, sx, sy);
+			drawMapDot(w, int32_t(sx), int32_t(sy), j == 1 && w.racers.race[1].ai, view);
+		}
+	}
+	const auto arrow = [&](float tip, float back, float half, uint32_t colour) {
+		// (pointing up: d = (0, -1), n = (-1, 0))
+		drawTriangle(-1, {{{bx - half, by + back, -1, -1}, {bx, by - tip, -1, -1}, {bx + half, by + back, -1, -1}}}, {colour, colour, colour}, box);
+	};
+	arrow(9.5f, 6.5f, 5.5f, 0xff000000);
+	arrow(8.0f, 5.0f, 4.0f, 0xff00ff00);
+	// Its 1-px white frame.
+	const float l = float(box.left), t = float(box.top), rr = float(box.right), bb = float(box.bottom);
+	const auto band = [&](float left, float top, float right, float bottom) {
+		drawTriangle(-1, {{{left, top, -1, -1}, {right, top, -1, -1}, {right, bottom, -1, -1}}}, {HudWhite, HudWhite, HudWhite}, Screen640);
+		drawTriangle(-1, {{{left, bottom, -1, -1}, {left, top, -1, -1}, {right, bottom, -1, -1}}}, {HudWhite, HudWhite, HudWhite}, Screen640);
+	};
+	band(l, t, rr, t + 1);
+	band(l, bb - 1, rr, bb);
+	band(l, t + 1, l + 1, bb - 1);
+	band(rr - 1, t + 1, rr, bb - 1);
+}
+
 // The HUDs: per player, in its viewport, the banner, the race info (lap, best, total or place,
 // time behind, WRONG WAY), the power-up frame and the gadget (map or speedometer).
+// The HUD's text columns in a player's viewport: the fonts and their scale, the times' widths, the time column (rx),
+// the place's (px), the centre (cx), the four rows and the viewport's top and bottom.
+struct Menus::HudColumns {
+	int16_t ths, ignum;
+	float ts;
+	int32_t shortWidth, longWidth, rx, px, cx, y1, y2, y3, y4, vt, vb;
+};
+
+// A time at the time column (a short one moved right by the difference): the x it was drawn at.
+int32_t Menus::hudTime(const HudColumns& at, int32_t t, int32_t y)
+{
+	const std::u16string text = raceTime(t);
+	const int32_t x = at.rx + (text.size() == 7 ? at.longWidth - at.shortWidth : 0);
+	drawScaled(at.ths, text, x, y, at.ts, at.ts, HudWhite);
+	return x;
+}
+
+// Player p's racing rows: the lap and its time, the best lap, the total time (a time race) or the place, the time
+// behind, and WRONG WAY.
+void Menus::drawHudTimes(const World& w, size_t p, const HudColumns& at)
+{
+	const MenuData::Language& lang = data->languages[language];
+	constexpr uint32_t White = HudWhite;
+	const bool timed = w.session.brief.mode == RaceBrief::Mode::TimeRace;
+	const int32_t laps = w.session.raceLaps;
+	const Hud& h = w.raceView.huds[p];
+	const Racer& r = w.racers.race[size_t(w.raceView.cameras[p].racer)];
+	// The lap row: the lap (alone), LAP, the lap's time (the last lap's while a new one is under 3 s, blinking;
+	// the last once finished, blinking 3 s with FINISH).
+	const int32_t n = std::min(r.laps + 1, laps);
+	const std::u16string lap = number(n);
+	const int32_t lapX = at.rx - (int32_t(float(lineWidth(at.ths, lap)) * at.ts) + int32_t(14 * at.ts));
+	drawScaled(at.ths, lap, lapX, at.y1, at.ts, at.ts, White);
+	drawScaled(at.ths, lang.game.at(39), lapX - (int32_t(34 * at.ts) + int32_t(6 * at.ts)), at.y1, at.ts, at.ts, White);
+	if (r.laps < laps) {
+		const int32_t t = r.lapMs[std::clamp(r.laps, 0, 4)];
+		if (r.laps > 0 && t < 3000) {
+			if ((t / 250) % 2 == 0) {
+				hudTime(at, r.lapMs[r.laps - 1], at.y1);
+			}
+		}
+		else {
+			hudTime(at, t, at.y1);
+		}
+	}
+	else if (!(h.banner < 0 && -h.banner < 3000 && (-h.banner / 250) % 2 == 1)) {
+		hudTime(at, r.lapMs[std::clamp(laps - 1, 0, 4)], at.y1);
+	}
+	if (h.bestMs > 0) {
+		drawScaled(at.ths, lang.game.at(37), at.rx - (int32_t(49 * at.ts) + int32_t(14 * at.ts)), at.y2, at.ts, at.ts, White);
+		hudTime(at, h.bestMs, at.y2);
+	}
+	if (timed) {
+		drawScaled(at.ths, lang.game.at(38), at.rx - 74, at.y3, 1, 1, White);
+		int32_t total = 0;
+		for (int32_t l = 0; l < 5 && (r.laps < laps ? l <= r.laps : l < r.laps); l++) {
+			total += r.lapMs[l];
+		}
+		hudTime(at, total, at.y3);
+	}
+	else if (h.place >= 0 && h.place < 8) {
+		const float k = h.pulseMs == 0 ? 1.0f : h.pulseMs <= 175 ? 1.0f + float(h.pulseMs) / 175.0f : h.pulseMs <= 350 ? 2.0f - float(h.pulseMs - 175) / 175.0f : 1.0f;
+		drawScaled(at.ths, lang.game.at(size_t(25 + h.place)), at.px + 5, at.y1, at.ts, at.ts, White);
+		const std::u16string digit(1, char16_t(u'1' + h.place));
+		drawScaled(at.ignum, digit, at.px - int32_t(float(lineWidth(at.ignum, digit)) * at.ts), at.y1, at.ts * k, at.ts * k, White);
+	}
+	if (r.timeBehindMs > 0) {
+		const int32_t x = hudTime(at, r.timeBehind, at.y4);
+		if (h.visible) {
+			drawScaled(at.ths, lang.game.at(33), x - 11, at.y4, 1, 1, White);
+		}
+	}
+	if ((r.flags & RacerWrongWayShown) && h.visible) {
+		const std::u16string_view text = lang.game.at(36);
+		drawScaled(at.ths, text, at.cx - (lineWidth(at.ths, text) >> 1), at.vt + (at.vb - at.vt) / 5, 1, 1, White);
+	}
+}
+
 void Menus::drawHud(const World& w)
 {
 	hudLayers = {};
@@ -612,367 +934,148 @@ void Menus::drawHud(const World& w)
 	if (phase != Session::Countdown && phase != Session::Racing && phase != Session::Finished) {
 		return;
 	}
-	const MenuData::Language& lang = data->languages[language];
 	const int16_t ths = data->raceFont(language, "font_ths"), ignum = data->raceFont(language, "ignum");
-	const MenuData::Loading* track = data->loading(w.brief.track);
-	const auto image = [&](size_t n) { return n < data->hudImages.size() ? data->hudImages[n] : int16_t(-1); };
-	constexpr uint32_t White = 0xffffffff;
-	const bool testDrive = w.brief.mode == RaceBrief::Mode::TestDrive, timed = w.brief.mode == RaceBrief::Mode::TimeRace;
-	const int32_t laps = w.raceLaps;
-	const bool split = w.cameras.size() > 1;
-	const float ts = split ? 0.9f : 1.0f, ms = split ? 0.8f : 1.0f, bs = split ? 0.8f : 1.0f;
+	const MenuData::Loading* track = data->loading(w.session.brief.track);
+	const bool testDrive = w.session.brief.mode == RaceBrief::Mode::TestDrive;
+	const bool split = w.raceView.cameras.size() > 1;
+	const float ts = split ? 0.9f : 1.0f;
 	const int32_t shortWidth = int32_t(float(lineWidth(ths, u"0:00:00")) * ts), longWidth = int32_t(float(lineWidth(ths, u"59:59:88")) * ts);
-	const int32_t th = ths >= 0 ? int32_t(float(lang.fonts[size_t(ths)].glyphs.height) * ts) : 0;
-	for (size_t p = 0; p < w.huds.size() && p < w.cameras.size() && p < hudLayers.size(); p++) {
-		const Hud& h = w.huds[p];
-		const PlayerCamera& cam = w.cameras[p];
+	const int32_t th = ths >= 0 ? int32_t(float(data->languages[language].fonts[size_t(ths)].glyphs.height) * ts) : 0;
+	for (size_t p = 0; p < w.raceView.huds.size() && p < w.raceView.cameras.size() && p < hudLayers.size(); p++) {
+		const Hud& h = w.raceView.huds[p];
+		const PlayerCamera& cam = w.raceView.cameras[p];
 		const size_t i = size_t(cam.racer);
-		const Racer& r = w.racers[i];
+		const Racer& r = w.racers.race[i];
 		hudLayers[p].first = uint32_t(elements.size());
 		const int32_t vl = cam.viewport[0], vt = cam.viewport[1], vr = cam.viewport[2], vb = cam.viewport[3], width = vr - vl;
 		const MenuRect view = {vl, vt, vr, vb};
 		const int32_t rx = vr - ((11 * longWidth) >> 3), y1 = vt + 7, y2 = y1 + ((7 * th) >> 3), y3 = y1 + ((14 * th) >> 3), y4 = y1 + ((21 * th) >> 3);
 		const int32_t px = vl + width / 10, cx = (vl + vr) >> 1;
-		// A time at the time column (a short one moved right by the difference): the x it was drawn at.
-		const auto time = [&](int32_t t, int32_t y) {
-			const std::u16string text = raceTime(t);
-			const int32_t x = rx + (text.size() == 7 ? longWidth - shortWidth : 0);
-			drawScaled(ths, text, x, y, ts, ts, White);
-			return x;
-		};
-		// The banner.
 		if (h.banner != 0 && h.visible) {
-			std::u16string text;
-			float scale = bs;
-			uint32_t colour = White;
-			if (h.banner > 0) {
-				const int32_t s = h.banner / 1000;
-				colour = 0xffffff00;
-				if (s < 3) {
-					text = std::u16string(1, char16_t(u'3' - s));
-					scale *= float(1000 * (s + 1) - h.banner) * 1.8f * 0.001f;
-				}
-				else if (s < 5) {
-					text = lang.game.at(41);
-					scale *= s == 3 ? 1.8f : float(5000 - h.banner) * 0.0018f;
-				}
-			}
-			else {
-				text = lang.game.at(40);
-			}
-			if (!text.empty()) {
-				drawScaled(ignum, text, cx - (int32_t(float(lineWidth(ignum, text)) * scale) >> 1), y4 - (int32_t(64.0f * scale) >> 2), scale, scale, colour);
-			}
+			drawHudBanner(w, p, cx, y4);
 		}
 		if (r.flags & RacerGhost) {
 			hudLayers[p].second = uint32_t(elements.size());
 			continue; // (in the warp tube: only the banner)
 		}
 		if (!testDrive) {
-			// The lap row: the lap (alone), LAP, the lap's time (the last lap's while a new one is under 3 s, blinking;
-			// the last once finished, blinking 3 s with FINISH).
-			const int32_t n = std::min(r.laps + 1, laps);
-			const std::u16string lap = number(n);
-			const int32_t lapX = rx - (int32_t(float(lineWidth(ths, lap)) * ts) + int32_t(14 * ts));
-			drawScaled(ths, lap, lapX, y1, ts, ts, White);
-			drawScaled(ths, lang.game.at(39), lapX - (int32_t(34 * ts) + int32_t(6 * ts)), y1, ts, ts, White);
-			if (r.laps < laps) {
-				const int32_t t = r.lapMs[std::clamp(r.laps, 0, 4)];
-				if (r.laps > 0 && t < 3000) {
-					if ((t / 250) % 2 == 0) {
-						time(r.lapMs[r.laps - 1], y1);
-					}
-				}
-				else {
-					time(t, y1);
-				}
-			}
-			else if (!(h.banner < 0 && -h.banner < 3000 && (-h.banner / 250) % 2 == 1)) {
-				time(r.lapMs[std::clamp(laps - 1, 0, 4)], y1);
-			}
-			if (h.bestMs > 0) {
-				drawScaled(ths, lang.game.at(37), rx - (int32_t(49 * ts) + int32_t(14 * ts)), y2, ts, ts, White);
-				time(h.bestMs, y2);
-			}
-			if (timed) {
-				drawScaled(ths, lang.game.at(38), rx - 74, y3, 1, 1, White);
-				int32_t total = 0;
-				for (int32_t l = 0; l < 5 && (r.laps < laps ? l <= r.laps : l < r.laps); l++) {
-					total += r.lapMs[l];
-				}
-				time(total, y3);
-			}
-			else if (h.place >= 0 && h.place < 8) {
-				const float k = h.pulseMs == 0 ? 1.0f
-					: h.pulseMs <= 175            ? 1.0f + float(h.pulseMs) / 175.0f
-					: h.pulseMs <= 350            ? 2.0f - float(h.pulseMs - 175) / 175.0f
-					                              : 1.0f;
-				drawScaled(ths, lang.game.at(size_t(25 + h.place)), px + 5, y1, ts, ts, White);
-				const std::u16string digit(1, char16_t(u'1' + h.place));
-				drawScaled(ignum, digit, px - int32_t(float(lineWidth(ignum, digit)) * ts), y1, ts * k, ts * k, White);
-			}
-			if (r.timeBehindMs > 0) {
-				const int32_t x = time(r.timeBehind, y4);
-				if (h.visible) {
-					drawScaled(ths, lang.game.at(33), x - 11, y4, 1, 1, White);
-				}
-			}
-			if ((r.flags & RacerWrongWayShown) && h.visible) {
-				const std::u16string_view text = lang.game.at(36);
-				drawScaled(ths, text, cx - (lineWidth(ths, text) >> 1), vt + (vb - vt) / 5, 1, 1, White);
-			}
+			drawHudTimes(w, p, {ths, ignum, ts, shortWidth, longWidth, rx, px, cx, y1, y2, y3, y4, vt, vb});
 		}
-		// The power-up frame: a colour or a white brick held.
-		const Power& pw = w.powers[i];
-		if (pw.held != NoColour || pw.whiteCount > 0) {
-			const int32_t level = std::min<int32_t>(pw.whiteCount, 3);
-			const int32_t fx = vl + (width >> 5), fy = vb - 74;
-			static constexpr int32_t Icons[5] = {-1, 2, 16, 20, 6};
-			static constexpr uint32_t Tints[5] = {0xffffffff, 0xffff0000, 0xff5050ff, 0xff00ff00, 0xffffff00};
-			const size_t colour = std::min<size_t>(pw.held, 4);
-			drawImage(image(11), {fx, fy, fx + 64, fy + 64}, {0, 0, 64, 64}, nullptr, White);
-			drawImage(image(12), {fx, fy, fx + 64, fy + 64}, {0, 0, 64, 64}, nullptr, Tints[colour]);
-			if (Icons[colour] >= 0) {
-				drawImage(image(size_t(Icons[colour] + level)), {fx + 15, fy + 22, fx + 47, fy + 54}, {0, 0, 32, 32}, nullptr, White);
-			}
-			if (level > 0) {
-				drawImage(image(size_t(12 + level)), {fx + 24, fy, fx + 88, fy + 64}, {0, 0, 64, 64}, nullptr, White);
-			}
-		}
+		drawPowerFrame(w, i, view);
 		// The gadget.
-		const uint8_t mode = p < w.mapModes.size() ? w.mapModes[p] : 1;
-		if (mode == 2) {
-			// The speedometer: its dial, the needle (two triangles), the hub.
-			const int32_t wd = int32_t(128 * ms);
-			drawImage(image(0), {vr - wd - 2, vb - wd - 2, vr - 2, vb - 2}, {0, 0, 128, 128}, nullptr, White);
-			const float hx = float(vr - ((52 * wd) >> 7) - 2), hy = float(vb - ((52 * wd) >> 7) - 2);
-			const float theta = std::clamp(h.speed * 18.0f, 0.0f, 3.4f) + 2.25f;
-			const auto at = [&](float length, float angle) {
-				return std::array<float, 4>{hx + length * std::cos(angle) * ms, hy + length * std::sin(angle) * ms, -1, -1};
-			};
-			const std::array<float, 4> tip = at(45, theta), left = at(7, theta + 2.0943952f), right = at(7, theta + 4.1887903f);
-			const std::array<float, 4> hub = {hx, hy, -1, -1};
-			drawTriangle(-1, {right, tip, hub}, {0xff969696, 0xff969696, 0xffc8c8c8}, view);
-			drawTriangle(-1, {left, hub, tip}, {White, 0xffc8c8c8, White}, view);
-			const int32_t size = int32_t(16 * ms);
-			const int32_t dx = int32_t(hx) - (size >> 1), dy = int32_t(hy) - (size >> 1);
-			drawImage(image(1), {dx, dy, dx + size, dy + size}, {0, 0, 16, 16}, nullptr, White);
+		const uint8_t mode = p < w.raceView.mapModes.size() ? w.raceView.mapModes[p] : uint8_t(GadgetFixedMap);
+		if (mode == GadgetSpeedometer) {
+			drawSpeedometer(w, p, view);
 		}
-		else if ((mode == 1 || mode == 3) && track) {
-			const std::array<float, 4>& b = track->mapBounds; // min x, max y, max x, min y
-			const float minX = b[0], maxY = b[1], maxX = b[2], minY = b[3];
-			const bool mirrored = w.brief.mirrored;
-			const int32_t row = split ? 16 : 0;
-			const auto dot = [&](int32_t x, int32_t y, bool red) {
-				drawImage(image(10), {x - 8, y - 8, x + 8, y + 8}, {red ? 16 : 0, row, (red ? 16 : 0) + 16, row + 16}, &view, White);
-			};
-			const Vec3 me = w.visible[i].position;
-			if (mode == 1) {
-				const int32_t ox = vr - 15, oy = vb - 15;
-				const float g = 128.0f / std::max(maxX - minX, maxY - minY) * ms;
-				const float ry = mirrored ? -maxY : minY;
-				const auto toMap = [&](Vec3 at, int32_t& x, int32_t& y) {
-					x = ox + int32_t((at.x - maxX) * g);
-					y = oy + int32_t((ry - at.y) * g);
-				};
-				if (track->map >= 0) {
-					const float x0 = float(ox) + (minX - maxX) * g, top = float(oy) + (minY - maxY) * g, x1 = float(ox), bottom = float(oy);
-					const float vTop = mirrored ? 0.0f : 0.999f, vBottom = mirrored ? 0.999f : 0.0f;
-					const std::array<uint32_t, 3> c = {0xc8ffffff, 0xc8ffffff, 0xc8ffffff};
-					drawTriangle(track->map, {{{x0, top, 0, vTop}, {x1, top, 0.999f, vTop}, {x1, bottom, 0.999f, vBottom}}}, c, view);
-					drawTriangle(track->map, {{{x0, bottom, 0, vBottom}, {x0, top, 0, vTop}, {x1, bottom, 0.999f, vBottom}}}, c, view);
-				}
-				for (size_t j = w.racers.size(); j-- > 0;) {
-					if (j != i) {
-						int32_t x, y;
-						toMap(w.visible[j].position, x, y);
-						dot(x, y, j == 1 && w.racers[1].ai);
-					}
-				}
-				if (timed) {
-					const auto ghost = [&](const GhostRun& run, bool valid, bool red) {
-						Vec3 at;
-						Quat q;
-						if (valid && !run.finished && w.ghostAt(run, at, q)) {
-							int32_t x, y;
-							toMap(at, x, y);
-							dot(x, y, red);
-						}
-					};
-					ghost(w.timeRace.record, w.timeRace.recordValid, true);
-					ghost(w.timeRace.best, w.timeRace.bestValid, false);
-				}
-				int32_t x, y;
-				toMap(me, x, y);
-				const Vec3 f = w.visible[i].rotation.f;
-				const float len = std::sqrt(f.x * f.x + f.y * f.y);
-				const float dx = len > 0 ? f.x / len : 1, dy = len > 0 ? -f.y / len : 0, nx = dy, ny = -dx;
-				const auto arrow = [&](float tip, float back, float half, uint32_t colour) {
-					const float ax = float(x), ay = float(y);
-					drawTriangle(-1,
-						{{{ax - back * dx + half * nx, ay - back * dy + half * ny, -1, -1}, {ax + tip * dx, ay + tip * dy, -1, -1},
-							{ax - back * dx - half * nx, ay - back * dy - half * ny, -1, -1}}},
-						{colour, colour, colour}, view);
-				};
-				arrow(9.5f, 6.5f, 5.5f, 0xff000000);
-				arrow(8.0f, 5.0f, 4.0f, 0xff00ff00);
-			}
-			else {
-				// The rotating map: ahead is up, around this racer, inside its box.
-				const int32_t size = int32_t(128 * ms);
-				const MenuRect box = {vr - 15 - size, vb - 15 - size, vr - 15, vb - 15};
-				const float bx = float(box.left + box.right) * 0.5f, by = float(box.top + box.bottom) * 0.5f;
-				Vec3 r_, d_, l_;
-				cam.shownRows(r_, d_, l_);
-				const float vlen = std::sqrt(l_.x * l_.x + l_.y * l_.y);
-				const float ddx = vlen > 0 ? l_.x / vlen * 0.12f * ms : 0, ddy = vlen > 0 ? l_.y / vlen * 0.12f * ms : 0;
-				const auto toBox = [&](float x, float y, float& sx, float& sy) {
-					const float ex = x - me.x, ey = y - me.y;
-					sx = bx + (ex * ddy - ey * ddx);
-					sy = by - (ex * ddx + ey * ddy);
-				};
-				if (track->map >= 0) {
-					const float yTop = mirrored ? -minY : maxY, yBottom = mirrored ? -maxY : minY;
-					const float vTop = mirrored ? 0.0f : 0.999f, vBottom = mirrored ? 0.999f : 0.0f;
-					std::array<std::array<float, 4>, 4> c;
-					toBox(minX, yTop, c[0][0], c[0][1]);
-					toBox(maxX, yTop, c[1][0], c[1][1]);
-					toBox(maxX, yBottom, c[2][0], c[2][1]);
-					toBox(minX, yBottom, c[3][0], c[3][1]);
-					c[0][2] = 0, c[1][2] = 0.999f, c[2][2] = 0.999f, c[3][2] = 0;
-					c[0][3] = c[1][3] = vTop, c[2][3] = c[3][3] = vBottom;
-					const std::array<uint32_t, 3> colour = {0xc8ffffff, 0xc8ffffff, 0xc8ffffff};
-					drawTriangle(track->map, {c[0], c[1], c[3]}, colour, box);
-					drawTriangle(track->map, {c[3], c[1], c[2]}, colour, box);
-				}
-				for (size_t j = w.racers.size(); j-- > 0;) {
-					if (j != i) {
-						float sx, sy;
-						toBox(w.visible[j].position.x, w.visible[j].position.y, sx, sy);
-						dot(int32_t(sx), int32_t(sy), j == 1 && w.racers[1].ai);
-					}
-				}
-				const auto arrow = [&](float tip, float back, float half, uint32_t colour) {
-					// (pointing up: d = (0, -1), n = (-1, 0))
-					drawTriangle(-1, {{{bx - half, by + back, -1, -1}, {bx, by - tip, -1, -1}, {bx + half, by + back, -1, -1}}}, {colour, colour, colour}, box);
-				};
-				arrow(9.5f, 6.5f, 5.5f, 0xff000000);
-				arrow(8.0f, 5.0f, 4.0f, 0xff00ff00);
-				// Its 1-px white frame.
-				const float l = float(box.left), t = float(box.top), rr = float(box.right), bb = float(box.bottom);
-				const auto band = [&](float left, float top, float right, float bottom) {
-					drawTriangle(-1, {{{left, top, -1, -1}, {right, top, -1, -1}, {right, bottom, -1, -1}}}, {White, White, White}, Screen640);
-					drawTriangle(-1, {{{left, bottom, -1, -1}, {left, top, -1, -1}, {right, bottom, -1, -1}}}, {White, White, White}, Screen640);
-				};
-				band(l, t, rr, t + 1);
-				band(l, bb - 1, rr, bb);
-				band(l, t + 1, l + 1, bb - 1);
-				band(rr - 1, t + 1, rr, bb - 1);
-			}
+		else if (mode == GadgetFixedMap && track) {
+			drawFixedMap(w, p, *track, view);
+		}
+		else if (mode == GadgetRotatingMap && track) {
+			drawRotatingMap(w, p, *track, view);
 		}
 		hudLayers[p].second = uint32_t(elements.size());
 	}
 }
 
-void Menus::drawRace(const World& w)
+namespace {
+
+// A slot's name on the standings, and whether its row shows (players' rows blink).
+std::u16string_view slotName(const World& w, int32_t slot) { return std::u16string_view(w.session.brief.slots[size_t(slot)].name); }
+bool rowShown(const World& w, int32_t slot) { return !w.racers.race[size_t(slot)].player || w.session.blinkMs >= 150; }
+
+// A racer's race time: its laps' times summed.
+int32_t raceMsOf(const World& w, int32_t s)
 {
-	elements.clear();
-	glyphs.clear();
-	scenes.clear();
-	drawHud(w);
+	int32_t sum = 0;
+	for (int32_t lap = 0; lap < w.session.raceLaps; lap++) {
+		sum += w.racers.race[size_t(s)].lapMs[lap];
+	}
+	return sum;
+}
+
+} // namespace
+
+// The race's standings: by this race's points (ties to the last slot), with the gaps to the leader.
+void Menus::drawRaceStandings(const World& w)
+{
 	const MenuData::Language& lang = data->languages[language];
 	const int16_t font = int16_t(lang.raceFonts);
 	const uint32_t white = 0xffffffff;
-	const int32_t n = int32_t(w.racers.size());
-	const auto name = [&](int32_t slot) { return std::u16string_view(w.brief.slots[size_t(slot)].name); };
-	const auto shown = [&](int32_t slot) { return !w.racers[size_t(slot)].player || w.blinkMs >= 150; }; // players' rows blink
-	// The standings: the race's (by this race's points, ties to the last slot, with the gaps to the leader), then the
-	// circuit's (by its points, ties to the first slot).
-	const int32_t table = w.standingsTable();
-	if (table == 1) {
-		int32_t leader = n - 1, best = 0;
-		for (int32_t s = 0; s < n; s++) {
-			if (w.roundPoints[size_t(s)] >= best) {
-				best = w.roundPoints[size_t(s)];
-				leader = s;
-			}
-		}
-		const auto raceMs = [&](int32_t s) {
-			int32_t sum = 0;
-			for (int32_t lap = 0; lap < w.raceLaps; lap++) {
-				sum += w.racers[size_t(s)].lapMs[lap];
-			}
-			return sum;
-		};
-		std::array<bool, 6> taken = {};
-		char16_t sign = u'+';
-		for (int32_t row = 0, y = 132; row < n && y < 324; row++, y += 32) {
-			int32_t pick = leader;
-			for (int32_t s = 0, most = 0; s < n; s++) {
-				if (!taken[size_t(s)] && w.roundPoints[size_t(s)] >= most) {
-					most = w.roundPoints[size_t(s)];
-					pick = s;
-				}
-			}
-			taken[size_t(pick)] = true;
-			if (!shown(pick)) {
-				continue;
-			}
-			drawLine(font, number(row + 1), 20, y, white);
-			drawLine(font, name(pick), 50, y, white);
-			drawLine(font, number(w.roundPoints[size_t(pick)]), 450, y, white);
-			if (pick == leader) {
-				drawLine(font, lang.game.at(42), 500, y, white);
-			}
-			else if (w.racers[size_t(pick)].flags & RacerFinished) {
-				const int32_t gap = raceMs(pick) - raceMs(leader);
-				sign = gap > 0 ? u'+' : gap < 0 ? u'-' : sign;
-				drawLine(font, raceTime(std::abs(gap)), 520, y, white);
-				drawLine(font, std::u16string(1, sign), 500, y, white);
-			}
-			else {
-				drawLine(font, lang.game.at(43), 500, y, white);
-			}
+	const int32_t n = int32_t(w.racers.race.size());
+	int32_t leader = n - 1, best = 0;
+	for (int32_t s = 0; s < n; s++) {
+		if (w.session.roundPoints[size_t(s)] >= best) {
+			best = w.session.roundPoints[size_t(s)];
+			leader = s;
 		}
 	}
-	else if (table == 2) {
-		const std::u16string_view title = lang.game.at(45);
-		drawLine(font, title, 320 - (lineWidth(font, title) >> 1), 60, white);
-		std::array<bool, 6> taken = {};
-		for (int32_t row = 0, y = 132; row < n && y < 324; row++, y += 32) {
-			int32_t pick = 0;
-			for (int32_t s = 0, most = 0; s < n; s++) {
-				if (!taken[size_t(s)] && w.circuitPoints[size_t(s)] > most) {
-					most = w.circuitPoints[size_t(s)];
-					pick = s;
-				}
+	std::array<bool, 6> taken = {};
+	char16_t sign = u'+';
+	for (int32_t row = 0, y = 132; row < n && y < 324; row++, y += 32) {
+		int32_t pick = leader;
+		for (int32_t s = 0, most = 0; s < n; s++) {
+			if (!taken[size_t(s)] && w.session.roundPoints[size_t(s)] >= most) {
+				most = w.session.roundPoints[size_t(s)];
+				pick = s;
 			}
-			taken[size_t(pick)] = true;
-			if (!shown(pick)) {
-				continue;
-			}
-			drawLine(font, number(row + 1), 20, y, white);
-			drawLine(font, name(pick), 50, y, white);
-			drawLine(font, number(w.circuitPoints[size_t(pick)]), 450, y, white);
+		}
+		taken[size_t(pick)] = true;
+		if (!rowShown(w, pick)) {
+			continue;
+		}
+		drawLine(font, number(row + 1), 20, y, white);
+		drawLine(font, slotName(w, pick), 50, y, white);
+		drawLine(font, number(w.session.roundPoints[size_t(pick)]), 450, y, white);
+		if (pick == leader) {
+			drawLine(font, lang.game.at(42), 500, y, white);
+		}
+		else if (w.racers.race[size_t(pick)].flags & RacerFinished) {
+			const int32_t gap = raceMsOf(w, pick) - raceMsOf(w, leader);
+			sign = gap > 0 ? u'+' : gap < 0 ? u'-' : sign;
+			drawLine(font, raceTime(std::abs(gap)), 520, y, white);
+			drawLine(font, std::u16string(1, sign), 500, y, white);
+		}
+		else {
+			drawLine(font, lang.game.at(43), 500, y, white);
 		}
 	}
-	// The attract demo's DEMO, blinking.
-	if (w.brief.mode == RaceBrief::Mode::Demo && w.demoMs > 250) {
-		const int16_t ths = data->raceFont(language, "font_ths");
-		const std::u16string_view demo = lang.game.at(46);
-		drawLine(ths, demo, 320 - (lineWidth(ths, demo) >> 1), 443, white);
+}
+
+// The circuit's standings: by its points (ties to the first slot).
+void Menus::drawCircuitStandings(const World& w)
+{
+	const MenuData::Language& lang = data->languages[language];
+	const int16_t font = int16_t(lang.raceFonts);
+	const uint32_t white = 0xffffffff;
+	const int32_t n = int32_t(w.racers.race.size());
+	const std::u16string_view title = lang.game.at(45);
+	drawLine(font, title, 320 - (lineWidth(font, title) >> 1), 60, white);
+	std::array<bool, 6> taken = {};
+	for (int32_t row = 0, y = 132; row < n && y < 324; row++, y += 32) {
+		int32_t pick = 0;
+		for (int32_t s = 0, most = 0; s < n; s++) {
+			if (!taken[size_t(s)] && w.session.circuitPoints[size_t(s)] > most) {
+				most = w.session.circuitPoints[size_t(s)];
+				pick = s;
+			}
+		}
+		taken[size_t(pick)] = true;
+		if (!rowShown(w, pick)) {
+			continue;
+		}
+		drawLine(font, number(row + 1), 20, y, white);
+		drawLine(font, slotName(w, pick), 50, y, white);
+		drawLine(font, number(w.session.circuitPoints[size_t(pick)]), 450, y, white);
 	}
-	// The opening fade from black.
-	if (w.openingMs > 0) {
-		const int32_t alpha = 255 * w.openingMs / 500;
-		drawQuad(Screen640, uint32_t(alpha) << 24, alpha);
-	}
-	// The fade to black, under the dialog.
-	if (w.fade.active && w.fade.ms > 0) {
-		const int32_t alpha = int32_t(255.0f * (1.0f - float(w.fade.left) / float(w.fade.ms)));
-		drawQuad(Screen640, uint32_t(alpha) << 24, alpha);
-	}
-	const RaceDialog& d = w.dialog;
+}
+
+// The race's dialog over it.
+void Menus::drawRaceDialog(const World& w)
+{
+	const MenuData::Language& lang = data->languages[language];
+	const int16_t font = int16_t(lang.raceFonts);
+	const uint32_t white = 0xffffffff;
+	const RaceDialog& d = w.session.dialog;
 	if (d.kind == RaceDialog::None) {
 		return;
 	}
@@ -999,7 +1102,7 @@ void Menus::drawRace(const World& w)
 		if (i == d.selection && !d.chosen) {
 			// Blinking, its alpha pulsing.
 			if (d.blinkMs < 250) {
-				const int32_t angle = int32_t(float(d.blinkMs) * 0.002f * 6.2831855f * -162.97466f);
+				const int32_t angle = int32_t(float(d.blinkMs) * 0.002f * Tau * -162.97466f);
 				const int32_t alpha = 191 + int32_t(cosEntry((-256 - angle) & 1023) * -64.0f);
 				centred(d.options[size_t(i)], y, uint32_t(alpha) << 24 | 0xffff24);
 			}
@@ -1007,6 +1110,41 @@ void Menus::drawRace(const World& w)
 		}
 		centred(d.options[size_t(i)], y, 0xff7f7f12);
 	}
+}
+
+void Menus::drawRace(const World& w)
+{
+	elements.clear();
+	glyphs.clear();
+	scenes.clear();
+	drawHud(w);
+	const MenuData::Language& lang = data->languages[language];
+	const uint32_t white = 0xffffffff;
+	// The standings table showing: the race's or the circuit's.
+	const int32_t table = w.standingsTable();
+	if (table == 1) {
+		drawRaceStandings(w);
+	}
+	else if (table == 2) {
+		drawCircuitStandings(w);
+	}
+	// The attract demo's DEMO, blinking.
+	if (w.session.brief.mode == RaceBrief::Mode::Demo && w.raceView.demoMs > 250) {
+		const int16_t ths = data->raceFont(language, "font_ths");
+		const std::u16string_view demo = lang.game.at(46);
+		drawLine(ths, demo, 320 - (lineWidth(ths, demo) >> 1), 443, white);
+	}
+	// The opening fade from black.
+	if (w.session.openingMs > 0) {
+		const int32_t alpha = 255 * w.session.openingMs / 500;
+		drawQuad(Screen640, uint32_t(alpha) << 24, alpha);
+	}
+	// The fade to black, under the dialog.
+	if (w.session.fade.active && w.session.fade.ms > 0) {
+		const int32_t alpha = int32_t(255.0f * (1.0f - float(w.session.fade.left) / float(w.session.fade.ms)));
+		drawQuad(Screen640, uint32_t(alpha) << 24, alpha);
+	}
+	drawRaceDialog(w);
 }
 
 } // namespace lr
@@ -1026,7 +1164,8 @@ uint32_t encoded(float l)
 struct Linear {
 	std::array<float, 256> of;
 	std::vector<uint8_t> tinted; // [texel][colour]
-	Linear() : tinted(256 * 256)
+	Linear()
+		: tinted(256 * 256)
 	{
 		for (size_t i = 0; i < 256; i++) {
 			const float c = float(i) / 255.0f;
@@ -1044,8 +1183,7 @@ const Linear linear;
 
 // Texels from (u0, v0)..(u1, v1) over the pixels whose centres lie in [x0, x1) x [y0, y1), keyed texels left out,
 // times the colour.
-void paintTexels(const uint8_t* rgba, int32_t width, int32_t height, bool keyed, uint32_t key, std::array<float, 4> d, std::array<float, 4> s,
-	uint32_t colour, uint32_t* target)
+void paintTexels(const uint8_t* rgba, int32_t width, int32_t height, bool keyed, uint32_t key, std::array<float, 4> d, std::array<float, 4> s, uint32_t colour, uint32_t* target)
 {
 	if (!rgba || d[2] <= d[0] || d[3] <= d[1]) {
 		return;
@@ -1066,7 +1204,7 @@ void paintTexels(const uint8_t* rgba, int32_t width, int32_t height, bool keyed,
 				continue;
 			}
 			out[px] = (colour & 0xffffff) == 0xffffff ? 0xff000000u | uint32_t(t[0]) << 16 | uint32_t(t[1]) << 8 | t[2]
-				: 0xff000000u | linear.tint(t[0], cr) << 16 | linear.tint(t[1], cg) << 8 | linear.tint(t[2], cb);
+													  : 0xff000000u | linear.tint(t[0], cr) << 16 | linear.tint(t[1], cg) << 8 | linear.tint(t[2], cb);
 		}
 	}
 }
@@ -1156,8 +1294,8 @@ void paint(const MenuData& data, size_t language, std::span<const MenuElement> e
 			const MenuData::Font& f = data.languages[language].fonts[size_t(e.image)];
 			for (uint32_t g = e.firstGlyph; g < e.firstGlyph + e.glyphCount; g++) {
 				const MenuGlyph& q = glyphs[g];
-				paintTexels(f.rgba.data(), int32_t(f.width), int32_t(f.glyphs.height), f.keyed, f.key,
-					{float(q.dest[0]), float(q.dest[1]), float(q.dest[2]), float(q.dest[3])}, q.source, e.colour, target);
+				paintTexels(f.rgba.data(), int32_t(f.width), int32_t(f.glyphs.height), f.keyed, f.key, {float(q.dest[0]), float(q.dest[1]), float(q.dest[2]), float(q.dest[3])},
+					q.source, e.colour, target);
 			}
 			break;
 		}

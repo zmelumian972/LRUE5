@@ -3,6 +3,7 @@
 // What the cues show in 3D and what the sounds and particles do is the presentation's.
 
 #include "LRCore/Menus/Menus.h"
+#include "LRData/Archive.h"
 
 #include <algorithm>
 #include <cctype>
@@ -21,13 +22,6 @@ int32_t cinemaTune(uint16_t screen)
 	return screen >= 22 && screen <= 37 ? Tunes[screen - 22] : -1;
 }
 
-// Names as the scene files compare them: up to 8 characters, case-insensitively.
-bool sameName(std::string_view a, std::string_view b)
-{
-	a = a.substr(0, 8), b = b.substr(0, 8);
-	return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) { return std::tolower(uint8_t(x)) == std::tolower(uint8_t(y)); });
-}
-
 } // namespace
 
 bool Menus::cinematicScreen() const { return screen == ScreenLegal || screen == ScreenCredits || (screen >= 22 && screen <= 37 && screen != 29 && screen != 30); }
@@ -44,8 +38,7 @@ void Menus::startCinema(Game& g)
 	// The model swaps: the awards', the win cars' and circuit 7's guy1 shows the player's
 	// minifig (the win car's: slot 1's, the champion just beaten), their carbody the player's car (the win car's: the
 	// champion's quick-build car).
-	state.cinemaSwap = screen == ScreenWinCar || screen == ScreenRocketCar || (screen >= ScreenAward1 && screen <= ScreenAward1 + 3) ||
-		screen == ScreenCircuitIntro + 6;
+	state.cinemaSwap = screen == ScreenWinCar || screen == ScreenRocketCar || (screen >= ScreenAward1 && screen <= ScreenAward1 + 3) || screen == ScreenCircuitIntro + 6;
 	cinemaCar = {};
 	state.cinemaRacer = {};
 	if (state.cinemaSwap) {
@@ -53,8 +46,7 @@ void Menus::startCinema(Game& g)
 		if (player) {
 			state.cinemaRacer = *player;
 		}
-		state.cinemaLooks = {state.cinemaRacer.looks[0], state.cinemaRacer.looks[1], state.cinemaRacer.looks[2], state.cinemaRacer.looks[3],
-			state.cinemaRacer.expression};
+		state.cinemaLooks = {state.cinemaRacer.looks[0], state.cinemaRacer.looks[1], state.cinemaRacer.looks[2], state.cinemaRacer.looks[3], state.cinemaRacer.expression};
 		if (screen == ScreenWinCar && g.circuit >= 0) {
 			const std::string& name = data->circuits.circuits[size_t(g.circuit)].drivers[1];
 			const DriverTable::Driver* d = data->drivers.find(name);
@@ -63,8 +55,7 @@ void Menus::startCinema(Game& g)
 				state.cinemaLooks = driverLooks(*d);
 				const ChampionTable::Champion* champion = data->champions.find(d->champion);
 				for (const MenuData::QuickBuild& q : data->quickBuilds) {
-					if (champion && q.name == u"CHAMP" && std::equal(q.chassis.begin(), q.chassis.end(), champion->chassis.begin(), champion->chassis.end(),
-						[](char a, char b) { return std::tolower(uint8_t(a)) == std::tolower(uint8_t(b)); })) {
+					if (champion && q.name == u"CHAMP" && equalsIgnoreCase(q.chassis, champion->chassis)) {
 						state.cinemaRacer.pieces = q.pieces;
 						break;
 					}
@@ -259,9 +250,7 @@ void Menus::effect(size_t e, bool start, int32_t cue)
 		}
 		return;
 	}
-	default:
-		c.effects.push_back({int16_t(e), start});
-		return;
+	default: c.effects.push_back({int16_t(e), start}); return;
 	}
 }
 
