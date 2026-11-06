@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <span>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 namespace lr {
@@ -35,12 +36,12 @@ struct LRDATA_API Tokens {
 	std::string_view textOf(const Token& token) const { return text.data() + token.text; }
 };
 
-// Reads a Tokens list in order. Any mismatch sets failed() and later reads return zeros, so a reader checks once at
-// the end.
+// Decodes a token stream and reads it in order. A malformed stream or any mismatch sets failed() and later reads
+// return zeros, so a reader checks once at the end.
 class LRDATA_API TokenReader {
 public:
-	explicit TokenReader(const Tokens& tokens)
-		: m_tokens(tokens)
+	explicit TokenReader(std::span<const uint8_t> bytes)
+		: m_failed(!m_tokens.decode(bytes))
 	{
 	}
 
@@ -53,6 +54,9 @@ public:
 	void expect(Token::Kind kind);
 	int32_t integer();
 	float real();
+	float number(); // a real the file may write as an integer
+	// x truncated to an integer; one that doesn't fit (NaN, infinite, too large) fails the reader and gives 0.
+	int32_t truncated(float x);
 	template <size_t N> std::array<float, N> reals()
 	{
 		std::array<float, N> v;
@@ -66,6 +70,31 @@ public:
 	// "[ n ] {": a block of n items (the caller reads them, then close()).
 	uint32_t openCounted();
 	void close() { expect(Token::Close); }
+	// "[n] { ... }": calls item() for each item while nothing has failed, then reads the "}". An item that returns
+	// false fails the reader.
+	template <typename Item> void counted(Item item)
+	{
+		const uint32_t count = openCounted();
+		for (uint32_t i = 0; i < count && !m_failed; i++) {
+			if (!call(item)) {
+				m_failed = true;
+			}
+		}
+		close();
+	}
+	// "[n] { K(key) ... }": as counted(), each item after its keyword.
+	template <typename Item> void entries(int key, Item item)
+	{
+		counted([&] { return keyword() == key && call(item); });
+	}
+	// "K(key) [n] { K(key) ... }": a table, its entries keyed as it is.
+	template <typename Item> void table(int key, Item item)
+	{
+		if (keyword() != key) {
+			m_failed = true;
+		}
+		entries(key, item);
+	}
 	void skipCounted(); // a whole "[ n ] { ... }"
 	void skipBlock(); // a whole "{ ... }", nested blocks included
 	size_t position() const { return m_at; }
@@ -73,10 +102,20 @@ public:
 	const Tokens& tokens() const { return m_tokens; }
 
 private:
+	template <typename F> static bool call(F& f)
+	{
+		if constexpr (std::is_void_v<decltype(f())>) {
+			f();
+			return true;
+		}
+		else {
+			return f();
+		}
+	}
 	const Token* take(Token::Kind kind);
 	void skipToClose(); // past the "}" that closes the block just opened
 
-	const Tokens& m_tokens;
+	Tokens m_tokens;
 	size_t m_at = 0;
 	bool m_failed = false;
 };

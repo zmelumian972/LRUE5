@@ -4,6 +4,7 @@
 // they name (.BMP, .TGA), the colour key applied and dilated.
 
 #include "LRData/Api.h"
+#include "LRData/Index.h"
 
 #include <array>
 #include <cstdint>
@@ -47,7 +48,7 @@ struct LRDATA_API MaterialLibrary {
 		bool additive() const { return blend && source == SourceAlpha && destination == One; }
 		bool operator==(const Material&) const = default;
 	};
-	std::vector<Material> materials;
+	List<Material> materials;
 
 	int32_t find(std::string_view name) const; // -1 none
 	[[nodiscard]] bool decode(std::span<const uint8_t> bytes);
@@ -56,7 +57,8 @@ struct LRDATA_API MaterialLibrary {
 
 // A material by name across the libraries loaded, `loaded` oldest first, searched newest first; which
 // library it came from (its texture is that library's list's). Null: found nowhere (a load error in the original).
-LRDATA_API const MaterialLibrary::Material* findMaterial(std::span<const MaterialLibrary* const> loaded, std::string_view name, size_t* library = nullptr);
+LRDATA_API const MaterialLibrary::Material* findMaterial(std::span<const MaterialLibrary* const> loaded, std::string_view name,
+	size_t* library = nullptr);
 
 struct LRDATA_API TextureList {
 	struct Entry {
@@ -68,7 +70,7 @@ struct LRDATA_API TextureList {
 		std::array<uint8_t, 3> key = {}; // r g b
 		bool operator==(const Entry&) const = default;
 	};
-	std::vector<Entry> textures;
+	List<Entry> textures;
 
 	int32_t find(std::string_view name) const; // -1 none
 	[[nodiscard]] bool decode(std::span<const uint8_t> bytes);

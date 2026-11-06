@@ -110,10 +110,10 @@ void ULRRaceMixer::Update(const lr::Show& Show, const lr::Cache& Cache)
 		return;
 	}
 	FScopeLock Guard(&Shared->Lock);
-	for (size_t v = 0; v < lr::Show::Voices; v++) {
+	for (size_t v = 0; v < lr::RaceSounds::Voices; v++) {
 		FVoice& V = Shared->Voices[v];
-		const lr::ShowSound* S = Show.voices[v] ? Show.find(Show.voices[v]) : nullptr;
-		const FSample* Sample = S ? SampleOf(UTF8_TO_TCHAR(Show.sample(S->id).c_str()), Cache) : nullptr;
+		const lr::ShowSound* S = Show.sounds.voices[v] ? Show.sounds.find(Show.sounds.voices[v]) : nullptr;
+		const FSample* Sample = S ? SampleOf(UTF8_TO_TCHAR(Show.sounds.sample(S->id).c_str()), Cache) : nullptr;
 		if (!Sample) {
 			V = FVoice();
 			continue;
@@ -127,7 +127,7 @@ void ULRRaceMixer::Update(const lr::Show& Show, const lr::Cache& Cache)
 		}
 		// The device's law: the gain from the heard volume, the far channel down by the pan (a
 		// negative pan: the sound on the left), the rate the sample's times the heard pitch.
-		const float Gain = lr::Show::gainOf(S->heard), Far = lr::Show::panGain(S->pan);
+		const float Gain = lr::RaceSounds::gainOf(S->heard), Far = lr::RaceSounds::panGain(S->pan);
 		V.Left = Gain * (S->pan > 0 ? Far : 1.0f);
 		V.Right = Gain * (S->pan < 0 ? Far : 1.0f);
 		V.Step = double(int32(float(Sample->Rate) * S->heardPitch)) / MixRate;

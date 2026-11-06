@@ -7,7 +7,7 @@ namespace lr {
 namespace {
 
 // .WDB
-enum : int {
+enum : int32_t {
 	SceneModels = 0x2a, // [n] { "name" ... }
 	SceneSkeletons = 0x2c,
 	SceneAnimations = 0x29,
@@ -47,7 +47,7 @@ enum : int {
 };
 
 // .SDB
-enum : int {
+enum : int32_t {
 	SkeletonNodes = 0x27, // [n] { K(0x27) "name" { fields } ... }
 	NodePosition = 0x28,
 	NodeRotation = 0x29,
@@ -55,7 +55,7 @@ enum : int {
 };
 
 // .MAB
-enum : int {
+enum : int32_t {
 	MaterialFrames = 0x27, // [n] { "texture" i ... }
 	MaterialTracks = 0x28, // [n] { K(0x28) { K(0x27) i first i count, K(0x29) i duration, K(0x2a) i rate } ... }
 	TrackFrames = 0x27,
@@ -63,16 +63,9 @@ enum : int {
 	TrackRate = 0x2a,
 };
 
-// A value the file may write as an integer or a real.
-float number(TokenReader& r) { return r.next(Token::Integer) ? float(r.tokens().list[r.position() - 1].integer) : r.real(); }
-
 void names(TokenReader& r, std::vector<std::string>& into)
 {
-	const uint32_t count = r.openCounted();
-	for (uint32_t i = 0; i < count && !r.failed(); i++) {
-		into.emplace_back(r.text());
-	}
-	r.close();
+	r.counted([&] { into.emplace_back(r.text()); });
 }
 
 // Values, or a counted block, after a keyword this reader doesn't use.
@@ -131,7 +124,8 @@ bool readEntity(TokenReader& r, int section, SceneFile::Entity& e)
 		if (key < 0) {
 			return false;
 		}
-		const bool level = (key == EntityModel && section == SceneEntities) || key == EntityAnimatedModel || (key == EntitySkeleton && section == SceneAnimated);
+		const bool level = (key == EntityModel && section == SceneEntities) || key == EntityAnimatedModel ||
+			(key == EntitySkeleton && section == SceneAnimated);
 		if (level) {
 			readEntityLevel(r, key, e);
 		}
@@ -139,11 +133,7 @@ bool readEntity(TokenReader& r, int section, SceneFile::Entity& e)
 			e.scroll = r.reals<2>();
 		}
 		else if (key == EntityMaterialAnimation) {
-			const uint32_t n = r.openCounted();
-			for (uint32_t b = 0; b < n && !r.failed(); b++) {
-				e.materialBindings.push_back({r.integer(), r.integer(), r.integer(), r.integer()});
-			}
-			r.close();
+			r.counted([&] { e.materialBindings.push_back({r.integer(), r.integer(), r.integer(), r.integer()}); });
 			continue;
 		}
 		else if (key == EntityPosition) {
@@ -216,7 +206,7 @@ bool readLight(TokenReader& r, SceneFile::Light& l)
 		const int key = r.keyword();
 		if (key == LightColour || key == LightDirection) {
 			for (float& x : key == LightColour ? l.colour : l.direction) {
-				x = number(r);
+				x = r.number();
 			}
 		}
 		else if (key < 0) {
@@ -250,14 +240,10 @@ bool readSprite(TokenReader& r, SceneFile::Sprite& s)
 }
 
 // A section's counted entries "K(section) ["name"] { fields }" (a sprite has no name), each's fields read by
-// read(r, entry). False if one doesn't decode.
-template <class T, class Read> bool readEntries(TokenReader& r, int section, std::vector<T>& list, Read read)
+// read(r, entry). One that doesn't decode fails the reader.
+template <class T, class Read> void readEntries(TokenReader& r, int section, std::vector<T>& list, Read read)
 {
-	const uint32_t count = r.openCounted();
-	for (uint32_t i = 0; i < count && !r.failed(); i++) {
-		if (r.keyword() != section) {
-			return false;
-		}
+	r.entries(section, [&] {
 		T& entry = list.emplace_back();
 		if constexpr (requires { entry.name; }) {
 			if (!r.next(Token::Open)) {
@@ -268,12 +254,8 @@ template <class T, class Read> bool readEntries(TokenReader& r, int section, std
 		else {
 			r.expect(Token::Open);
 		}
-		if (!read(r, entry)) {
-			return false;
-		}
-	}
-	r.close();
-	return true;
+		return read(r, entry);
+	});
 }
 
 } // namespace
@@ -281,14 +263,9 @@ template <class T, class Read> bool readEntries(TokenReader& r, int section, std
 bool SceneFile::decode(std::span<const uint8_t> bytes)
 {
 	*this = {};
-	Tokens tokens;
-	if (!tokens.decode(bytes)) {
-		return false;
-	}
-	TokenReader r(tokens);
+	TokenReader r(bytes);
 	while (!r.atEnd() && !r.failed()) {
 		const int section = r.keyword();
-		bool ok = true;
 		switch (section) {
 		case SceneModels: names(r, models); break;
 		case SceneSkeletons: names(r, skeletons); break;
@@ -299,17 +276,15 @@ bool SceneFile::decode(std::span<const uint8_t> bytes)
 		case SceneUnplaced: names(r, unplaced); break;
 		case SceneEntities:
 		case SceneAnimated:
-			ok = readEntries(r, section, section == SceneEntities ? entities : animated, [section](TokenReader& in, Entity& e) { return readEntity(in, section, e); });
+			readEntries(r, section, section == SceneEntities ? entities : animated,
+				[section](TokenReader& in, Entity& e) { return readEntity(in, section, e); });
 			break;
-		case SceneCameras: ok = readEntries(r, section, cameras, readCamera); break;
+		case SceneCameras: readEntries(r, section, cameras, readCamera); break;
 		case SceneAmbients:
-		case SceneLights: ok = readEntries(r, section, section == SceneAmbients ? ambients : lights, readLight); break;
-		case SceneSprites: ok = readEntries(r, section, sprites, readSprite); break;
+		case SceneLights: readEntries(r, section, section == SceneAmbients ? ambients : lights, readLight); break;
+		case SceneSprites: readEntries(r, section, sprites, readSprite); break;
 		case -1: return false;
 		default: skipField(r); // texture and material lists, the sky
-		}
-		if (!ok) {
-			return false;
 		}
 	}
 	return !r.failed();
@@ -318,19 +293,8 @@ bool SceneFile::decode(std::span<const uint8_t> bytes)
 bool SkeletonFile::decode(std::span<const uint8_t> bytes)
 {
 	*this = {};
-	Tokens tokens;
-	if (!tokens.decode(bytes)) {
-		return false;
-	}
-	TokenReader r(tokens);
-	if (r.keyword() != SkeletonNodes) {
-		return false;
-	}
-	const uint32_t count = r.openCounted();
-	for (uint32_t i = 0; i < count && !r.failed(); i++) {
-		if (r.keyword() != SkeletonNodes) {
-			return false;
-		}
+	TokenReader r(bytes);
+	r.table(SkeletonNodes, [&] {
 		Node& n = nodes.emplace_back();
 		n.name = r.text();
 		r.expect(Token::Open);
@@ -343,39 +307,29 @@ bool SkeletonFile::decode(std::span<const uint8_t> bytes)
 			default: r.skipValues();
 			}
 		}
-	}
-	r.close();
+		return true;
+	});
 	return !r.failed();
 }
 
 bool MaterialAnimationFile::decode(std::span<const uint8_t> bytes)
 {
 	*this = {};
-	Tokens tokens;
-	if (!tokens.decode(bytes)) {
-		return false;
-	}
-	TokenReader r(tokens);
+	TokenReader r(bytes);
 	while (!r.atEnd() && !r.failed()) {
 		const int section = r.keyword();
 		if (section == MaterialFrames) {
-			const uint32_t count = r.openCounted();
-			for (uint32_t i = 0; i < count && !r.failed(); i++) {
+			r.counted([&] {
 				Frame& f = frames.emplace_back();
 				f.material = r.text();
 				f.start = r.integer();
-			}
-			r.close();
+			});
 			continue;
 		}
 		if (section != MaterialTracks) {
 			return false;
 		}
-		const uint32_t count = r.openCounted();
-		for (uint32_t i = 0; i < count && !r.failed(); i++) {
-			if (r.keyword() != MaterialTracks) {
-				return false;
-			}
+		r.entries(MaterialTracks, [&] {
 			Track& t = tracks.emplace_back();
 			r.expect(Token::Open);
 			while (!r.failed() && !r.next(Token::Close)) {
@@ -390,8 +344,8 @@ bool MaterialAnimationFile::decode(std::span<const uint8_t> bytes)
 				default: r.skipValues();
 				}
 			}
-		}
-		r.close();
+			return true;
+		});
 	}
 	return !r.failed();
 }

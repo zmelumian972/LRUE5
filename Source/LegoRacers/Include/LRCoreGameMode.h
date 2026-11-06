@@ -80,7 +80,6 @@ private:
 	void PoseViews();
 	void BuildRace();
 	void ClearRace();
-	AActor* NewActor(const FTransform& At);
 };
 
 UCLASS()

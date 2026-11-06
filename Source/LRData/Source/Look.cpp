@@ -10,7 +10,7 @@ namespace lr {
 namespace {
 
 // The material keys.
-enum : int {
+enum : int32_t {
 	KeyEntry = 0x27,
 	KeyAmbient = 0x28,
 	KeyDiffuse = 0x29,
@@ -38,7 +38,7 @@ enum : int {
 	KeyAlphaLast = 0x50,
 };
 // The texture list's.
-enum : int {
+enum : int32_t {
 	KeyFlip = 0x28,
 	KeyMipLevels = 0x29,
 	KeyBmp = 0x2a, // the source is the entry's name .BMP (decided from the data: no file name follows)
@@ -63,12 +63,7 @@ std::array<uint8_t, 4> colour(TokenReader& r)
 
 int32_t MaterialLibrary::find(std::string_view name) const
 {
-	for (size_t i = 0; i < materials.size(); i++) {
-		if (equalsIgnoreCase(materials[i].name, name)) {
-			return int32_t(i);
-		}
-	}
-	return -1;
+	return indexWhere(materials, [&](const Material& m) { return equalsIgnoreCase(m.name, name); });
 }
 
 const MaterialLibrary::Material* findMaterial(std::span<const MaterialLibrary* const> loaded, std::string_view name, size_t* library)
@@ -79,7 +74,7 @@ const MaterialLibrary::Material* findMaterial(std::span<const MaterialLibrary* c
 			if (library) {
 				*library = i;
 			}
-			return &loaded[i]->materials[size_t(m)];
+			return &loaded[i]->materials[m];
 		}
 	}
 	return nullptr;
@@ -88,19 +83,8 @@ const MaterialLibrary::Material* findMaterial(std::span<const MaterialLibrary* c
 bool MaterialLibrary::decode(std::span<const uint8_t> bytes)
 {
 	*this = {};
-	Tokens tokens;
-	if (!tokens.decode(bytes)) {
-		return false;
-	}
-	TokenReader r(tokens);
-	if (r.keyword() != KeyEntry) {
-		return false;
-	}
-	const uint32_t count = r.openCounted();
-	for (uint32_t i = 0; i < count && !r.failed(); i++) {
-		if (r.keyword() != KeyEntry) {
-			return false;
-		}
+	TokenReader r(bytes);
+	r.table(KeyEntry, [&] {
 		Material& m = materials.emplace_back();
 		m.name = upTo8(r.text());
 		bool textured = false;
@@ -151,7 +135,8 @@ bool MaterialLibrary::decode(std::span<const uint8_t> bytes)
 			else if (key == KeyRotate) {
 				m.rotate = true;
 			}
-			else if (key == KeyFlat || key == KeyGouraud || key == KeyModulate || key == KeyDecal || (key >= KeyIgnoredFirst && key <= KeyIgnoredLast)) {
+			else if (key == KeyFlat || key == KeyGouraud || key == KeyModulate || key == KeyDecal ||
+				(key >= KeyIgnoredFirst && key <= KeyIgnoredLast)) {
 			}
 			else {
 				return false;
@@ -160,37 +145,21 @@ bool MaterialLibrary::decode(std::span<const uint8_t> bytes)
 		if (!textured) {
 			m.texture.clear();
 		}
-	}
-	r.close();
+		return true;
+	});
 	return !r.failed();
 }
 
 int32_t TextureList::find(std::string_view name) const
 {
-	for (size_t i = 0; i < textures.size(); i++) {
-		if (equalsIgnoreCase(textures[i].name, name)) {
-			return int32_t(i);
-		}
-	}
-	return -1;
+	return indexWhere(textures, [&](const Entry& e) { return equalsIgnoreCase(e.name, name); });
 }
 
 bool TextureList::decode(std::span<const uint8_t> bytes)
 {
 	*this = {};
-	Tokens tokens;
-	if (!tokens.decode(bytes)) {
-		return false;
-	}
-	TokenReader r(tokens);
-	if (r.keyword() != KeyEntry) {
-		return false;
-	}
-	const uint32_t count = r.openCounted();
-	for (uint32_t i = 0; i < count && !r.failed(); i++) {
-		if (r.keyword() != KeyEntry) {
-			return false;
-		}
+	TokenReader r(bytes);
+	r.table(KeyEntry, [&] {
 		Entry& e = textures.emplace_back();
 		e.name = upTo8(r.text());
 		bool sourced = false;
@@ -224,8 +193,8 @@ bool TextureList::decode(std::span<const uint8_t> bytes)
 			return false;
 		}
 		e.file = e.name + (e.targa ? ".TGA" : ".BMP");
-	}
-	r.close();
+		return true;
+	});
 	return !r.failed();
 }
 

@@ -10,6 +10,7 @@
 
 #include "LRCore/Common/Api.h"
 #include "LRCore/Kart/Kart.h"
+#include "LRData/Index.h"
 
 #include <cstdint>
 #include <string_view>
@@ -31,7 +32,7 @@ struct LRCORE_API Route {
 	Vec3 start, loop; // the start pose, and the pose at the end of the loop point's segment: where laps go on
 	Quat startRotation, loopRotation;
 	int32_t loopTime, loopPoint;
-	std::vector<Point> points;
+	List<Point> points;
 
 	// "GAMEDATA/RACEC0R1/R1_F_0.RRB". False if it is missing or malformed.
 	[[nodiscard]] bool load(const Cache& cache, std::string_view path, bool mirrored);
@@ -77,7 +78,8 @@ LRCORE_API void attachAtLoop(Playback& play, Kart& kart, Pose& visible, const Ka
 
 // One step of dt ms: the rate, the cursor, the motion (side offset, hop, lift, tilt, spin) into the visible pose, the
 // velocity, and the sweep of the worlds past the track. What the sweep met is appended to hits.
-LRCORE_API void stepPlayback(Playback& play, Kart& kart, Pose& visible, const KartParams& params, const Track& track, const Route& route, int32_t dt, std::vector<SweepHit>* hits);
+LRCORE_API void stepPlayback(Playback& play, Kart& kart, Pose& visible, const KartParams& params, const Track& track, const Route& route,
+	int32_t dt, std::vector<SweepHit>* hits);
 
 // A bump: the kart is pushed along its line (dir, magnitude) and moved by `moved` (along the line, then sideways
 // within its widths).

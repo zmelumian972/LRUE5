@@ -13,7 +13,7 @@ namespace {
 // The piece library's material list (.MDB: K(0x27) [n] { K(0x27) "name" { ... } ... }).
 constexpr int MaterialEntry = 0x27;
 // The piece library (.LEB).
-enum : int {
+enum : int32_t {
 	PieceList = 0x27, // [n] { "name" type shape count offset ... }
 	PieceCommands = 0x28, // [n] { i ... }: the index stream
 	PiecePositions = 0x29, // [n] { x y z ... }
@@ -22,7 +22,7 @@ enum : int {
 	PieceShapes = 0x2c, // [n] { first second ... }: shape bytes in pairs
 };
 // The car sets: L_COLORS.LEB's colours, CRSTMGR.LEB's set files and each set file's fields.
-enum : int {
+enum : int32_t {
 	SetColours = 0x2d, // [10] { "name" ... }
 	SetFiles = 0x2f, // [12] { "file" ... }
 	SetPart = 0x2e, // i
@@ -30,7 +30,7 @@ enum : int {
 	SetChassis = 0x31, // "name"
 };
 // The driver part catalog (BODYPART.PCB).
-enum : int {
+enum : int32_t {
 	CatalogWorldFiles = 0x27,
 	CatalogModelFolders = 0x28,
 	CatalogHats = 0x29,
@@ -63,18 +63,18 @@ struct ListedPiece {
 
 // A listed piece's shape: (width, height), its cells column by column, then a chassis' anchor (lo, hi). False if the
 // listing points outside the shapes or the commands.
-bool shapePiece(PieceLibrary& lib, const ListedPiece& l, const std::vector<std::array<int32_t, 2>>& shapes)
+bool shapePiece(PieceLibrary& lib, const ListedPiece& l, const List<std::array<int32_t, 2>>& shapes)
 {
 	PieceLibrary::Piece& p = lib.pieces.emplace_back();
 	p.name = l.name;
 	p.type = l.type;
 	p.first = uint32_t(l.offset);
 	p.count = uint32_t(l.count);
-	if (l.shape < 0 || size_t(l.shape) >= shapes.size() || l.offset < 0 || size_t(l.offset) > lib.commands.size()) {
+	if (!inRange(shapes, l.shape) || l.offset < 0 || size_t(l.offset) > lib.commands.size()) {
 		return false;
 	}
-	p.width = uint8_t(shapes[size_t(l.shape)][0]);
-	p.height = uint8_t(shapes[size_t(l.shape)][1]);
+	p.width = uint8_t(shapes[l.shape][0]);
+	p.height = uint8_t(shapes[l.shape][1]);
 	const size_t n = size_t(p.width) * p.height;
 	if (size_t(l.shape) + 1 + n + (p.chassis() ? 1 : 0) > shapes.size()) {
 		return false;
@@ -118,12 +118,7 @@ const PieceLibrary::Piece* PieceLibrary::find(int32_t type) const
 
 const PieceLibrary::Piece* PieceLibrary::find(std::string_view name) const
 {
-	for (const Piece& p : pieces) {
-		if (equalsIgnoreCase(p.name, name.substr(0, 8))) {
-			return &p;
-		}
-	}
-	return nullptr;
+	return findWhere(pieces, [&](const Piece& p) { return equalsIgnoreCase(p.name, name.substr(0, 8)); });
 }
 
 int32_t PieceLibrary::material(std::string_view name) const
@@ -135,12 +130,8 @@ int32_t PieceLibrary::material(std::string_view name) const
 bool PieceLibrary::decode(std::span<const uint8_t> pieceFile, std::span<const uint8_t> materialFile)
 {
 	*this = {};
-	Tokens tokens;
-	if (!tokens.decode(materialFile)) {
-		return false;
-	}
 	// K27 [n] { K27 "name" { ... } ... }
-	TokenReader mr(tokens);
+	TokenReader mr(materialFile);
 	if (mr.keyword() != MaterialEntry) {
 		return false;
 	}
@@ -152,23 +143,16 @@ bool PieceLibrary::decode(std::span<const uint8_t> pieceFile, std::span<const ui
 		materials.emplace_back(mr.text().substr(0, 8));
 		mr.skipBlock();
 	}
-	if (mr.failed() || !tokens.decode(pieceFile)) {
+	if (mr.failed()) {
 		return false;
 	}
-	TokenReader r(tokens);
-	std::vector<std::array<int32_t, 2>> shapes;
+	TokenReader r(pieceFile);
+	List<std::array<int32_t, 2>> shapes;
 	std::vector<ListedPiece> listed;
 	while (!r.atEnd() && !r.failed()) {
 		switch (r.keyword()) {
 		case PieceShapes: readTuples(r, shapes); break;
-		case PieceCommands: {
-			const uint32_t n = r.openCounted();
-			for (uint32_t i = 0; i < n && !r.failed(); i++) {
-				commands.push_back(uint16_t(r.integer()));
-			}
-			r.close();
-			break;
-		}
+		case PieceCommands: r.counted([&] { commands.push_back(uint16_t(r.integer())); }); break;
 		case PiecePositions: readTuples(r, positions); break;
 		case PieceNormals: {
 			std::vector<std::array<int32_t, 3>> n;
@@ -179,16 +163,13 @@ bool PieceLibrary::decode(std::span<const uint8_t> pieceFile, std::span<const ui
 			break;
 		}
 		case PieceUvs: readTuples(r, uvs); break;
-		case PieceList: {
-			const uint32_t n = r.openCounted();
-			for (uint32_t i = 0; i < n && !r.failed(); i++) {
+		case PieceList:
+			r.counted([&] {
 				ListedPiece& l = listed.emplace_back();
 				l.name = std::string(r.text().substr(0, 8));
 				l.type = r.integer(), l.shape = r.integer(), l.count = r.integer(), l.offset = r.integer();
-			}
-			r.close();
+			});
 			break;
-		}
 		default: return false;
 		}
 	}
@@ -206,22 +187,13 @@ bool PieceLibrary::decode(std::span<const uint8_t> pieceFile, std::span<const ui
 
 int32_t CarSets::setOfPart(int32_t part) const
 {
-	for (size_t i = 0; i < sets.size(); i++) {
-		if (sets[i].part == part) {
-			return int32_t(i);
-		}
-	}
-	return -1;
+	return indexWhere(sets, [&](const Set& s) { return s.part == part; });
 }
 
 bool CarSets::load(const Archive& archive, const PieceLibrary& library)
 {
 	*this = {};
-	Tokens tokens;
-	if (!tokens.decode(archive.read("MENUDATA/PIECEDB/L_COLORS.LEB"))) {
-		return false;
-	}
-	TokenReader c(tokens);
+	TokenReader c(archive.read("MENUDATA/PIECEDB/L_COLORS.LEB"));
 	if (c.keyword() != SetColours || c.openCounted() != colours.size()) {
 		return false;
 	}
@@ -230,47 +202,41 @@ bool CarSets::load(const Archive& archive, const PieceLibrary& library)
 		materials[i] = library.material(colours[i]);
 	}
 	c.close();
-	if (c.failed() || !tokens.decode(archive.read("MENUDATA/PIECEDB/CRSTMGR.LEB"))) {
+	if (c.failed()) {
 		return false;
 	}
 	std::vector<std::string> files;
-	TokenReader m(tokens);
+	TokenReader m(archive.read("MENUDATA/PIECEDB/CRSTMGR.LEB"));
 	if (m.keyword() != SetFiles) {
 		return false;
 	}
-	const uint32_t count = m.openCounted();
-	for (uint32_t i = 0; i < count && !m.failed(); i++) {
+	m.counted([&] {
 		const std::string file = upper(m.text());
 		files.push_back("MENUDATA/PIECEDB/" + file.substr(0, file.rfind('.')) + ".LEB");
-	}
-	m.close();
+	});
 	if (m.failed()) {
 		return false;
 	}
 	for (const std::string& file : files) {
-		Tokens set;
-		if (!set.decode(archive.read(file))) {
+		TokenReader r(archive.read(file));
+		if (r.failed()) {
 			return false;
 		}
-		TokenReader r(set);
 		Set& s = sets.emplace_back();
 		while (!r.atEnd() && !r.failed()) {
 			switch (r.keyword()) {
 			case SetPart: s.part = r.integer(); break;
 			case SetChassis: s.chassis = std::string(r.text().substr(0, 16)); break;
-			case SetChoices: {
-				const uint32_t n = r.openCounted();
-				for (uint32_t i = 0; i < n && !r.failed(); i++) {
+			case SetChoices:
+				r.counted([&] {
 					Choice& choice = s.choices.emplace_back();
 					const PieceLibrary::Piece* piece = library.find(r.text());
 					choice.type = piece ? piece->type : 0;
 					const std::string_view colour = r.text().substr(0, 8);
 					const auto it = std::find(colours.begin(), colours.end(), colour);
 					choice.colour = it == colours.end() ? -1 : int32_t(it - colours.begin());
-				}
-				r.close();
+				});
 				break;
-			}
 			default: return false;
 			}
 		}
@@ -284,11 +250,7 @@ bool CarSets::load(const Archive& archive, const PieceLibrary& library)
 bool PartCatalog::decode(std::span<const uint8_t> bytes)
 {
 	*this = {};
-	Tokens tokens;
-	if (!tokens.decode(bytes)) {
-		return false;
-	}
-	TokenReader r(tokens);
+	TokenReader r(bytes);
 	// A ring's list: its model folders, then per part a name, a variant (torsos, legs) and the unlock value.
 	const auto ring = [&](std::vector<Part>& out, int folders, bool variants) {
 		const uint32_t n = r.openCounted();
@@ -305,11 +267,7 @@ bool PartCatalog::decode(std::span<const uint8_t> bytes)
 	};
 	const auto names = [&] {
 		std::vector<std::string> out;
-		const uint32_t n = r.openCounted();
-		for (uint32_t i = 0; i < n && !r.failed(); i++) {
-			out.emplace_back(r.text().substr(0, 8));
-		}
-		r.close();
+		r.counted([&] { out.emplace_back(r.text().substr(0, 8)); });
 		return out;
 	};
 	while (!r.atEnd() && !r.failed()) {

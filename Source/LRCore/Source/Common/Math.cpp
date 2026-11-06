@@ -1,5 +1,6 @@
 #include "LRCore/Common/Math.h"
 
+#include <algorithm>
 #include <array>
 
 namespace lr {
@@ -28,10 +29,10 @@ const Tables& tables()
 float tableAcos(float d)
 {
 	const int i = int((d + 1) * 511.5f);
-	return tables().acos[i < 0 ? 0 : i > 1023 ? 1023 : i];
+	return tables().acos[std::clamp(i, 0, 1023)];
 }
 
-float tableCos(float angle) { return cosEntry(int32_t(angle * 162.974655f)); }
+float tableCos(float angle) { return cosEntry(int32_t(angle * 162.97466f)); }
 
 float cosEntry(int32_t index) { return tables().cos[index & 1023]; }
 

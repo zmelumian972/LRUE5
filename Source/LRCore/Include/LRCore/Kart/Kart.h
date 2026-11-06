@@ -161,8 +161,8 @@ struct SweepHit {
 // One body step of dt ms (1..40), with its race checks. What the sweeps met is appended to hits; the car as drawn
 // (leaning, and before the race checks put the body back) goes to drawn.
 // Each substep's wheel surfaces (in contact, rolling forward) go to surfaces.
-LRCORE_API void stepBody(Kart& kart, const KartParams& params, const Track& track, int32_t dt, std::vector<SweepHit>* hits = nullptr, Pose* drawn = nullptr,
-	std::vector<std::array<int16_t, 4>>* surfaces = nullptr);
+LRCORE_API void stepBody(Kart& kart, const KartParams& params, const Track& track, int32_t dt, std::vector<SweepHit>* hits = nullptr,
+	Pose* drawn = nullptr, std::vector<std::array<int16_t, 4>>* surfaces = nullptr);
 
 // The drawn car's pose: the body's, leaned by the visual bank (raised so the low side stays down).
 LRCORE_API Pose drawnPose(const Kart& kart, const KartParams& params);
@@ -253,6 +253,7 @@ struct Controls {
 };
 
 // Once per frame, before the steps. While blocked (before the start) nothing is sent.
-LRCORE_API void updateControls(Controls& controls, uint16_t keys, bool blocked, int32_t frameMs, Driver& driver, Kart& kart, const KartParams& params);
+LRCORE_API void updateControls(Controls& controls, uint16_t keys, bool blocked, int32_t frameMs, Driver& driver, Kart& kart,
+	const KartParams& params);
 
 } // namespace lr

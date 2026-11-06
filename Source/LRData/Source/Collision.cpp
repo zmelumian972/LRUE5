@@ -7,7 +7,7 @@ namespace lr {
 namespace {
 
 // .WDB
-enum : int {
+enum : int32_t {
 	DbModels = 0x28, // [n] { "name" ... }: the display models (not collision)
 	DbMaterialTables = 0x2b, // [n] { "name" ... }: material-table overrides (no track has them)
 	DbVolumes = 0x40, // [n] { "bvb name" ... }
@@ -19,7 +19,7 @@ enum : int {
 };
 
 // .BVB
-enum : int {
+enum : int32_t {
 	VolumeMaterials = 0x27, // [n] { "name" ... }
 	VolumeVertices = 0x34, // [n] { r r r ... }
 	VolumeTriangles = 0x2d, // [n] { i v0, i v1, i v2, i material ... }
@@ -30,7 +30,7 @@ enum : int {
 };
 
 // .TMB
-enum : int {
+enum : int32_t {
 	TableSurfaces = 0x27, // [n] { K(0x27) "name" { properties } ... }
 	PropFirst = 0x28, // properties 0x28..0x39 set flag bit (key - 0x27)
 	PropTouchEvent = 0x2a,
@@ -47,18 +47,6 @@ enum : int {
 	PropNonSolid = 0x37,
 	PropLast = 0x39,
 };
-
-void names(TokenReader& r, std::vector<std::string>* into)
-{
-	const uint32_t count = r.openCounted();
-	for (uint32_t i = 0; i < count && !r.failed(); i++) {
-		const std::string_view name = r.text();
-		if (into) {
-			into->emplace_back(name);
-		}
-	}
-	r.close();
-}
 
 // A node child: -1 or -2, or 0xfffe and up as 16 bits, or the keywords, mean none.
 int32_t child(TokenReader& r)
@@ -80,21 +68,13 @@ int32_t child(TokenReader& r)
 bool CollisionDatabase::decode(std::span<const uint8_t> bytes)
 {
 	*this = {};
-	Tokens tokens;
-	if (!tokens.decode(bytes)) {
-		return false;
-	}
-	TokenReader r(tokens);
+	TokenReader r(bytes);
 	while (!r.atEnd() && !r.failed()) {
 		switch (r.keyword()) {
-		case DbModels: names(r, nullptr); break;
-		case DbVolumes: names(r, &volumes); break;
-		case DbEntities: {
-			const uint32_t count = r.openCounted();
-			for (uint32_t i = 0; i < count && !r.failed(); i++) {
-				if (r.keyword() != DbEntities) {
-					return false;
-				}
+		case DbModels: r.counted([&] { r.text(); }); break;
+		case DbVolumes: r.counted([&] { volumes.emplace_back(r.text()); }); break;
+		case DbEntities:
+			r.entries(DbEntities, [&] {
 				Entity& e = entities.emplace_back();
 				if (!r.next(Token::Open)) {
 					e.name = r.text();
@@ -111,10 +91,9 @@ bool CollisionDatabase::decode(std::span<const uint8_t> bytes)
 					default: return false; // including material-table overrides
 					}
 				}
-			}
-			r.close();
+				return true;
+			});
 			break;
-		}
 		default: return false;
 		}
 	}
@@ -132,15 +111,11 @@ bool CollisionDatabase::decode(std::span<const uint8_t> bytes)
 bool BoundingVolume::decode(std::span<const uint8_t> bytes)
 {
 	*this = {};
-	Tokens tokens;
-	if (!tokens.decode(bytes)) {
-		return false;
-	}
-	TokenReader r(tokens);
+	TokenReader r(bytes);
 	while (!r.atEnd() && !r.failed()) {
 		const int key = r.keyword();
 		if (key == VolumeMaterials) {
-			names(r, &materials);
+			r.counted([&] { materials.emplace_back(r.text()); });
 			continue;
 		}
 		const uint32_t count = r.openCounted();
@@ -192,7 +167,8 @@ bool BoundingVolume::decode(std::span<const uint8_t> bytes)
 	}
 	for (const Node& n : nodes) {
 		// Every node needs a triangle: its plane passes through the first one's vertex 0.
-		if (n.count == 0 || uint64_t(n.first) + n.count > triangles.size() || n.child[0] >= int32_t(nodes.size()) || n.child[1] >= int32_t(nodes.size())) {
+		if (n.count == 0 || uint64_t(n.first) + n.count > triangles.size() || n.child[0] >= int32_t(nodes.size()) ||
+			n.child[1] >= int32_t(nodes.size())) {
 			return false;
 		}
 	}
@@ -202,19 +178,8 @@ bool BoundingVolume::decode(std::span<const uint8_t> bytes)
 bool SurfaceFile::decode(std::span<const uint8_t> bytes)
 {
 	*this = {};
-	Tokens tokens;
-	if (!tokens.decode(bytes)) {
-		return false;
-	}
-	TokenReader r(tokens);
-	if (r.keyword() != TableSurfaces) {
-		return false;
-	}
-	const uint32_t count = r.openCounted();
-	for (uint32_t i = 0; i < count && !r.failed(); i++) {
-		if (r.keyword() != TableSurfaces) {
-			return false;
-		}
+	TokenReader r(bytes);
+	r.table(TableSurfaces, [&] {
 		Surface& s = surfaces.emplace_back();
 		s.name = r.text();
 		r.expect(Token::Open);
@@ -242,8 +207,8 @@ bool SurfaceFile::decode(std::span<const uint8_t> bytes)
 				}
 			}
 		}
-	}
-	r.close();
+		return true;
+	});
 	return !r.failed() && r.atEnd();
 }
 

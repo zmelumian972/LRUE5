@@ -143,53 +143,53 @@ template <class T> inline constexpr bool IsPlain = std::is_arithmetic_v<T> || st
 
 template <class T> struct IsVector : std::false_type {};
 template <class T, class A> struct IsVector<std::vector<T, A>> : std::true_type {};
+template <class T> struct IsVector<List<T>> : std::true_type {};
 template <class T> struct IsArray : std::false_type {};
 template <class T, size_t N> struct IsArray<std::array<T, N>> : std::true_type {};
+template <class T, size_t N> struct IsArray<Array<T, N>> : std::true_type {};
 template <class T> struct IsString : std::false_type {};
 template <class C> struct IsString<std::basic_string<C>> : std::true_type {};
+
+// Walks a value for a writer or a reader: they differ only in raw() and in sized(), a string's or vector's count.
+template <class W, class T> void walk(W& w, T& x)
+{
+	if constexpr (IsPlain<T>) {
+		w.raw(&x, sizeof(T));
+	}
+	else if constexpr (IsString<T>::value || IsVector<T>::value) {
+		w.sized(x);
+		if constexpr (IsPlain<typename T::value_type>) {
+			w.raw(x.data(), x.size() * sizeof(typename T::value_type));
+		}
+		else {
+			for (auto& item : x) {
+				walk(w, item);
+			}
+		}
+	}
+	else if constexpr (IsArray<T>::value || std::is_array_v<T>) {
+		for (auto& item : x) {
+			walk(w, item);
+		}
+	}
+	else {
+		fields(w, x);
+	}
+}
 
 struct RecordWriter {
 	std::vector<uint8_t>& out;
 
-	template <class... T> void operator()(T&... items) { (put(items), ...); }
+	template <class... T> void operator()(T&... items) { (walk(*this, items), ...); }
 	void raw(const void* data, size_t size)
 	{
 		const uint8_t* p = static_cast<const uint8_t*>(data);
 		out.insert(out.end(), p, p + size);
 	}
-	void count(size_t n)
+	template <class C> void sized(C& x)
 	{
-		const uint32_t c = uint32_t(n);
+		const uint32_t c = uint32_t(x.size());
 		raw(&c, 4);
-	}
-	template <class T> void put(T& x)
-	{
-		if constexpr (IsPlain<T>) {
-			raw(&x, sizeof(T));
-		}
-		else if constexpr (IsString<T>::value) {
-			count(x.size());
-			raw(x.data(), x.size() * sizeof(typename T::value_type));
-		}
-		else if constexpr (IsVector<T>::value) {
-			count(x.size());
-			if constexpr (IsPlain<typename T::value_type>) {
-				raw(x.data(), x.size() * sizeof(typename T::value_type));
-			}
-			else {
-				for (auto& item : x) {
-					put(item);
-				}
-			}
-		}
-		else if constexpr (IsArray<T>::value || std::is_array_v<T>) {
-			for (auto& item : x) {
-				put(item);
-			}
-		}
-		else {
-			fields(*this, x);
-		}
 	}
 };
 
@@ -198,7 +198,7 @@ struct RecordReader {
 	size_t at = 0;
 	bool failed = false;
 
-	template <class... T> void operator()(T&... items) { (get(items), ...); }
+	template <class... T> void operator()(T&... items) { (walk(*this, items), ...); }
 	bool raw(void* data, size_t size)
 	{
 		if (failed || !fits(in, at, size)) {
@@ -211,44 +211,15 @@ struct RecordReader {
 		at += size;
 		return true;
 	}
-	size_t count()
+	template <class C> void sized(C& x)
 	{
 		uint32_t c = 0;
 		raw(&c, 4);
 		if (!fits(in, at, c)) { // (every item is at least a byte)
 			failed = true;
-			return 0;
+			c = 0;
 		}
-		return c;
-	}
-	template <class T> void get(T& x)
-	{
-		if constexpr (IsPlain<T>) {
-			raw(&x, sizeof(T));
-		}
-		else if constexpr (IsString<T>::value) {
-			x.resize(count());
-			raw(x.data(), x.size() * sizeof(typename T::value_type));
-		}
-		else if constexpr (IsVector<T>::value) {
-			x.resize(count());
-			if constexpr (IsPlain<typename T::value_type>) {
-				raw(x.data(), x.size() * sizeof(typename T::value_type));
-			}
-			else {
-				for (auto& item : x) {
-					get(item);
-				}
-			}
-		}
-		else if constexpr (IsArray<T>::value || std::is_array_v<T>) {
-			for (auto& item : x) {
-				get(item);
-			}
-		}
-		else {
-			fields(*this, x);
-		}
+		x.resize(c);
 	}
 };
 

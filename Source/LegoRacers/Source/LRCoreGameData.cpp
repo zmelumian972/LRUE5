@@ -97,7 +97,8 @@ FString PickJam()
 FString PickJam()
 {
 	const TPair<const TCHAR*, FString> Tools[] = {
-		{TEXT("/usr/bin/zenity"), FString::Printf(TEXT("--file-selection --title=\"%s\" --file-filter=\"LEGO.JAM | *.JAM *.jam\""), PickerTitle)},
+		{TEXT("/usr/bin/zenity"),
+			FString::Printf(TEXT("--file-selection --title=\"%s\" --file-filter=\"LEGO.JAM | *.JAM *.jam\""), PickerTitle)},
 		{TEXT("/usr/bin/kdialog"), FString::Printf(TEXT("--getopenfilename . \"*.JAM *.jam|LEGO.JAM\" --title \"%s\""), PickerTitle)}};
 	for (const auto& [Tool, Params] : Tools) {
 		if (!FPaths::FileExists(Tool)) {
@@ -112,9 +113,9 @@ FString PickJam()
 	}
 	UE_LOG(LogLRCore, Error, TEXT("no file dialog (install zenity or kdialog), and no install found"));
 	FMessageDialog::Open(EAppMsgType::Ok,
-		FText::FromString(FString::Printf(
-			TEXT("This computer has no file picker to choose LEGO.JAM with.\n\n"
-				 "Install zenity or kdialog, or copy LEGO.JAM, LEGORacers.exe and the .TUN music files from your LEGO Racers folder into:\n%s\n\nThen start the game again."),
+		FText::FromString(FString::Printf(TEXT("This computer has no file picker to choose LEGO.JAM with.\n\n"
+											   "Install zenity or kdialog, or copy LEGO.JAM, LEGORacers.exe and the .TUN music files from "
+											   "your LEGO Racers folder into:\n%s\n\nThen start the game again."),
 			*FPaths::ConvertRelativePathToFull(FPaths::ProjectDir() / TEXT("GameData")))),
 		FText::FromString(TEXT("LEGO Racers")));
 	return FString();
@@ -132,7 +133,8 @@ ULRCoreWave* ULRCoreWave::Make(UObject* Outer, const lr::Sound& Sound, bool bInL
 	Wave->NumChannels = int32(FMath::Max<uint32>(1, Sound.channels));
 	Wave->SetSampleRate(int32(Sound.rate));
 	Wave->bLooping = bInLoops;
-	Wave->Duration = bInLoops ? INDEFINITELY_LOOPING_DURATION : float(Samples->Num() / Wave->NumChannels) / float(FMath::Max<uint32>(1, Sound.rate));
+	Wave->Duration = bInLoops ? INDEFINITELY_LOOPING_DURATION
+							  : float(Samples->Num() / Wave->NumChannels) / float(FMath::Max<uint32>(1, Sound.rate));
 	Wave->SoundGroup = SOUNDGROUP_Default;
 	return Wave;
 }
@@ -154,7 +156,8 @@ bool FLRCoreData::CheckInstall(const FString& Dir, FString& Why)
 		return false;
 	}
 	if (size_t(Exe.Num()) != lr::KnownExecutableSize || lr::hex(lr::sha256(View(Exe))) != lr::KnownExecutableDigest) {
-		Why = FString::Printf(TEXT("The LEGORacers.exe in this folder is a version this game doesn't support, or the file is damaged:\n%s"), *Dir);
+		Why = FString::Printf(TEXT("The LEGORacers.exe in this folder is a version this game doesn't support, or the file is damaged:\n%s"),
+			*Dir);
 		return false;
 	}
 	lr::Archive Archive;
@@ -167,7 +170,9 @@ bool FLRCoreData::CheckInstall(const FString& Dir, FString& Why)
 
 FString FLRCoreData::FindInstall(bool bScripted)
 {
-	const auto Qualifies = [](const FString& Dir) { return !Dir.IsEmpty() && FPaths::FileExists(Dir / TEXT("LEGO.JAM")) && FPaths::FileExists(Dir / TEXT("LEGORacers.exe")); };
+	const auto Qualifies = [](const FString& Dir) {
+		return !Dir.IsEmpty() && FPaths::FileExists(Dir / TEXT("LEGO.JAM")) && FPaths::FileExists(Dir / TEXT("LEGORacers.exe"));
+	};
 	TArray<FString> Candidates;
 #if !UE_BUILD_SHIPPING
 	Candidates.Add(FPlatformMisc::GetEnvironmentVariable(TEXT("LR_GAME_DIR")));
@@ -195,15 +200,16 @@ FString FLRCoreData::AskForInstall(FString Why)
 {
 	const FText Title = FText::FromString(TEXT("LEGO Racers"));
 	for (;;) {
-		const FString Text = Why.IsEmpty() ? TEXT("Welcome to LEGO Racers!\n\n"
-												  "This game runs on the files of the original LEGO Racers (1999),\n"
-												  "so you need your own copy installed on this computer.\n"
-												  "Nothing is downloaded, and your copy isn't changed.\n\n" // (line breaks by hand: Linux's message box doesn't wrap)
-												  "Press OK, then find and select the file LEGO.JAM in the folder\n"
-												  "where LEGO Racers is installed. LEGORacers.exe has to be in the same folder.\n\n"
-												  "The first start then takes a while as the game prepares its data.\n\n"
-												  "Press Cancel to quit.")
-										   : Why + TEXT("\n\nPress OK to choose another LEGO.JAM, or Cancel to quit.");
+		const FString Text = Why.IsEmpty()
+			? TEXT("Welcome to LEGO Racers!\n\n"
+				   "This game runs on the files of the original LEGO Racers (1999),\n"
+				   "so you need your own copy installed on this computer.\n"
+				   "Nothing is downloaded, and your copy isn't changed.\n\n" // (line breaks by hand: Linux's message box doesn't wrap)
+				   "Press OK, then find and select the file LEGO.JAM in the folder\n"
+				   "where LEGO Racers is installed. LEGORacers.exe has to be in the same folder.\n\n"
+				   "The first start then takes a while as the game prepares its data.\n\n"
+				   "Press Cancel to quit.")
+			: Why + TEXT("\n\nPress OK to choose another LEGO.JAM, or Cancel to quit.");
 		if (FMessageDialog::Open(EAppMsgType::OkCancel, FText::FromString(Text), Title) != EAppReturnType::Ok) {
 			return FString();
 		}
@@ -237,7 +243,8 @@ bool FLRCoreData::OpenCurrent(const FString& InstallDir)
 	for (size_t k = 0; k < Files.size(); k++) {
 		lr::CacheKind Kind;
 		lr::Digest J, E;
-		if (!ReadFile(CacheDir() / UTF8_TO_TCHAR(lr::CacheFileNames[k]), Files[k]) || !lr::cacheKey(View(Files[k]), Kind, J, E) || J != JamDigest || E != ExeDigest) {
+		if (!ReadFile(CacheDir() / UTF8_TO_TCHAR(lr::CacheFileNames[k]), Files[k]) || !lr::cacheKey(View(Files[k]), Kind, J, E) ||
+			J != JamDigest || E != ExeDigest) {
 			return false;
 		}
 		Views[k] = View(Files[k]);
@@ -285,7 +292,8 @@ void FLRCoreData::StartBuild(const FString& InstallDir)
 		IFileManager::Get().MakeDirectory(*OutDir, true);
 		for (size_t k = 0; k < B->Files.size(); k++) {
 			const std::vector<uint8_t>& F = B->Files[k];
-			if (!FFileHelper::SaveArrayToFile(TArrayView<const uint8>(F.data(), int32(F.size())), *(OutDir / UTF8_TO_TCHAR(lr::CacheFileNames[k])))) {
+			if (!FFileHelper::SaveArrayToFile(TArrayView<const uint8>(F.data(), int32(F.size())),
+					*(OutDir / UTF8_TO_TCHAR(lr::CacheFileNames[k])))) {
 				return FString::Printf(TEXT("can't write %s"), *OutDir);
 			}
 		}

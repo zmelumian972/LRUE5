@@ -254,6 +254,18 @@ void TokenReader::skipValues()
 	}
 }
 
+float TokenReader::number() { return next(Token::Integer) ? float(m_tokens.list[m_at - 1].integer) : real(); }
+
+int32_t TokenReader::truncated(float x)
+{
+	// (Converting a float outside int32's range is undefined; NaN fails both comparisons.)
+	if (x >= -2147483648.0f && x < 2147483648.0f) {
+		return int32_t(x);
+	}
+	m_failed = true;
+	return 0;
+}
+
 std::string_view TokenReader::text()
 {
 	const Token* token = take(Token::Text);

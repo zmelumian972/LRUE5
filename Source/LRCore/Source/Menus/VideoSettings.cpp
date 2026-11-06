@@ -1,14 +1,14 @@
 #include "LRCore/Menus/VideoSettings.h"
 
+#include "Menus/MenuNames.h"
+#include "Menus/Pen.h"
+
 namespace lr {
 
 namespace {
 
-// The menus' sounds: a row selected (hilight1), a value stepped (slider2), the screen left
-// (backup, as the options' BACK).
-constexpr int32_t SoundSelect = 14, SoundStep = 24, SoundClose = 2;
-
-constexpr std::u16string_view Names[VideoSettings::Rows] = {u"RESOLUTION", u"WINDOW", u"VSYNC", u"FRAME CAP", u"QUALITY", u"RENDER SCALE", u"FRAME SMOOTHING"};
+constexpr std::u16string_view Names[VideoSettings::Rows] = {u"RESOLUTION", u"WINDOW", u"VSYNC", u"FRAME CAP", u"QUALITY", u"RENDER SCALE",
+	u"FRAME SMOOTHING"};
 constexpr std::u16string_view ResolutionValues[] = {u"1280X960", u"1600X1200", u"1920X1080", u"2048X1536", u"2560X1440", u"3840X2160"};
 constexpr std::u16string_view WindowValues[] = {u"WINDOWED", u"BORDERLESS", u"FULLSCREEN"};
 constexpr std::u16string_view OnOff[] = {u"ON", u"OFF"};
@@ -40,7 +40,7 @@ std::u16string_view VideoSettings::shown(size_t r) const
 {
 	const std::span<const std::u16string_view> list = values(r);
 	const int32_t v = value[r];
-	return v >= 0 && size_t(v) < list.size() ? list[size_t(v)] : std::u16string_view(other[r]);
+	return inRange(list, v) ? list[size_t(v)] : std::u16string_view(other[r]);
 }
 
 void VideoSettings::step(size_t r, bool forward)
@@ -53,7 +53,7 @@ void VideoSettings::step(size_t r, bool forward)
 	else {
 		value[r] = int8_t((v + (forward ? 1 : n - 1)) % n);
 	}
-	sounds.push_back(SoundStep);
+	sounds.push_back(SoundSlider);
 }
 
 int32_t VideoSettings::key(Key k, bool fromPad)
@@ -63,13 +63,13 @@ int32_t VideoSettings::key(Key k, bool fromPad)
 	case Up:
 	case Down:
 		row = uint8_t((row + (k == Down ? 1 : Rows - 1)) % Rows);
-		sounds.push_back(SoundSelect);
+		sounds.push_back(SoundHilight);
 		return -1;
 	case Back:
 	case Forward: step(row, k == Forward); return row;
 	case Close:
 		closed = true;
-		sounds.push_back(SoundClose);
+		sounds.push_back(SoundBackup);
 		return -1;
 	}
 	return -1;
@@ -77,8 +77,8 @@ int32_t VideoSettings::key(Key k, bool fromPad)
 
 int32_t VideoSettings::mouse(int32_t x, int32_t y, uint32_t pressed)
 {
-	const bool moved = x != mouseX || y != mouseY;
-	mouseX = x, mouseY = y;
+	const bool moved = x != m_mouseX || y != m_mouseY;
+	m_mouseX = x, m_mouseY = y;
 	const int32_t over = x >= Left && x < Right && y >= Top ? (y - Top) / Pitch : -1;
 	if (over < 0 || over >= int32_t(Rows)) {
 		return -1;
@@ -87,7 +87,7 @@ int32_t VideoSettings::mouse(int32_t x, int32_t y, uint32_t pressed)
 		pad = false;
 		if (over != row) {
 			row = uint8_t(over);
-			sounds.push_back(SoundSelect);
+			sounds.push_back(SoundHilight);
 		}
 	}
 	if (pressed & 3) {
@@ -99,14 +99,14 @@ int32_t VideoSettings::mouse(int32_t x, int32_t y, uint32_t pressed)
 
 void VideoSettings::draw(const MenuData& data, size_t language, std::vector<MenuElement>& elements, std::vector<MenuGlyph>& glyphs) const
 {
-	// (The menus' own drawing, into a scratch front end's lists.)
-	Menus m;
-	m.data = &data;
-	m.language = uint8_t(language);
+	// (The menus' own drawing.)
+	elements.clear();
+	glyphs.clear();
+	const Pen m{&data, language, elements, glyphs};
 	const int16_t backdrop = data.image("backdrp", ScreenOptions);
 	if (backdrop >= 0) {
-		const MenuData::ImageInfo& b = data.images[size_t(backdrop)];
-		m.drawImage(backdrop, {0, 0, 640, 480}, {0, 0, int32_t(b.width), int32_t(b.height)}, nullptr, White);
+		const MenuData::ImageInfo& b = data.images[backdrop];
+		m.drawImage(backdrop, ScreenRect, {0, 0, int32_t(b.width), int32_t(b.height)}, nullptr, White);
 	}
 	const int16_t title = data.font(language, "fontmenu");
 	const int16_t font = data.font(language, "font_ths");
@@ -120,8 +120,6 @@ void VideoSettings::draw(const MenuData& data, size_t language, std::vector<Menu
 	const std::u16string_view change = pad ? u"D-PAD: CHANGE" : u"ARROWS: CHANGE", back = pad ? u"B: BACK" : u"ESC: BACK";
 	m.drawLine(font, change, Left, 438, White);
 	m.drawLine(font, back, Right - m.lineWidth(font, back), 438, White);
-	elements = std::move(m.elements);
-	glyphs = std::move(m.glyphs);
 }
 
 } // namespace lr

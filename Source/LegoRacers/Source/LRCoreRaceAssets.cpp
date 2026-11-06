@@ -1,40 +1,28 @@
-// The race view's assets: materials and textures from the cache, models as UE meshes, placing and relighting them.
+// The race view's asset store (LRCoreRaceAssets.h): materials and textures from the cache, models as UE meshes, figures,
+// animations, the race's libraries.
 
-#include "LRCoreRace.h"
-#include "LRCoreLog.h"
+#include "LRCoreRaceAssets.h"
 
-#include "Components/SceneCaptureComponent2D.h"
 #include "Engine/Texture2D.h"
-#include "Engine/TextureRenderTarget2D.h"
-#include "Engine/World.h"
-#include "HAL/FileManager.h"
-#include "Misc/FileHelper.h"
-#include "GameFramework/Actor.h"
-#include "LRCore/Kart/Car.h"
-#include "LRCore/Common/Game.h"
-#include "LRCore/Menus/Menus.h"
-#include "LRCore/Show/ShowState.h"
-#include "LRCore/Race/World.h"
+#include "LRCore/Race/Track.h"
+#include "LRCore/Show/View.h"
 #include "LRData/Archive.h"
 #include "LRData/Cache.h"
 #include "LRData/Cars.h"
+#include "LRData/Image.h"
 #include "LRData/Look.h"
 #include "LRData/Model.h"
-#include "LRData/Pieces.h"
 #include "LRData/Race.h"
 #include "LRData/Scene.h"
 #include "Materials/MaterialInstanceDynamic.h"
-#include "ProceduralMeshComponent.h"
-
-#include <algorithm>
-#include <cmath>
+#include "UObject/UObjectGlobals.h"
 
 #include "LRCoreModelMesh.h"
 #include "LRCoreRaceParts.h"
 
 using namespace LRUe;
 
-UTexture2D* ULRRaceView::Texture(const std::string& List, const std::string& Name, bool bPoint, bool bClamp)
+UTexture2D* FLRRaceAssets::Texture(const std::string& List, const std::string& Name, bool bPoint, bool bClamp)
 {
 	const FString Key = FString::Printf(TEXT("%hs#%hs#%d%d"), List.c_str(), Name.c_str(), bPoint, bClamp);
 	if (TObjectPtr<UTexture2D>* Found = Textures.Find(Key)) {
@@ -57,7 +45,7 @@ UTexture2D* ULRRaceView::Texture(const std::string& List, const std::string& Nam
 }
 
 // The Classic look's three base materials (masked, translucent, additive), loaded once.
-bool ULRRaceView::LoadBases()
+bool FLRRaceAssets::LoadBases()
 {
 	if (!MaskedBase) {
 		MaskedBase = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/LR/Materials/M_ClassicMasked.M_ClassicMasked"));
@@ -67,32 +55,29 @@ bool ULRRaceView::LoadBases()
 	return MaskedBase && TranslucentBase && AdditiveBase;
 }
 
-const lr::MaterialLibrary* ULRRaceView::LibraryAt(const std::string& Path)
+namespace
 {
-	auto [It, bNew] = LibraryCache.try_emplace(Path);
+// A file of the cache decoded once into Decoded (none if it doesn't decode).
+template <typename T>
+const T* DecodedOnce(const lr::Cache& Cache, std::unordered_map<std::string, std::optional<T>>& Decoded, const std::string& Path)
+{
+	auto [It, bNew] = Decoded.try_emplace(Path);
 	if (bNew) {
-		lr::MaterialLibrary Lib;
-		if (Cache->get(Path, Lib)) {
-			It->second = std::move(Lib);
+		T File;
+		if (Cache.get(Path, File)) {
+			It->second = std::move(File);
 		}
 	}
 	return It->second ? &*It->second : nullptr;
 }
+} // namespace
 
-const lr::TextureList* ULRRaceView::TexturesAt(const std::string& Path)
-{
-	auto [It, bNew] = TextureCache.try_emplace(Path);
-	if (bNew) {
-		lr::TextureList List;
-		if (Cache->get(Path, List)) {
-			It->second = std::move(List);
-		}
-	}
-	return It->second ? &*It->second : nullptr;
-}
+const lr::MaterialLibrary* FLRRaceAssets::LibraryAt(const std::string& Path) { return DecodedOnce(*Cache, LibraryCache, Path); }
 
-UMaterialInstanceDynamic* ULRRaceView::MaterialFor(const std::string& Name, const TArray<std::pair<std::string, std::string>>& Libraries, float Alpha, bool& bFlip,
-	uint8 Diffuse[4], bool bForceTranslucent, uint8* Ambient)
+const lr::TextureList* FLRRaceAssets::TexturesAt(const std::string& Path) { return DecodedOnce(*Cache, TextureCache, Path); }
+
+UMaterialInstanceDynamic* FLRRaceAssets::MaterialFor(const std::string& Name, const TArray<std::pair<std::string, std::string>>& Libraries,
+	float Alpha, bool& bFlip, uint8 Diffuse[4], bool bForceTranslucent, uint8* Ambient)
 {
 	bFlip = false;
 	Diffuse[0] = Diffuse[1] = Diffuse[2] = Diffuse[3] = 255;
@@ -112,9 +97,13 @@ UMaterialInstanceDynamic* ULRRaceView::MaterialFor(const std::string& Name, cons
 	}
 	bool bTextured = M && !M->texture.empty();
 	if (bTextured) {
-		// The library's own list, else the shared effects' (a track's EMITCxRx.MDB names COMMON/EMITTER.TDB's smoke;
-		// drawn untextured it was a solid white cone over C1R3's smoke vent).
-		for (const std::string& Candidate : {List, Common + "EMITTER.TDB"}) {
+		// The library's own list, else the shared effects' (a track's EMITCxRx.MDB names COMMON/EMITTER.TDB's smoke),
+		// else the track world's (C2R0's bat frame "bat" is only in its COMBINED.TDB)
+		TArray<std::string> Candidates = {List, Common + "EMITTER.TDB"};
+		for (const auto& Library : TrackLibraries) {
+			Candidates.Add(Library.second);
+		}
+		for (const std::string& Candidate : Candidates) {
 			const lr::TextureList* L = TexturesAt(Candidate);
 			const int32 e = L ? L->find(M->texture) : -1;
 			if (e >= 0) {
@@ -142,7 +131,7 @@ UMaterialInstanceDynamic* ULRRaceView::MaterialFor(const std::string& Name, cons
 		return *Found;
 	}
 	UMaterialInterface* Parent = bAdd ? AdditiveBase.Get() : bTranslucent ? TranslucentBase.Get() : MaskedBase.Get();
-	UMaterialInstanceDynamic* Mid = UMaterialInstanceDynamic::Create(Parent, this);
+	UMaterialInstanceDynamic* Mid = UMaterialInstanceDynamic::Create(Parent, Outer);
 	if (bTextured) {
 		if (UTexture2D* T = Texture(List, M->texture, M->point, M->clamp)) {
 			Mid->SetTextureParameterValue(TEXT("Tex"), T);
@@ -153,22 +142,7 @@ UMaterialInstanceDynamic* ULRRaceView::MaterialFor(const std::string& Name, cons
 	return Mid;
 }
 
-// A lit vertex's colour by the view's lights (light 0, then the others), at an ambient raised by Boost.
-FColor ULRRaceView::LitVertex(const lr::Vec3& N, const uint8* Diffuse, const uint8* Ambient, int32 Boost) const
-{
-	uint8 Out[3];
-	for (int32 c = 0; c < 3; c++) {
-		const int32 Base = (FMath::Min(255, LitAmbient[c] + Boost) * Ambient[c]) >> 8;
-		int32 V = Base - int32(float((Diffuse[c] * LitColour[c]) >> 8) * lr::dot(N, LitDirection));
-		for (int32 i = 0; i < LitMore; i++) {
-			V -= int32(float((Diffuse[c] * LitMoreColours[i][c]) >> 8) * lr::dot(N, LitMoreDirections[i]));
-		}
-		Out[c] = uint8(FMath::Clamp(V, Base, 255));
-	}
-	return FColor(Out[0], Out[1], Out[2], 255);
-}
-
-const FLRModelMesh* ULRRaceView::Model(const FString& Path, bool bMirror)
+const FLRModelMesh* FLRRaceAssets::Model(const FString& Path, bool bMirror)
 {
 	const FString Key = Path + (bMirror ? TEXT("#m") : TEXT(""));
 	if (TUniquePtr<FLRModelMesh>* Found = Meshes.Find(Key)) {
@@ -179,7 +153,7 @@ const FLRModelMesh* ULRRaceView::Model(const FString& Path, bool bMirror)
 	return ModelOf(Key, bHas ? &M : nullptr, bMirror);
 }
 
-const FLRModelMesh* ULRRaceView::ModelOf(const FString& Key, const lr::Model* Source, bool bMirror)
+const FLRModelMesh* FLRRaceAssets::ModelOf(const FString& Key, const lr::Model* Source, bool bMirror)
 {
 	if (TUniquePtr<FLRModelMesh>* Found = Meshes.Find(Key)) {
 		return Found->Get();
@@ -225,7 +199,8 @@ const FLRModelMesh* ULRRaceView::ModelOf(const FString& Key, const lr::Model* So
 					if (Out->bJoined) {
 						Into->VertexNodes.Add(M.vertexParts[V]);
 					}
-					const lr::Vec3 N = M.normals.empty() ? lr::Vec3{0, 0, 1} : lr::Vec3{M.normals[V * 3], M.normals[V * 3 + 1] * Flip, M.normals[V * 3 + 2]};
+					const lr::Vec3 N = M.normals.empty() ? lr::Vec3{0, 0, 1}
+														 : lr::Vec3{M.normals[V * 3], M.normals[V * 3 + 1] * Flip, M.normals[V * 3 + 2]};
 					Into->GameNormals.Add(N);
 					Into->Normals.Add(Along(N));
 					Into->Uvs.Add(M.uvs.empty() ? FVector2D::ZeroVector : FVector2D(M.uvs[V * 2], M.uvs[V * 2 + 1]));
@@ -242,149 +217,118 @@ const FLRModelMesh* ULRRaceView::ModelOf(const FString& Key, const lr::Model* So
 	return Meshes.Add(Key, MoveTemp(Made)).Get();
 }
 
-ULRRaceView::FPlaced ULRRaceView::Place(AActor* Actor, const FString& Path, const TArray<std::pair<std::string, std::string>>& Libraries, bool bLit, bool bMirror, float Alpha)
+UTexture2D* FLRRaceAssets::ImageTexture(const std::string& Path, bool bFlip)
 {
-	// In a race, a name the world's libraries don't hold is looked up in the model's own X.MDB beside it, then in the race's
-	// libraries loaded before (the beach's water sits in a world that names no library). (The menus' views
-	// keep their own lookup.)
-	if (TrackLibraries.IsEmpty() && CommonLibraries.IsEmpty()) {
-		return PlaceMesh(Actor, Model(Path, bMirror), Libraries, bLit, Alpha, nullptr);
+	const FString Key = FString::Printf(TEXT("image#%hs#%d"), Path.c_str(), bFlip);
+	if (TObjectPtr<UTexture2D>* Found = Textures.Find(Key)) {
+		return *Found;
 	}
-	TArray<std::pair<std::string, std::string>> With = Libraries;
-	const std::string Own = std::string(TCHAR_TO_UTF8(*Path)).substr(0, Path.Len() - 3);
-	const auto Add = [&](const std::pair<std::string, std::string>& L) {
-		if (!With.ContainsByPredicate([&](const auto& Have) { return Have.first == L.first; })) {
-			With.Add(L);
-		}
-	};
-	if (Path.EndsWith(TEXT(".GDB")) && Cache->has(Own + "MDB")) {
-		Add({Own + "MDB", Own + "TDB"});
+	lr::Image Loaded;
+	UTexture2D* Made = nullptr;
+	if (Cache->get(Path, Loaded) && Loaded.width && Loaded.height) {
+		Made = NewTexture(int32(Loaded.width), int32(Loaded.height), TF_Bilinear, TA_Wrap, [&](uint8* Mip) {
+			for (uint32 y = 0; y < Loaded.height; y++) {
+				const uint32 Row = bFlip ? Loaded.height - 1 - y : y;
+				for (uint32 x = 0; x < Loaded.width; x++) {
+					const uint8* FromPixel = &Loaded.rgba[(size_t(Row) * Loaded.width + x) * 4];
+					uint8* ToPixel = &Mip[(size_t(y) * Loaded.width + x) * 4];
+					ToPixel[0] = FromPixel[2], ToPixel[1] = FromPixel[1], ToPixel[2] = FromPixel[0], ToPixel[3] = 255;
+				}
+			}
+		});
 	}
-	for (const auto& L : TrackLibraries) {
-		Add(L);
-	}
-	for (const auto& L : CommonLibraries) {
-		Add(L);
-	}
-	return PlaceMesh(Actor, Model(Path, bMirror), With, bLit, Alpha, nullptr);
+	Textures.Add(Key, Made);
+	return Made;
 }
 
-ULRRaceView::FPlaced ULRRaceView::PlaceMesh(AActor* Actor, const FLRModelMesh* Mesh, const TArray<std::pair<std::string, std::string>>& Libraries, bool bLit, float Alpha,
-	const TMap<FString, UMaterialInterface*>* Overrides)
+UMaterialInterface* FLRRaceAssets::Picture(const std::string& File, bool bFlip, float Alpha)
 {
-	FPlaced P;
-	P.Actor = Actor;
-	P.Mesh = Mesh;
-	if (!P.Mesh) {
-		return P;
+	const FString Key = FString::Printf(TEXT("picture#%hs#%d#%g"), File.c_str(), bFlip, Alpha);
+	if (TObjectPtr<UMaterialInstanceDynamic>* Found = Materials.Find(Key)) {
+		return Found->Get();
 	}
-	P.bLit = bLit && P.Mesh->bLit;
-	P.Parts.SetNum(P.Mesh->Parts);
-	TArray<int32> SectionsOf;
-	SectionsOf.Init(0, P.Mesh->Parts);
-	for (const FLRModelMesh::FSection& S : P.Mesh->Sections) {
-		TWeakObjectPtr<UProceduralMeshComponent>& C = P.Parts[S.Part];
-		if (!C.IsValid()) {
-			UProceduralMeshComponent* Made = NewMesh(Actor);
-			C = Made;
-		}
-		bool bFlip = false;
-		uint8 Diffuse[4], Ambient[4];
-		UMaterialInterface* Mid = MaterialFor(S.Material, Libraries, Alpha, bFlip, Diffuse, Alpha < 1, Ambient);
-		if (UMaterialInterface* const* Over = Overrides ? Overrides->Find(UTF8_TO_TCHAR(S.Material.c_str())) : nullptr) {
-			// (A minifig's face, torso and legs: their own pictures, ambient and diffuse 200)
-			Mid = *Over;
-			bFlip = false;
-			for (int32 c = 0; c < 3; c++) {
-				Diffuse[c] = Ambient[c] = 200;
-			}
-		}
-		TArray<FVector2D> Uvs = S.Uvs;
-		if (bFlip) {
-			for (FVector2D& Uv : Uvs) {
-				Uv.Y = 1 - Uv.Y;
-			}
-		}
-		TArray<FColor> Colours = S.Colours;
-		if (P.bLit) {
-			// Lit at identity until posed.
-			for (int32 v = 0; v < Colours.Num(); v++) {
-				Colours[v] = LitVertex(S.GameNormals[v], Diffuse, Ambient);
-			}
-		}
-		P.Diffuse.Add(FColor(Diffuse[0], Diffuse[1], Diffuse[2], Diffuse[3]));
-		P.Ambient.Add(FColor(Ambient[0], Ambient[1], Ambient[2], Ambient[3]));
-		const int32 Index = SectionsOf[S.Part]++;
-		C->CreateMeshSection(Index, S.Positions, S.Triangles, S.Normals, Uvs, Colours, {}, false);
-		C->SetMaterial(Index, Mid);
+	UMaterialInstanceDynamic* Mid = UMaterialInstanceDynamic::Create(Alpha < 1 ? TranslucentBase.Get() : MaskedBase.Get(), Outer);
+	if (UTexture2D* Tex = ImageTexture(AssetPath("MENUDATA/PARTDB/", File, ".BMP"), bFlip)) {
+		Mid->SetTextureParameterValue(TEXT("Tex"), Tex);
 	}
-	return P;
+	Mid->SetScalarParameterValue(TEXT("Alpha"), Alpha);
+	Materials.Add(Key, Mid);
+	return Mid;
 }
 
-void ULRRaceView::PoseNodes(FPlaced& P, const TArray<FTransform>& Nodes, const FTransform& Whole)
+const FLRRaceAssets::FFigure* FLRRaceAssets::Figure(const std::string& Model)
 {
-	if (P.Mesh && P.Mesh->bJoined && !Nodes.IsEmpty() && P.Parts.Num() && P.Parts[0].IsValid()) {
-		if (Whole.ContainsNaN() || Nodes.ContainsByPredicate([](const FTransform& T) { return T.ContainsNaN(); })) {
-			return;
-		}
-		UProceduralMeshComponent* C = P.Parts[0].Get();
-		C->SetWorldTransform(FTransform::Identity);
-		for (int32 s = 0; s < P.Mesh->Sections.Num(); s++) {
-			const FLRModelMesh::FSection& S = P.Mesh->Sections[s];
-			ScratchPositions.SetNumUninitialized(S.Positions.Num(), EAllowShrinking::No);
-			for (int32 v = 0; v < ScratchPositions.Num(); v++) {
-				ScratchPositions[v] = (Nodes.IsValidIndex(S.VertexNodes[v]) ? Nodes[S.VertexNodes[v]] : Whole).TransformPosition(S.Positions[v]);
-			}
-			C->UpdateMeshSection(s, ScratchPositions, {}, {}, {}, {});
-		}
-		return;
+	const FString Key = UTF8_TO_TCHAR(Model.c_str());
+	if (TUniquePtr<FFigure>* Found = Figures.Find(Key)) {
+		return Found->Get();
 	}
-	for (int32 i = 0; i < P.Parts.Num(); i++) {
-		if (P.Parts[i].IsValid()) {
-			const FTransform& T = Nodes.IsValidIndex(i) ? Nodes[i] : Whole;
-			if (!T.ContainsNaN()) {
-				P.Parts[i]->SetWorldTransform(T);
-			}
-		}
+	FFigure* F = Figures.Add(Key, MakeUnique<FFigure>()).Get();
+	lr::SkeletonFile Nodes;
+	lr::AnimationFile Anim;
+	if (Cache->get(AssetPath(Common, Model, ".SDB"), Nodes)) {
+		F->Nodes = lr::nodesOf(Nodes);
 	}
+	if (Cache->get(AssetPath(Common, Model, ".ADB"), Anim)) {
+		F->Animation = lr::animationOf(Anim, false);
+		F->bAnimated = !F->Animation.parts.empty();
+	}
+	return F;
 }
 
-// A lit model's vertex colours for its parts' world rotations now (the race's ambient and light).
-void ULRRaceView::Relight(FPlaced& P, const TArray<FQuat>& Rotations)
+const lr::Animation* FLRRaceAssets::MenuAnimation(const std::string& Path)
 {
-	if (!P.bLit || !P.Mesh) {
-		return;
+	const FString Key = UTF8_TO_TCHAR(Path.c_str());
+	if (TUniquePtr<lr::Animation>* Found = MenuAnimations.Find(Key)) {
+		return Found->Get();
 	}
-	TArray<int32> SectionsOf;
-	SectionsOf.Init(0, P.Mesh->Parts);
-	for (int32 s = 0; s < P.Mesh->Sections.Num(); s++) {
-		const FLRModelMesh::FSection& S = P.Mesh->Sections[s];
-		const int32 Index = SectionsOf[S.Part]++;
-		UProceduralMeshComponent* C = P.Parts[S.Part].Get();
-		if (!C || !P.Diffuse.IsValidIndex(s)) {
-			continue;
-		}
-		const FQuat Q = Rotations.IsValidIndex(S.Part) ? Rotations[S.Part] : Rotations.Num() ? Rotations[0] : FQuat::Identity;
-		const uint8 Diffuse[4] = {P.Diffuse[s].R, P.Diffuse[s].G, P.Diffuse[s].B, P.Diffuse[s].A};
-		const uint8 Ambient[4] = {P.Ambient[s].R, P.Ambient[s].G, P.Ambient[s].B, P.Ambient[s].A};
-		ScratchColours.SetNumUninitialized(S.Positions.Num(), EAllowShrinking::No);
-		for (int32 v = 0; v < ScratchColours.Num(); v++) {
-			const FVector N = Q.RotateVector(Along(S.GameNormals[v])).GetSafeNormal();
-			ScratchColours[v] = LitVertex({float(N.X), float(-N.Y), float(N.Z)}, Diffuse, Ambient);
-		}
-		C->UpdateMeshSection(Index, S.Positions, S.Normals, {}, ScratchColours, {});
+	lr::AnimationFile AnimFile;
+	TUniquePtr<lr::Animation> Anim;
+	if (!Path.empty() && Cache->get(Path, AnimFile)) {
+		Anim = MakeUnique<lr::Animation>(lr::animationOf(AnimFile, false));
 	}
+	return MenuAnimations.Add(Key, MoveTemp(Anim)).Get();
 }
 
-// Each of P's sections (Only: those of that material) with its component and its index there.
-void ULRRaceView::ForSections(FPlaced& P, const std::string* Only, TFunctionRef<void(UProceduralMeshComponent*, int32, const FLRModelMesh::FSection&)> Do)
+// The effects', the power-ups' and the local world's libraries, joined once for the race's frames.
+void FLRRaceAssets::LoadRaceLibraries(const lr::RaceFile& Race, const std::string& Dir)
 {
-	TArray<int32, TInlineAllocator<8>> SectionsOf;
-	SectionsOf.Init(0, P.Mesh->Parts);
-	for (const FLRModelMesh::FSection& S : P.Mesh->Sections) {
-		const int32 Index = SectionsOf[S.Part]++;
-		if (P.Parts[S.Part].IsValid() && (!Only || S.Material == *Only)) {
-			Do(P.Parts[S.Part].Get(), Index, S);
+	const auto Found = [&](const std::string& Name) { return Cache->has(Dir + Name) ? Dir + Name : Common + Name; };
+	// The effects' and the power-ups' libraries.
+	for (const std::string* Name : {&Race.globalWorld, &Race.powerupScene}) {
+		lr::SceneFile Scene;
+		const std::string Path = Found(lr::binaryName(*Name));
+		if (!Name->empty() && Cache->get(Path, Scene)) {
+			(Name == &Race.globalWorld ? CommonLibraries : PowerupLibraries) = LibrariesOf(Scene, FolderOf(Path));
 		}
 	}
+	{
+		lr::SceneFile Local;
+		const std::string Path = Found(lr::binaryName(Race.localWorld));
+		TArray<std::pair<std::string, std::string>> LocalLibraries;
+		if (!Race.localWorld.empty() && Cache->get(Path, Local)) {
+			LocalLibraries = LibrariesOf(Local, FolderOf(Path));
+		}
+		EmitterLibraries.Reset();
+		for (const auto& L : LocalLibraries) {
+			EmitterLibraries.Add({L.first, L.first.substr(0, L.first.size() - 3) + "TDB"});
+		}
+	}
+	SharedLibraries = CommonLibraries;
+	SharedLibraries.Append(PowerupLibraries);
+}
+
+void FLRRaceAssets::AddReferencedObjects(FReferenceCollector& Collector)
+{
+	Collector.AddReferencedObject(MaskedBase);
+	Collector.AddReferencedObject(TranslucentBase);
+	Collector.AddReferencedObject(AdditiveBase);
+	Collector.AddReferencedObjects(Textures);
+	Collector.AddReferencedObjects(Materials);
+}
+
+void FLRRaceAssets::Reset()
+{
+	Meshes.Reset();
+	Figures.Reset();
+	MenuAnimations.Reset();
 }

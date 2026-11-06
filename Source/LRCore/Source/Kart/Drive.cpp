@@ -15,10 +15,10 @@ constexpr float MaxRadius = 4096.0f, MinRadius = 40.0f;
 // The stick's turn (1 / radius) from the slightest to full lock.
 constexpr float WidestCurvature = 0.00025f, TightestCurvature = 0.025f;
 // Steering starts only with the nose this square to the motion (unless already steering) and below this speed.
-constexpr float SteerAlign = 0.89999998f, SteerMaxSpeed = 0.155f;
+constexpr float SteerAlign = 0.9f, SteerMaxSpeed = 0.155f;
 // A powerslide needs the nose this square to the motion and this heading speed.
-constexpr float SlideAlign = 0.85000002f, SlideMinSpeed = 0.050000001f;
-constexpr float MinSlideTightness = 0.050000001f; // a slide's least tightness (its steering gain less one)
+constexpr float SlideAlign = 0.85f, SlideMinSpeed = 0.05f;
+constexpr float MinSlideTightness = 0.05f; // a slide's least tightness (its steering gain less one)
 
 // The tightest turn the wheels in contact can hold at this speed.
 float tightestTurn(const Kart& k, const KartParams& p)
@@ -42,13 +42,14 @@ float tightestTurn(const Kart& k, const KartParams& p)
 bool canSteer(const Kart& k, float radius)
 {
 	const float align = dot(k.rotation.f, k.velocityDirection);
-	return !(align <= 0 || (radius < 0 && k.turnRadius > 0) || (radius > 0 && k.turnRadius < 0) || (!(k.flags & KartSteering) && align < SteerAlign) || k.wallHits != 0 ||
-		k.speed > SteerMaxSpeed);
+	return !(align <= 0 || (radius < 0 && k.turnRadius > 0) || (radius > 0 && k.turnRadius < 0) ||
+		(!(k.flags & KartSteering) && align < SteerAlign) || k.wallHits != 0 || k.speed > SteerMaxSpeed);
 }
 
 bool canPowerslide(const Kart& k)
 {
-	return !(k.wallHits != 0 || (!(k.flags & KartHover) && k.contacts < 3) || dot(k.rotation.f, k.velocityDirection) <= SlideAlign || k.headingSpeed < SlideMinSpeed);
+	return !(k.wallHits != 0 || (!(k.flags & KartHover) && k.contacts < 3) || dot(k.rotation.f, k.velocityDirection) <= SlideAlign ||
+		k.headingSpeed < SlideMinSpeed);
 }
 
 float clampRadius(float r)
@@ -157,7 +158,7 @@ void applyDriver(Driver& d, Kart& k, const KartParams& p)
 		}
 		else {
 			if (canSteer(k, d.radius) && m > 0 && m < tightest) {
-				startSteering(k, (1 - m / tightest) + 1, 0.85f, 0.70709997f);
+				startSteering(k, (1 - m / tightest) + 1, 0.85f, 0.7071f);
 			}
 			else {
 				stopSteering(k);
@@ -186,21 +187,8 @@ void updateControls(Controls& c, uint16_t keys, bool blocked, int32_t frameMs, D
 	else if (right && !left) {
 		delta = s > 0 ? -Return : -rate;
 	}
-	else if (left && right) {
-		if (s > 0) {
-			delta = -Return;
-			lower = 0;
-		}
-		else if (s < 0) {
-			delta = Return;
-			upper = 0;
-		}
-		else {
-			lower = 0;
-		}
-	}
 	if (delta == 0) {
-		// Back to the centre.
+		// Back to the centre (both keys held, or neither).
 		if (s > 0) {
 			delta = -Return;
 			lower = 0;

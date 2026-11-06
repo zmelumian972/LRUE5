@@ -1,4 +1,4 @@
-// A race's setup, the order of a frame and of a step, the session's phases and the players' controls.
+// A race's setup, and the order of a frame and of a step over the world's parts.
 
 #include "LRCore/Race/World.h"
 #include "Powers/PowerParts.h"
@@ -22,7 +22,8 @@ bool carShape(const Cache& cache, const ChassisTable::Chassis& chassis, Sphere& 
 {
 	Model model;
 	AnimationFile animation;
-	if (!cache.get(Common + binaryName(chassis.model) + ".GDB", model) || !cache.get(Common + binaryName(chassis.animation) + ".ADB", animation) || animation.parts.empty()) {
+	if (!cache.get(Common + binaryName(chassis.model) + ".GDB", model) ||
+		!cache.get(Common + binaryName(chassis.animation) + ".ADB", animation) || animation.parts.empty()) {
 		return false;
 	}
 	const std::array<float, 4>& b = animation.parts[0].bounds;
@@ -33,8 +34,8 @@ bool carShape(const Cache& cache, const ChassisTable::Chassis& chassis, Sphere& 
 
 // A racer's car: a driver races as a champion, whose chassis it has; a built car is its chassis and its pieces. Its
 // kart's source, its habits (a champion's stats and charge), its body model, its bounds; false if a table lacks it.
-bool racerSource(World& w, const Cache& cache, size_t i, const RaceBrief::Slot& slot, const ChassisTable& chassisTable, const ChampionTable& champions,
-	const DriverTable& driverTable, KartSource& src, std::array<int32_t, 8>& habits, std::string& body)
+bool racerSource(World& w, const Cache& cache, size_t i, const RaceBrief::Slot& slot, const ChassisTable& chassisTable,
+	const ChampionTable& champions, const DriverTable& driverTable, KartSource& src, std::array<int32_t, 8>& habits, std::string& body)
 {
 	const ChassisTable::Chassis* chassis;
 	if (!slot.driver.empty()) {
@@ -96,7 +97,8 @@ std::vector<std::vector<std::string>> routeChoices(const Cache& cache, const Rac
 		}
 		for (char variant : {'F', 'M', 'S'}) {
 			for (int number = 0; number < 10; number++) {
-				const std::string name = "GAMEDATA/" + race.track + "/R" + std::to_string(slot) + "_" + variant + "_" + std::to_string(number) + ".RRB";
+				const std::string name = "GAMEDATA/" + race.track + "/R" + std::to_string(slot) + "_" + variant + "_" +
+					std::to_string(number) + ".RRB";
 				if (!cache.has(name)) {
 					break;
 				}
@@ -144,9 +146,9 @@ void World::placeRacer(size_t i, const RaceBrief& race)
 		attachAtStart(racers.playback[i], racers.karts[i], racers.visible[i], racers.params[i], routes[i], int32_t(i));
 	}
 	r.tauntMs = 2000 + 8 * draw(Draw::Taunt);
-	contactOrder.insert(contactOrder.begin(), uint8_t(i));
+	racers.contactOrder.insert(racers.contactOrder.begin(), uint8_t(i));
 	if (i == 0 && session.autopilot) {
-		handToAi(0);
+		racers.handToAi(*this, 0);
 	}
 }
 
@@ -156,14 +158,16 @@ bool World::setup(const Cache& cache, const RaceBrief& race)
 		observer.to->onSetup(*this);
 	}
 	const std::string dir = "GAMEDATA/" + race.track + "/";
-	if (!setupSession(cache, race) || !track.load(cache, dir + race.track + ".RAB", race.mirrored, race.mode == RaceBrief::Mode::TimeRace) ||
+	if (!session.setup(*this, cache, race) ||
+		!track.load(cache, dir + race.track + ".RAB", race.mirrored, race.mode == RaceBrief::Mode::TimeRace) ||
 		track.grid.size() < race.slots.size()) {
 		return false;
 	}
 	ChassisTable chassisTable;
 	ChampionTable champions;
 	DriverTable driverTable;
-	if (!cache.get(Common + "CHASSIS.CMB", chassisTable) || !cache.get(Common + "CHAMPS.CCB", champions) || !cache.get(Common + "DRIVERS.DDB", driverTable)) {
+	if (!cache.get(Common + "CHASSIS.CMB", chassisTable) || !cache.get(Common + "CHAMPS.CCB", champions) ||
+		!cache.get(Common + "DRIVERS.DDB", driverTable)) {
 		return false;
 	}
 	session.paceBonus = race.mirrored ? 0.05f : 0;
@@ -195,10 +199,10 @@ bool World::setup(const Cache& cache, const RaceBrief& race)
 	}
 	// The track's moving parts, the event table and the trigger list's spheres, then the power-ups; the race view.
 	setupEventTable(*this);
-	setupHazards();
+	scenery.setupHazards(*this);
 	setupEvents(*this);
 	setupPowers(*this, habits);
-	setupView(cache, race, bodies);
+	raceView.setup(*this, cache, race, bodies);
 	return true;
 }
 
@@ -206,18 +210,18 @@ void World::frame(int32_t frameMs, int32_t sessionMs)
 {
 	sessionMs = sessionMs < 0 ? frameMs : sessionMs;
 	if (replaying()) {
-		advanceSession(frameMs, sessionMs);
+		session.advance(*this, frameMs, sessionMs);
 		observer.to->simulate(*this, frameMs);
 		return;
 	}
 	beginFrame(frameMs, sessionMs);
 	for (size_t i = 0; i < racers.karts.size(); i++) {
 		if (racers.race[i].player) {
-			playerControls(i, frameMs);
+			racers.playerControls(*this, i, frameMs);
 		}
 	}
 	for (const PlayerCamera& c : raceView.cameras) {
-		viewKeys(size_t(c.racer));
+		raceView.viewKeys(*this, size_t(c.racer));
 	}
 	for (int32_t left = frameMs; left > 0;) {
 		const int32_t dt = std::min(left, 40);
@@ -227,60 +231,16 @@ void World::frame(int32_t frameMs, int32_t sessionMs)
 	endFrame();
 }
 
-void World::advanceSession(int32_t frameMs, int32_t sessionMs)
-{
-	session.ms += clockHeld ? 0 : sessionMs;
-	updateSession();
-	if (session.watchingFlyby) {
-		session.flyby += (float(track.introRate) / 1000) * float(frameMs);
-	}
-}
-
 void World::beginFrame(int32_t frameMs, int32_t sessionMs)
 {
 	raceView.stage = RaceEvent::Session;
-	advanceSession(frameMs, sessionMs < 0 ? frameMs : sessionMs);
-	advanceClocks(frameMs);
-	advanceMaterials(frameMs);
-	powerFrame(frameMs);
-	countDownWorlds(frameMs);
-	endTouchFrame();
-	eventFrame(frameMs);
-}
-
-void World::playerControls(size_t i, int32_t frameMs)
-{
-	raceView.stage = RaceEvent::Controls;
-	// Nothing is sent before the start or once the AI drives.
-	Racer& r = racers.race[i];
-	Controls& c = racers.controls[i];
-	const bool blocked = (r.flags & RacerOnGrid) || r.ai;
-	updateControls(c, racers.keys[i], blocked, frameMs, racers.drivers[i], racers.karts[i], racers.params[i]);
-	driftMarks(i);
-	// The start boost: a throttle held more than 2 s on the grid opens a 100 ms window; the race starting in it (or
-	// the throttle pressed just after it) makes a turbo. Braking or letting the throttle go starts the 2 s again.
-	const uint16_t k = racers.keys[i];
-	const bool throttle = k & KeyThrottle, pressed = throttle && !c.throttleDown;
-	if (k & KeyBrake) {
-		c.throttleHeldMs = 0;
-	}
-	else {
-		c.throttleHeldMs = !throttle && c.throttleDown ? frameMs : c.throttleHeldMs + frameMs;
-	}
-	c.boostWindowMs = std::max(0, c.boostWindowMs - frameMs);
-	if ((r.flags & RacerOnGrid) && throttle && c.throttleHeldMs > 2000) {
-		c.boostWindowMs = 100;
-		c.throttleHeldMs = 0;
-	}
-	if (!blocked && pressed && c.boostWindowMs > 0) {
-		make(int8_t(i), Green, c.boostWindowMs >= 60 ? 1 : 0);
-		c.boostWindowMs = 0;
-	}
-	if (!blocked && (k & KeyUse) && !c.useDown) {
-		useHeld(i);
-	}
-	c.throttleDown = throttle;
-	c.useDown = k & KeyUse;
+	session.advance(*this, frameMs, sessionMs < 0 ? frameMs : sessionMs);
+	scenery.advanceClocks(*this, frameMs);
+	raceView.advanceMaterials(*this, frameMs);
+	powerUps.powerFrame(*this, frameMs);
+	racers.countDownWorlds(*this, frameMs);
+	triggers.endTouchFrame(*this);
+	triggers.eventFrame(*this, frameMs);
 }
 
 void World::endFrame()
@@ -292,14 +252,14 @@ void World::endFrame()
 			const size_t r = size_t(raceView.cameras[0].racer);
 			h.armed = !(r < raceView.tinted.size() && raceView.tinted[r]);
 			if (!h.armed && h.on) {
-				raise(RaceEvent::Finish, {Owner::Hazard, int16_t(index)});
+				raceView.raise(RaceEvent::Finish, {Owner::Hazard, int16_t(index)});
 				h.on = false;
 			}
 		}
 	}
 	// The scenery is drawn: what each camera has in view and within its distance. A hazard that reads a skeleton sees
 	// the pose of its last drawing. (QUIRK: an entity out of sight keeps an old pose.)
-	drawScenery();
+	raceView.drawScenery(*this);
 	// The racers drawn (a warping one is hidden): their skeletons sampled.
 	for (size_t i = 0; i < raceView.looks.size(); i++) {
 		if (racers.race[i].flags & RacerGhost) {
@@ -308,10 +268,11 @@ void World::endFrame()
 		RacerLook& look = raceView.looks[i];
 		const RacerShape& shape = raceView.shapes[i];
 		if (shape.carAnimation >= 0) {
-			sampleLocals(raceView.skeletons[size_t(shape.carAnimation)], &raceView.figures[size_t(shape.carAnimation)], look.car.pose(), look.carNodes);
+			sampleLocals(raceView.skeletons[shape.carAnimation], &raceView.figures[shape.carAnimation], look.car.pose(), look.carNodes);
 		}
 		if (shape.variantAnimation >= 0) {
-			sampleLocals(raceView.skeletons[size_t(shape.variantAnimation)], &raceView.figures[size_t(shape.variantAnimation)], look.variant.pose(), look.variantNodes);
+			sampleLocals(raceView.skeletons[shape.variantAnimation], &raceView.figures[shape.variantAnimation], look.variant.pose(),
+				look.variantNodes);
 		}
 		sampleLocals(raceView.skeletons[0], &raceView.figures[0], look.figure.pose(), look.figureNodes);
 	}
@@ -320,7 +281,7 @@ void World::endFrame()
 		const Action& a = powerUps.actions[index];
 		if (a.kind == Action::Warp && a.state == WarpStarting && a.owner >= 0 && a.ms < 250) {
 			const int32_t angle = int32_t((float(int32_t(a.ms)) * 0.002f * Pi) * -162.97466f);
-			racers.powers[size_t(a.owner)].carScale = cosEntry(int32_t(0xffffff00u - uint32_t(angle)));
+			racers.powers[a.owner].carScale = cosEntry(int32_t(0xffffff00u - uint32_t(angle)));
 		}
 	}
 }
@@ -328,212 +289,42 @@ void World::endFrame()
 void World::step(int32_t dt)
 {
 	for (size_t i = 0; i < racers.karts.size(); i++) {
-		driveRacer(i, dt);
+		racers.driveRacer(*this, i, dt);
 	}
 	if (observer.to) {
 		observer.to->onBodies(*this, false);
 	}
 	for (size_t i = 0; i < racers.karts.size(); i++) {
-		moveRacer(i, dt);
+		racers.moveRacer(*this, i, dt);
 	}
 	if (observer.to) {
 		observer.to->onBodies(*this, true);
 	}
 	for (size_t i = 0; i < racers.drivers.size(); i++) {
-		driftMarks(i); // (a powerslide the step ended)
+		raceView.driftMarks(*this, i); // (a powerslide the step ended)
 		afterBody(racers.drivers[i]);
 	}
-	runWaits(dt);
-	contactSweep();
-	racerTouches();
-	visuals(dt);
-	racerTimers(dt);
-	updateStandings();
-	pace(dt);
-	updateCameras(dt);
-	recordRun(dt);
+	triggers.runWaits(*this, dt);
+	racers.contactSweep(*this);
+	raceView.racerTouches(*this);
+	raceView.visuals(*this, dt);
+	racers.racerTimers(*this, dt);
+	racers.updateStandings(*this);
+	racers.pace(*this, dt);
+	raceView.updateCameras(*this, dt);
+	session.recordRun(*this, dt);
 }
 
-// The intro over: the countdown starts, the cameras take their views, the players' engines start.
-void World::startCountdown()
+Vec3 nodeWorld(const World& w, size_t model, int32_t node, Vec3 p, float time)
 {
-	const RaceBrief::Mode mode = session.brief.mode;
-	session.phase = Session::Countdown;
-	session.ms = 0;
-	// The cameras take their views again: each snaps to its pose.
-	for (size_t p = 0; p < raceView.cameras.size(); p++) {
-		raceView.cameras[p].kind = PlayerCamera::Chase;
-		chooseView(p, raceView.cameras[p].view);
+	const AnimatedModel& m = w.track.animated[model];
+	const Animation* a = w.track.animationOf(m);
+	const Clock& c = w.scenery.clocks[model];
+	for (int32_t n = node; inRange(m.nodes, n); n = m.nodes[n].parent) {
+		const Pose local = w.scenery.nodeLocal(m, a, size_t(n), c.part, time, c.loop);
+		p = toWorld(local.rotation, p) + local.position;
 	}
-	for (size_t i = 0; i < racers.race.size(); i++) {
-		if (racers.race[i].player) {
-			racers.race[i].flags |= RacerEngine;
-			playSound(62, {Owner::Racer, int16_t(i)}, &racers.visible[i].position); // (its engine starts: the show's)
-		}
-	}
-	// The HUDs' countdown (a test drive has none).
-	for (Hud& h : raceView.huds) {
-		h.banner = mode == RaceBrief::Mode::TestDrive ? h.banner : 1;
-	}
-}
-
-// The start: the racers leave the grid (an AI may start with a turbo, a player with its start boost).
-void World::startRacing()
-{
-	session.phase = Session::Racing;
-	session.ms = 0;
-	for (size_t i = 0; i < racers.race.size(); i++) {
-		Racer& r = racers.race[i];
-		r.flags &= ~RacerOnGrid;
-		racers.playback[i].paused = false;
-		r.zones[0] = LapMark::Open;
-		r.zones[1] = LapMark::Past;
-		r.zones[2] = LapMark::Line;
-		if (r.ai && (draw(Draw::StartGreen) & 255) < racers.powers[i].chances[Green - 1]) {
-			make(int8_t(i), Green, 0); // an AI may start with a turbo
-		}
-	}
-	// A player's start boost: the race starts in the window its throttle opened.
-	for (size_t i = 0; i < racers.race.size(); i++) {
-		Controls& c = racers.controls[i];
-		if (racers.race[i].player && !racers.race[i].ai && c.boostWindowMs > 0) {
-			make(int8_t(i), Green, c.boostWindowMs >= 60 ? 1 : 0);
-		}
-		c.boostWindowMs = 0;
-	}
-	racingStarted();
-	session.finishers = 0;
-}
-
-// The racers over the line this frame finish; the first player over it ends the racing (the others race on).
-void World::crossLine()
-{
-	const RaceBrief::Mode mode = session.brief.mode;
-	for (size_t i = 0; i < racers.race.size(); i++) {
-		if (racers.race[i].laps < session.raceLaps || (racers.race[i].flags & RacerFinished)) {
-			continue;
-		}
-		finish(i);
-		if (!racers.race[i].ai || (session.autopilot && i == 0)) {
-			// The first player over the line: the others race on for a while (a test drive's for 1 s).
-			session.phase = Session::Finished;
-			session.ms = mode == RaceBrief::Mode::TestDrive ? 9000 : 0;
-			racingEnded(i);
-			handToAi(i);
-			break;
-		}
-	}
-}
-
-// Time up: the rest are placed in racer order (not by standing), not finished; the results follow.
-void World::placeTheRest()
-{
-	for (size_t i = 0; i < racers.race.size(); i++) {
-		if (!(racers.race[i].flags & RacerFinished)) {
-			racers.race[i].place = session.finishers++;
-			setStanding(i, session.finishers);
-			finished(i);
-		}
-	}
-	session.phase = Session::Results;
-	session.ms = 0;
-}
-
-void World::updateSession()
-{
-	const RaceBrief::Mode mode = session.brief.mode;
-	switch (session.phase) {
-	case Session::Intro:
-		if (session.watchingFlyby && session.flyby >= float(track.introFrames - 1)) {
-			session.watchingFlyby = false;
-			session.ms = 0;
-		}
-		if (session.ms < 2000 || session.watchingFlyby) {
-			return;
-		}
-		startCountdown();
-		[[fallthrough]];
-	case Session::Countdown:
-		// (A test drive's ends at once.)
-		if (session.ms < 3000 && mode != RaceBrief::Mode::TestDrive) {
-			return;
-		}
-		startRacing();
-		[[fallthrough]];
-	case Session::Racing:
-		crossLine();
-		if (session.phase != Session::Finished) {
-			return;
-		}
-		[[fallthrough]];
-	case Session::Finished:
-		// Outside a circuit the screen fades to black from 9 s; a time race then asks to race again (and goes no
-		// further).
-		if (mode != RaceBrief::Mode::Circuit && session.ms > 9000) {
-			startFade();
-		}
-		if (mode == RaceBrief::Mode::TimeRace && session.ms > 9500 && !timeRaceAsked) {
-			timeRaceAsked = true;
-			openDialog(RaceDialog::TimeRaceEnd);
-			return;
-		}
-		if (session.ms < 10000 || mode == RaceBrief::Mode::TimeRace) {
-			for (size_t i = 0; i < racers.race.size(); i++) {
-				if (racers.race[i].laps >= session.raceLaps && !(racers.race[i].flags & RacerFinished)) {
-					finish(i);
-					if (racers.race[i].player) {
-						handToAi(i);
-					}
-				}
-			}
-			return;
-		}
-		placeTheRest();
-		[[fallthrough]];
-	case Session::Results:
-		// A circuit shows its standings for 5 s, fading to black in the last.
-		if (mode == RaceBrief::Mode::Circuit) {
-			if (session.ms > 4000) {
-				startFade();
-			}
-			if (session.ms < 5000) {
-				return;
-			}
-		}
-		sessionEnded();
-		break;
-	case Session::Over: break;
-	}
-}
-
-void World::countDownWorlds(int32_t frameMs)
-{
-	const size_t volumes = track.volumes.size();
-	for (size_t i = 0; i < racers.karts.size(); i++) {
-		Kart& k = racers.karts[i];
-		for (int32_t left = frameMs; left > 0;) {
-			const int32_t chunk = std::min(left, 255);
-			left -= chunk;
-			for (size_t v = 0; v < volumes; v++) {
-				int32_t& ms = racers.worldMs[i * volumes + v];
-				if (ms == 0) {
-					continue;
-				}
-				if (chunk < ms) {
-					ms -= chunk;
-					continue;
-				}
-				ms = 0;
-				for (int32_t slot = 2; slot < k.worldCount; slot++) {
-					if (k.worlds[slot] == int32_t(v)) {
-						std::copy(k.worlds + slot + 1, k.worlds + k.worldCount, k.worlds + slot);
-						k.worldCount--;
-						break;
-					}
-				}
-			}
-		}
-	}
+	return toWorld(m.pose.rotation, p * m.scale) + m.pose.position;
 }
 
 } // namespace lr

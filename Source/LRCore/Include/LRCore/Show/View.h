@@ -14,6 +14,8 @@
 
 namespace lr {
 
+constexpr int32_t ScreenWidth = 640, ScreenHeight = 480; // the game's screen, every view's place on it
+
 struct Animation;
 struct Model;
 struct SkeletonFile;
@@ -40,8 +42,10 @@ struct NodeMatrix {
 LRCORE_API Quat quaternionOf(const Basis& rows);
 
 // Skeleton sampling, shared by the rules and the drawing: node `node`'s pose in its parent's
-// frame at `time` (frames) of `part`; a channel without keys keeps the rest value; a time below 0 is the rest pose.
-LRCORE_API Pose sampleNode(const std::vector<SkeletonNode>& nodes, const Animation* animation, size_t node, int32_t part, float time, bool loop);
+// frame at `time` (frames) of `part`; a channel without keys keeps the rest value; a time below 0 is the rest pose. A
+// node the skeleton lacks: the identity.
+LRCORE_API Pose sampleNode(const std::vector<SkeletonNode>& nodes, const Animation* animation, size_t node, int32_t part, float time,
+	bool loop);
 // Every node's matrix in the world: sampled at the time (a blend of two parts' poses while `blend` < 1: `from` at
 // `fromTime` toward the part by `blend`), through its parents, scaled and placed.
 struct PartPose {
@@ -51,13 +55,15 @@ struct PartPose {
 	int32_t fromPart = -1; // a transition's old part (-1 none)
 	float fromTime = 0, blend = 1;
 };
-LRCORE_API void poseSkeleton(const std::vector<SkeletonNode>& nodes, const Animation* animation, const PartPose& pose, const Pose& place, float scale,
-	std::vector<NodeMatrix>& out);
+LRCORE_API void poseSkeleton(const std::vector<SkeletonNode>& nodes, const Animation* animation, const PartPose& pose, const Pose& place,
+	float scale, std::vector<NodeMatrix>& out);
 // The same in two halves, for a skeleton drawn frame after frame: each node's pose under its parent sampled into
 // `locals` (a channel without keys keeps the node's value from its last sampling: at first its rest pose), then
 // placed.
-LRCORE_API void sampleLocals(const std::vector<SkeletonNode>& nodes, const Animation* animation, const PartPose& pose, std::vector<Pose>& locals);
-LRCORE_API void placeNodes(const std::vector<SkeletonNode>& nodes, const std::vector<Pose>& locals, const Pose& place, float scale, std::vector<NodeMatrix>& out);
+LRCORE_API void sampleLocals(const std::vector<SkeletonNode>& nodes, const Animation* animation, const PartPose& pose,
+	std::vector<Pose>& locals);
+LRCORE_API void placeNodes(const std::vector<SkeletonNode>& nodes, const std::vector<Pose>& locals, const Pose& place, float scale,
+	std::vector<NodeMatrix>& out);
 
 // A model's vertices posed on its nodes: each vertex in the frame of the node current when it was
 // loaded (Model::vertexParts), placed by that node's matrix (a vertex on a node past the list stays where it is).
@@ -88,9 +94,9 @@ struct LRCORE_API PlayerCamera {
 	Vec3 viewEye; // the chosen view's own smoothed pose (what a transition heads for is its raw one)
 	Quat viewRotation;
 	// The lens: the vertical FOV (degrees, before the shake), the clip planes, the viewport (left, top, right, bottom
-	// of the 640x480 screen).
+	// of the screen).
 	float fov = 65, nearPlane = 5, farPlane = 800;
-	std::array<int32_t, 4> viewport = {0, 0, 640, 480};
+	std::array<int32_t, 4> viewport = {0, 0, ScreenWidth, ScreenHeight};
 	float aspect = 4.0f / 3; // the frustum's width over height (the viewport's; a capture made in a wider window, wider)
 	bool hidden = false; // its racer is warping (GHOST): the world isn't drawn
 

@@ -16,6 +16,7 @@
 // Colours are 0xAARRGGBB (the files write them alpha first).
 
 #include "LRData/Api.h"
+#include "LRData/Index.h"
 
 #include <array>
 #include <cstdint>
@@ -29,7 +30,7 @@ namespace lr {
 struct Image;
 
 struct LRDATA_API StringTable {
-	std::vector<uint16_t> units; // every string, each ending with a 0
+	std::vector<char16_t> units; // every string, each ending with a 0
 	std::vector<uint32_t> starts; // each string's first unit
 
 	size_t size() const { return starts.size(); }
@@ -95,7 +96,7 @@ struct LRDATA_API FontGlyphs {
 	};
 	uint32_t height = 0;
 	uint32_t space = 0;
-	std::vector<Glyph> glyphs; // by code, the space (32: x 0, the space's width) among them
+	List<Glyph> glyphs; // by code, the space (32: x 0, the space's width) among them
 
 	// False if the image holds fewer glyphs than the font lists.
 	[[nodiscard]] bool scan(const Image& image, std::span<const uint16_t> chars);
@@ -256,7 +257,7 @@ struct LRDATA_API CinemaFile {
 		std::string name;
 		int32_t rate = 30;
 		int32_t frames = 0;
-		std::vector<Cue> cues; // cameras, models, triggers, ambients, lights, each in file order
+		List<Cue> cues; // cameras, models, triggers, ambients, lights, each in file order
 		bool operator==(const Scene&) const = default;
 	};
 	struct Effect {
@@ -295,8 +296,8 @@ struct LRDATA_API CinemaFile {
 		bool operator==(const Link&) const = default;
 	};
 	std::vector<std::string> worlds; // the world databases' base names, in order
-	std::vector<Scene> scenes;
-	std::vector<Effect> effects;
+	List<Scene> scenes;
+	List<Effect> effects;
 	std::vector<Link> links;
 	std::vector<std::string> stringTables, soundBanks, imageLists;
 
@@ -309,13 +310,13 @@ struct LRDATA_API CinemaFile {
 struct LRDATA_API CircuitTable {
 	struct Circuit {
 		std::string name;
-		std::vector<std::string> drivers; // slot 0..5: the champion is slot 1
+		List<std::string> drivers; // slot 0..5: the champion is slot 1
 		int32_t partSet = -1;
 		std::string next;
-		std::array<int32_t, 4> races = {-1, -1, -1, -1}; // by position: race table indices
+		Array<int32_t, 4> races = {-1, -1, -1, -1}; // by position: race table indices
 		bool operator==(const Circuit&) const = default;
 	};
-	std::vector<Circuit> circuits;
+	List<Circuit> circuits;
 
 	int32_t find(std::string_view name) const; // -1 none
 	[[nodiscard]] bool decode(std::span<const uint8_t> bytes);
@@ -332,7 +333,7 @@ struct LRDATA_API RaceTable {
 		std::string theme, featured;
 		bool operator==(const Race&) const = default;
 	};
-	std::vector<Race> races;
+	List<Race> races;
 
 	int32_t find(std::string_view name) const; // -1 none
 	// False on a malformed file; fills each circuit's races.

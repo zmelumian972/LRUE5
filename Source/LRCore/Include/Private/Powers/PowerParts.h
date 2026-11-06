@@ -1,7 +1,7 @@
 #pragma once
 
-// What Powers.cpp (the manager, bricks, green, blue and yellow) and Weapons.cpp (red, explosions, projectiles) share:
-// each kind's states, the pools, and the weapons' entry points.
+// What the power-up files (the manager, bricks, boosts, traps, weapons, missiles, projectiles) share: each kind's states,
+// the pools, and the weapons' entry points.
 
 #include "LRCore/Race/World.h"
 
@@ -34,17 +34,20 @@ enum : uint8_t {
 
 constexpr int32_t PoolSizes[Action::Kinds] = {3, 4, 3, 2, 4, 3, 3, 9, 5, 6, 3};
 constexpr int32_t EffectSlots = 25;
+constexpr float ShotGravity = -32.176f; // ft/s/s: a cannonball's, a missile's, the dynamite's, a launcher's ball's
 
-// A state's timer: true when it ran out (the action then advances).
-inline bool timeUp(Action& a, int32_t ms)
+// A state's timer: true when it ran out (the action then advances), ms then what is left of the frame.
+inline bool carriedTimeUp(Action& a, int32_t& ms)
 {
 	if (uint32_t(ms) >= a.ms) {
+		ms -= int32_t(a.ms);
 		a.ms = 0;
 		return true;
 	}
 	a.ms -= uint32_t(ms);
 	return false;
 }
+inline bool timeUp(Action& a, int32_t ms) { return carriedTimeUp(a, ms); }
 
 // The red weapons and the projectiles (Weapons.cpp).
 void startRed(World& w, Action& a, const Aim* aim);
@@ -63,7 +66,8 @@ Projectile::State flight(World& w, Projectile& p, int32_t ms);
 // The race's power-ups at load (Powers.cpp): each racer's habits (its driver's red, yellow, green and blue stats,
 // two unused, its charge colour and target), the pools and the bricks.
 void setupPowers(World& w, const std::vector<std::array<int32_t, 8>>& habits);
-// The racer whose visible car is nearest in a cone (dmin2 <= d2 <= dmax2, angle cosine >= cosine), -1 none.
-int8_t nearestInCone(const World& w, Vec3 origin, Vec3 direction, float dmin2, float dmax2, float cosine);
+// The racer whose visible car is nearest (or farthest) in a cone (dmin2 <= d2 <= dmax2, angle cosine >= cosine), -1
+// none.
+int8_t nearestInCone(const World& w, Vec3 origin, Vec3 direction, float dmin2, float dmax2, float cosine, bool farthest = false);
 
 } // namespace lr

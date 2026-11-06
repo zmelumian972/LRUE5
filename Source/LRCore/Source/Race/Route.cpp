@@ -6,6 +6,7 @@
 #include "Kart/Body.h"
 #include "LRCore/Race/Track.h"
 #include "LRData/Cache.h"
+#include "LRData/Index.h"
 #include "LRData/Race.h"
 
 #include <algorithm>
@@ -97,7 +98,7 @@ float hoverBank(const RoutePlace& c, const Route& route)
 	ahead.advance(route, 500);
 	const Vec3 f = basisOf(ahead.rotation).f;
 	const float d = std::clamp(((f.z * s.z + f.y * s.y) + f.x * s.x) * 8, -1.0f, 1.0f);
-	return 0.78539819f * d;
+	return 0.7853982f * d;
 }
 
 // The visible pose at the attach point; the body keeps its own until the first advance.
@@ -140,15 +141,15 @@ bool Route::load(const Cache& cache, std::string_view path, bool mirrored)
 		constexpr float Unit = 0.007874016f;
 		const int32_t contacts = f.kind >> 6;
 		points.push_back({{float(f.dx) * 0.00390625f, float(dy) * 0.00390625f, float(f.dz) * 0.0625f},
-			{float(f.rotation[0]) * Unit, float(qy) * Unit, float(f.rotation[2]) * Unit, float(qw) * Unit}, float(left) * 0.125f, float(right) * 0.125f, (f.kind & 63) << 5,
-			contacts == 3 ? 4 : contacts});
+			{float(f.rotation[0]) * Unit, float(qy) * Unit, float(f.rotation[2]) * Unit, float(qw) * Unit}, float(left) * 0.125f,
+			float(right) * 0.125f, (f.kind & 63) << 5, contacts == 3 ? 4 : contacts});
 	}
 	return true;
 }
 
 void RoutePlace::attachAtLoop(const Route& r)
 {
-	const Route::Point& at = r.points[size_t(r.loopPoint)];
+	const Route::Point& at = r.points[r.loopPoint];
 	pa = position = r.loop;
 	qa = rotation = r.loopRotation;
 	ta = r.loopTime;
@@ -158,7 +159,7 @@ void RoutePlace::attachAtLoop(const Route& r)
 	contacts = at.contacts;
 	left = at.left;
 	right = at.right;
-	pb = r.loop + r.points[size_t(b)].offset;
+	pb = r.loop + r.points[b].offset;
 }
 
 namespace {
@@ -170,7 +171,7 @@ struct AdvanceSpan {
 };
 
 // Back over earlier segments to the one holding target, but not before the first point.
-void advanceBack(RoutePlace& c, const std::vector<Route::Point>& pts, int32_t& target, AdvanceSpan& s)
+void advanceBack(RoutePlace& c, const List<Route::Point>& pts, int32_t& target, AdvanceSpan& s)
 {
 	for (;;) {
 		s.te = s.ts;
@@ -179,12 +180,12 @@ void advanceBack(RoutePlace& c, const std::vector<Route::Point>& pts, int32_t& t
 		c.qb = c.qa;
 		s.endL = s.startL;
 		s.endR = s.startR;
-		const Route::Point& was = pts[size_t(c.a)];
+		const Route::Point& was = pts[c.a];
 		c.pa -= was.offset;
 		s.ts = c.ta - was.length;
 		c.a -= 1;
 		c.ta = s.ts;
-		const Route::Point& now = pts[size_t(c.a)];
+		const Route::Point& now = pts[c.a];
 		c.contacts = now.contacts;
 		s.startL = now.left;
 		s.startR = now.right;
@@ -203,7 +204,7 @@ void advanceBack(RoutePlace& c, const std::vector<Route::Point>& pts, int32_t& t
 // On over later segments to the one holding target, from the loop past the last point.
 void advanceOn(RoutePlace& c, const Route& r, int32_t& target, AdvanceSpan& s)
 {
-	const std::vector<Route::Point>& pts = r.points;
+	const List<Route::Point>& pts = r.points;
 	do {
 		c.ta = s.te;
 		c.a = c.b;
@@ -212,7 +213,7 @@ void advanceOn(RoutePlace& c, const Route& r, int32_t& target, AdvanceSpan& s)
 		s.startL = s.endL;
 		s.startR = s.endR;
 		c.b += 1;
-		if (size_t(c.b) >= pts.size()) {
+		if (!inRange(pts, c.b)) {
 			// Past the last point: on from the loop. (te keeps counting from the old end: the first segment after
 			// the wrap is timed wrong for this one advance.)
 			c.pa = c.pb = r.loop;
@@ -223,7 +224,7 @@ void advanceOn(RoutePlace& c, const Route& r, int32_t& target, AdvanceSpan& s)
 			c.b = r.loopPoint + 1;
 			c.time = float(target);
 		}
-		const Route::Point& end = pts[size_t(c.b)];
+		const Route::Point& end = pts[c.b];
 		c.contacts = end.contacts;
 		s.endL = end.left;
 		s.endR = end.right;
@@ -237,8 +238,8 @@ void advanceOn(RoutePlace& c, const Route& r, int32_t& target, AdvanceSpan& s)
 
 void RoutePlace::advance(const Route& r, float ms)
 {
-	const std::vector<Route::Point>& pts = r.points;
-	LR_ASSERT(a < int32_t(pts.size()) && b >= 0 && size_t(b) < pts.size());
+	const List<Route::Point>& pts = r.points;
+	LR_ASSERT(a < int32_t(pts.size()) && inRange(pts, b));
 	time = (rate * ms) + time;
 	int32_t target = int32_t(time);
 	AdvanceSpan s;
@@ -248,16 +249,16 @@ void RoutePlace::advance(const Route& r, float ms)
 		pa = r.start;
 		qa = r.startRotation;
 		ta = 0;
-		pb = r.start + pts[size_t(b)].offset;
-		qb = pts[size_t(b)].rotation;
+		pb = r.start + pts[b].offset;
+		qb = pts[b].rotation;
 		contacts = 4;
 	}
 	else {
-		s.startL = pts[size_t(a)].left;
-		s.startR = pts[size_t(a)].right;
+		s.startL = pts[a].left;
+		s.startR = pts[a].right;
 	}
-	s.endL = pts[size_t(b)].left, s.endR = pts[size_t(b)].right;
-	s.ts = ta, s.te = s.ts + pts[size_t(b)].length;
+	s.endL = pts[b].left, s.endR = pts[b].right;
+	s.ts = ta, s.te = s.ts + pts[b].length;
 	if (target < s.ts) {
 		// Back over earlier segments, but not before the first point. (A cursor on the first segment never goes back.)
 		if (a <= 0) {
@@ -282,7 +283,7 @@ namespace {
 
 // RoutePlace::seek's cursor: the segment sa..sb, its ends' times and positions, and its length and direction.
 struct SeekSegment {
-	const std::vector<Route::Point>& pts;
+	const List<Route::Point>& pts;
 	int32_t sa, sb, ts, te;
 	Vec3 spa, spb;
 	float len = 0;
@@ -298,8 +299,8 @@ struct SeekSegment {
 		if (sb >= int32_t(pts.size())) {
 			return false;
 		}
-		te += pts[size_t(sb)].length;
-		spb += pts[size_t(sb)].offset;
+		te += pts[sb].length;
+		spb += pts[sb].offset;
 		return true;
 	}
 	bool back()
@@ -311,8 +312,8 @@ struct SeekSegment {
 		if (sa < 0) {
 			return false;
 		}
-		ts -= pts[size_t(sb)].length;
-		spa -= pts[size_t(sb)].offset;
+		ts -= pts[sb].length;
+		spa -= pts[sb].offset;
 		return true;
 	}
 	void measure()
@@ -389,8 +390,8 @@ bool seekForward(SeekSegment& g, Vec3 position, Vec3& d, float j, float& amount)
 
 bool RoutePlace::seek(const Route& r, Vec3& d)
 {
-	const std::vector<Route::Point>& pts = r.points;
-	SeekSegment g{pts, a, b, ta, ta + pts[size_t(b)].length, pa, pb};
+	const List<Route::Point>& pts = r.points;
+	SeekSegment g{pts, a, b, ta, ta + pts[b].length, pa, pb};
 	while (g.isShort()) {
 		if (!g.forward()) {
 			return false;
@@ -408,8 +409,8 @@ bool RoutePlace::seek(const Route& r, Vec3& d)
 	time = float(g.te - g.ts) * (amount / g.len) + float(g.ts);
 	a = g.sa;
 	b = g.sb;
-	qa = pts[size_t(g.sa)].rotation;
-	qb = pts[size_t(g.sb)].rotation;
+	qa = pts[g.sa].rotation;
+	qb = pts[g.sb].rotation;
 	advance(r, 0);
 	return true;
 }
@@ -431,7 +432,8 @@ void attachAtLoop(Playback& pl, Kart& k, Pose& vis, const KartParams& p, const R
 	attached(k, vis, p, r.loop, r.loopRotation);
 }
 
-void stepPlayback(Playback& pl, Kart& k, Pose& vis, const KartParams& p, const Track& t, const Route& r, int32_t dt, std::vector<SweepHit>* hits)
+void stepPlayback(Playback& pl, Kart& k, Pose& vis, const KartParams& p, const Track& t, const Route& r, int32_t dt,
+	std::vector<SweepHit>* hits)
 {
 	if (dt == 0 || pl.paused) {
 		return;
@@ -453,11 +455,11 @@ void stepPlayback(Playback& pl, Kart& k, Pose& vis, const KartParams& p, const T
 			const uint32_t f = k.flags;
 			if ((f & KartPushed) || !(f & (KartSpinning | KartBoost | KartCurseSlow)) || k.contacts == 0) {
 				if (c.rate < pl.targetRate) {
-					const float up = (f & KartPushed) ? 0.0020000001f : (f & KartBoost) ? 0.0099999998f : 0.00048828125f;
+					const float up = (f & KartPushed) ? 0.002f : (f & KartBoost) ? 0.01f : 0.00048828125f;
 					c.rate = std::min(c.rate + up * ms, pl.targetRate);
 				}
 				else if (c.rate > pl.targetRate) {
-					const float down = (f & KartPushed) ? 0.000732421875f : 0.0020000001f;
+					const float down = (f & KartPushed) ? 0.000732421875f : 0.002f;
 					c.rate = std::max(c.rate - down * ms, pl.targetRate);
 				}
 			}
@@ -508,7 +510,7 @@ void routeImpulse(Playback& pl, const Kart& k, Vec3 dir, float magnitude)
 	const bool spinning = k.flags & KartSpinning;
 	float& rate = pl.cursor.rate;
 	if (d >= 0) {
-		rate = std::min((spinning ? SpinRate + 0.1f : rate + f) + (1 - d) * 0.050000001f, MaxRate);
+		rate = std::min((spinning ? SpinRate + 0.1f : rate + f) + (1 - d) * 0.05f, MaxRate);
 	}
 	else {
 		rate = std::max((spinning ? SpinRate - 0.1f : rate - f) - (d + 1) * 0.25f, MinRate);

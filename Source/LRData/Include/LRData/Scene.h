@@ -9,6 +9,7 @@
 // - A material animation file (.MAB): tracks of texture frames played at a rate for a duration.
 
 #include "LRData/Api.h"
+#include "LRData/Index.h"
 
 #include <array>
 #include <cstdint>
@@ -36,12 +37,12 @@ struct LRDATA_API SceneFile {
 		std::vector<std::array<int32_t, 4>> materialBindings;
 		bool operator==(const Entity&) const = default;
 	};
-	std::vector<std::string> models, skeletons, animations, materialAnimations;
+	List<std::string> models, skeletons, animations, materialAnimations;
 	// The material libraries (.MDB) and texture lists (.TDB) its models are drawn with, in order; the
 	// models no entity places (drawn where they are: the track itself).
 	std::vector<std::string> materialLibraries, textureLists, unplaced;
-	std::vector<Entity> entities; // the plain models
-	std::vector<Entity> animated;
+	List<Entity> entities; // the plain models
+	List<Entity> animated;
 	// Its cameras: a place, a view direction and up, the clip planes and the vertical field of
 	// view; a camera may track a node of an animated entity.
 	struct Camera {
@@ -55,7 +56,7 @@ struct LRDATA_API SceneFile {
 		std::string partName; // or by name
 		bool operator==(const Camera&) const = default;
 	};
-	std::vector<Camera> cameras;
+	List<Camera> cameras;
 	// Its lights: named ambient records (K(0x48), a colour) and directional ones (K(0x49), a colour
 	// and the direction the light travels), in file order.
 	struct Light {
@@ -104,14 +105,14 @@ struct LRDATA_API MaterialAnimationFile {
 		int32_t start = 0;
 		bool operator==(const Frame&) const = default;
 	};
-	std::vector<Frame> frames;
+	List<Frame> frames;
 	struct Track {
 		int32_t firstFrame = 0, frames = 1; // its range of the frame list
 		int32_t duration = 1; // in frames
 		int32_t rate = 30; // frames per second
 		bool operator==(const Track&) const = default;
 	};
-	std::vector<Track> tracks;
+	List<Track> tracks;
 
 	// False on a malformed file.
 	[[nodiscard]] bool decode(std::span<const uint8_t> bytes);

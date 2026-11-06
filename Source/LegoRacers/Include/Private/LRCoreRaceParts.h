@@ -1,8 +1,11 @@
 #pragma once
 
-// What the race view's files share: the common folder, model and library paths, a lit channel, an entity's pose.
+// What the race view's files share: the common folder, model and library paths, a ring's part name, a lit channel, an
+// entity's pose.
 
 #include "LRCoreModelMesh.h"
+#include "LRData/Cache.h"
+#include "LRData/Pieces.h"
 #include "LRData/Scene.h"
 
 namespace LRUe
@@ -22,6 +25,20 @@ inline TArray<std::pair<std::string, std::string>> Libs(const std::string& Mdb, 
 	TArray<std::pair<std::string, std::string>> L;
 	L.Add({AssetPath(Common, Mdb, ".MDB"), AssetPath(Common, Tdb.empty() ? Mdb : Tdb, ".TDB")});
 	return L;
+}
+
+// A library of that base name and its texture list (Base.MDB, Base.TDB).
+inline TArray<std::pair<std::string, std::string>> Library(const std::string& Base)
+{
+	TArray<std::pair<std::string, std::string>> L;
+	L.Add({Base + ".MDB", Base + ".TDB"});
+	return L;
+}
+
+// A minifig ring's part name by index (none: empty).
+inline std::string PartName(const std::vector<lr::PartCatalog::Part>& Ring, int32 i)
+{
+	return i >= 0 && size_t(i) < Ring.size() ? Ring[size_t(i)].name : std::string();
 }
 
 // A lit vertex's colour channel. The base is the world's ambient times the material's ambient (a black built car is

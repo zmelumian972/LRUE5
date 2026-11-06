@@ -60,12 +60,12 @@ struct LRCORE_API Car {
 		bool studded = false;
 		bool operator==(const Cell&) const = default;
 	};
-	std::vector<Entry> entries;
-	std::array<Cell, Width * Depth> grid; // x * Depth + y
+	List<Entry> entries;
+	Array<Cell, Width * Depth> grid; // x * Depth + y
 	std::array<float, 3> offset = {-5, -3, 0};
 	int32_t status = 0; // the last menu build's: 0 it fit, else how often detail had to go
 
-	const Cell& cell(int32_t x, int32_t y) const { return grid[size_t(x * Depth + y)]; }
+	const Cell& cell(int32_t x, int32_t y) const { return grid[x * Depth + y]; }
 
 	// Where a piece at (x, y, rotation) rests, in plates, or a refusal (NothingBelow, Past*); the floor for chassis.
 	int32_t rest(const PieceLibrary& lib, const PieceLibrary::Piece& p, int32_t x, int32_t y, int32_t rotation, bool floor) const;

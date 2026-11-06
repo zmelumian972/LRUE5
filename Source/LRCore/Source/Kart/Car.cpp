@@ -97,7 +97,7 @@ void Car::stamp(const PieceLibrary& lib, size_t index, int32_t height, std::vect
 			if (!c.solid()) {
 				continue;
 			}
-			Cell& g = grid[size_t((e.piece.x + x) * Depth + e.piece.y + y)];
+			Cell& g = grid[(e.piece.x + x) * Depth + e.piece.y + y];
 			// A top stood on with a gap, or by a cell that leaves its studs showing.
 			if (studs && g.studded && (g.height != height + c.base() || c.flush)) {
 				studs->push_back({e.piece.x + x, e.piece.y + y, g.height, g.owner});
@@ -221,8 +221,8 @@ void Car::chooseOffset(const PieceLibrary& lib)
 {
 	offset = {-5, -3, 0};
 	const PieceLibrary::Piece* p = entries.empty() ? nullptr : lib.find(entries[0].piece.type);
-	if (p && p->chassis() && p->anchor >= 0 && size_t(p->anchor) < lib.positions.size()) {
-		const auto& a = lib.positions[size_t(p->anchor)];
+	if (p && p->chassis() && inRange(lib.positions, p->anchor)) {
+		const auto& a = lib.positions[p->anchor];
 		offset = {-float(a[0]) / 256.0f, -float(a[1]) / 256.0f, -float(a[2]) / 256.0f * 0.4f};
 	}
 }
@@ -275,7 +275,8 @@ struct VertexHash {
 struct VertexBits {
 	bool operator()(const CarMesh::Vertex& a, const CarMesh::Vertex& b) const
 	{
-		return std::memcmp(a.position.data(), b.position.data(), 12) == 0 && std::memcmp(a.uv.data(), b.uv.data(), 8) == 0 && a.normal == b.normal;
+		return std::memcmp(a.position.data(), b.position.data(), 12) == 0 && std::memcmp(a.uv.data(), b.uv.data(), 8) == 0 &&
+			a.normal == b.normal;
 	}
 };
 
@@ -318,9 +319,48 @@ struct MeshBuild {
 
 	void piece(const PieceLibrary::Piece& p, int32_t X, int32_t Y, int32_t Z, int32_t rotation, int32_t colour, int32_t part);
 	void finishFlags(Primitive& q, const std::array<std::array<int16_t, 3>, 4>& library) const;
-	void clip(int axis);
-	uint32_t split(uint32_t a, uint32_t b, int axis, float at);
+	void clip(size_t axis);
+	uint32_t split(uint32_t a, uint32_t b, size_t axis, float at);
+	CarMesh finish(const std::array<float, 3>& offset, bool counted);
 };
+
+// Quads become two triangles (counted against the budget if asked); by material; moved by the offset.
+CarMesh MeshBuild::finish(const std::array<float, 3>& offset, bool counted)
+{
+	for (const Primitive& q : primitives) {
+		if (q.dead) {
+			continue;
+		}
+		mesh.triangles.push_back({{q.v[0], q.v[1], q.v[2]}, q.material});
+		if (q.corners == 4) {
+			mesh.triangles.push_back({{q.v[2], q.v[1], q.v[3]}, q.material});
+			if (counted) {
+				count(1);
+			}
+		}
+	}
+	std::stable_sort(mesh.triangles.begin(), mesh.triangles.end(),
+		[](const CarMesh::Triangle& x, const CarMesh::Triangle& y) { return x.material < y.material; });
+	for (CarMesh::Vertex& v : mesh.vertices) {
+		v.position = {v.position[0] + offset[0], v.position[1] + offset[1], v.position[2] * 0.4f + offset[2]};
+	}
+	return std::move(mesh);
+}
+
+// The middle of the vertices' bounding box (zero for none).
+Vec3 boxCentre(const std::vector<CarMesh::Vertex>& vertices)
+{
+	if (vertices.empty()) {
+		return {};
+	}
+	Vec3 lo{FLT_MAX, FLT_MAX, FLT_MAX}, hi{-FLT_MAX, -FLT_MAX, -FLT_MAX};
+	for (const CarMesh::Vertex& v : vertices) {
+		const Vec3 p = vec(v.position);
+		lo = {std::min(lo.x, p.x), std::min(lo.y, p.y), std::min(lo.z, p.z)};
+		hi = {std::max(hi.x, p.x), std::max(hi.y, p.y), std::max(hi.z, p.z)};
+	}
+	return (hi + lo) * 0.5f;
+}
 
 void MeshBuild::finishFlags(Primitive& q, const std::array<std::array<int16_t, 3>, 4>& library) const
 {
@@ -330,10 +370,10 @@ void MeshBuild::finishFlags(Primitive& q, const std::array<std::array<int16_t, 3
 			q.integral = q.integral && (c & 255) == 0;
 		}
 	}
-	for (int a = 0; a < 3; a++) {
-		q.flat[size_t(a)] = true;
+	for (size_t a = 0; a < 3; a++) {
+		q.flat[a] = true;
 		for (uint8_t k = 1; k < q.corners; k++) {
-			q.flat[size_t(a)] = q.flat[size_t(a)] && mesh.vertices[q.v[k]].position[size_t(a)] == mesh.vertices[q.v[0]].position[size_t(a)];
+			q.flat[a] = q.flat[a] && mesh.vertices[q.v[k]].position[a] == mesh.vertices[q.v[0]].position[a];
 		}
 	}
 	q.parallelogram = false;
@@ -353,16 +393,18 @@ void MeshBuild::piece(const PieceLibrary::Piece& p, int32_t X, int32_t Y, int32_
 	const auto place = [&](uint32_t position, int32_t normal, int32_t uv, bool textured, uint16_t flags) {
 		const auto& lp = lib.positions[position];
 		const float px = float(lp[0]) / 256.0f, py = float(lp[1]) / 256.0f, pz = float(lp[2]) / 256.0f;
-		const std::array<int8_t, 3> n0 = normal >= 0 ? lib.normals[size_t(normal)] : std::array<int8_t, 3>{127, 0, 0};
+		const std::array<int8_t, 3> n0 = normal >= 0 ? lib.normals[normal] : std::array<int8_t, 3>{127, 0, 0};
 		CarMesh::Vertex v;
 		switch (rotation & 3) {
 		case 0: v.position = {px + float(X), py + float(Y), pz + float(Z)}, v.normal = n0; break;
 		case 1: v.position = {py + float(X), (W - px) + float(Y), pz + float(Z)}, v.normal = {n0[1], int8_t(-n0[0]), n0[2]}; break;
-		case 2: v.position = {(W - px) + float(X), (H - py) + float(Y), pz + float(Z)}, v.normal = {int8_t(-n0[0]), int8_t(-n0[1]), n0[2]}; break;
+		case 2:
+			v.position = {(W - px) + float(X), (H - py) + float(Y), pz + float(Z)}, v.normal = {int8_t(-n0[0]), int8_t(-n0[1]), n0[2]};
+			break;
 		default: v.position = {(H - py) + float(X), px + float(Y), pz + float(Z)}, v.normal = {int8_t(-n0[1]), n0[0], n0[2]}; break;
 		}
 		if (textured) {
-			v.uv = {float(lib.uvs[size_t(uv)][0]) / 1024.0f, float(lib.uvs[size_t(uv)][1]) / 1024.0f};
+			v.uv = {float(lib.uvs[uv][0]) / 1024.0f, float(lib.uvs[uv][1]) / 1024.0f};
 		}
 		else if (options.planarStuds && (flags == 2 || (flags & 0x800))) {
 			v.uv = {(v.position[0] - float(X)) * 0.25f, (v.position[1] - float(Y)) * 0.25f};
@@ -391,7 +433,7 @@ void MeshBuild::piece(const PieceLibrary::Piece& p, int32_t X, int32_t Y, int32_
 			}
 			const int32_t uv = textured ? next() : 0;
 			q.v[3] = place(uint32_t(position), lastNormal, uv, textured, uint16_t(q.flags & 0xfff));
-			library[3] = lib.positions[size_t(position)];
+			library[3] = lib.positions[position];
 			q.corners = 4;
 			finishFlags(q, library);
 			continue;
@@ -407,11 +449,14 @@ void MeshBuild::piece(const PieceLibrary::Piece& p, int32_t X, int32_t Y, int32_
 			}
 			const int32_t uv = textured ? next() : 0;
 			q.v[i] = place(uint32_t(position), lastNormal, uv, textured, uint16_t(c & 0xfff));
-			library[i] = lib.positions[size_t(position)];
+			library[i] = lib.positions[position];
 		}
 		const int32_t m = c & 0x7ff;
 		const bool textureBit = c & 0x800;
-		q.material = m >= 3 ? m + (options.planarStuds && textureBit ? 1 : 0) : m == 2 && options.planarStuds ? mat + 1 : mat;
+		// The library's own materials from 3 on (a textured one's planar-stud twin next); 2 and below the colour's
+		// (2's planar-stud twin next).
+		const bool twin = options.planarStuds && (m >= 3 ? textureBit : m == 2);
+		q.material = (m >= 3 ? m : mat) + int32_t(twin);
 		finishFlags(q, library);
 		primitives.push_back(q);
 		count(1);
@@ -423,57 +468,59 @@ void MeshBuild::piece(const PieceLibrary::Piece& p, int32_t X, int32_t Y, int32_
 }
 
 // A vertex on the edge a-b where the axis' coordinate is `at`.
-uint32_t MeshBuild::split(uint32_t a, uint32_t b, int axis, float at)
+uint32_t MeshBuild::split(uint32_t a, uint32_t b, size_t axis, float at)
 {
 	const CarMesh::Vertex va = mesh.vertices[a], vb = mesh.vertices[b];
-	const float t = (at - va.position[size_t(axis)]) / (vb.position[size_t(axis)] - va.position[size_t(axis)]);
+	const float t = (at - va.position[axis]) / (vb.position[axis] - va.position[axis]);
 	CarMesh::Vertex v;
 	for (size_t i = 0; i < 3; i++) {
 		v.position[i] = va.position[i] == vb.position[i] ? va.position[i] : va.position[i] + (vb.position[i] - va.position[i]) * t;
 		v.normal[i] = int8_t(float(va.normal[i]) + float(vb.normal[i] - va.normal[i]) * t);
 	}
-	v.position[size_t(axis)] = at;
+	v.position[axis] = at;
 	for (size_t i = 0; i < 2; i++) {
 		v.uv[i] = va.uv[i] + (vb.uv[i] - va.uv[i]) * t;
 	}
 	return vertex(v);
 }
 
+// A quad's corners in order round it.
+constexpr size_t Ring[4] = {0, 1, 3, 2};
+
 // Faces of different parts lying flat on each other in one plane of an axis are cut to their common rectangle, and
 // it is dropped from both.
-void MeshBuild::clip(int axis)
+void MeshBuild::clip(size_t axis)
 {
 	std::vector<uint32_t> candidates;
 	for (uint32_t i = 0; i < primitives.size(); i++) {
 		const Primitive& q = primitives[i];
-		if (!q.dead && q.corners == 4 && q.parallelogram && q.integral && q.flat[size_t(axis)]) {
+		if (!q.dead && q.corners == 4 && q.parallelogram && q.integral && q.flat[axis]) {
 			candidates.push_back(i);
 		}
 	}
-	const auto range = [&](uint32_t q, int a) {
+	const auto range = [&](uint32_t q, size_t a) {
 		std::array<float, 2> r = {1e30f, -1e30f};
 		for (uint32_t v : primitives[q].v) {
-			r[0] = std::min(r[0], mesh.vertices[v].position[size_t(a)]);
-			r[1] = std::max(r[1], mesh.vertices[v].position[size_t(a)]);
+			r[0] = std::min(r[0], mesh.vertices[v].position[a]);
+			r[1] = std::max(r[1], mesh.vertices[v].position[a]);
 		}
 		return r;
 	};
 	// The in-plane axes, in cutting order.
-	const std::array<int, 2> plane = axis == 2 ? std::array<int, 2>{1, 0} : axis == 1 ? std::array<int, 2>{2, 0} : std::array<int, 2>{2, 1};
-	const auto overlaps = [&](uint32_t a, uint32_t b, int ax) {
+	static constexpr std::array<std::array<size_t, 2>, 3> Planes = {{{2, 1}, {2, 0}, {1, 0}}};
+	const std::array<size_t, 2> plane = Planes[axis];
+	const auto overlaps = [&](uint32_t a, uint32_t b, size_t ax) {
 		const auto ra = range(a, ax), rb = range(b, ax);
 		return std::max(ra[0], rb[0]) < std::min(ra[1], rb[1]);
 	};
 	// Cuts quad q at `at` along ax: the part on the `low` side (or the high side) becomes a new quad; q keeps the rest.
-	const auto cut = [&](uint32_t q, int ax, float at, bool lowOut) {
-		// The corners in order round the quad: 0 1 3 2.
-		static const size_t Ring[4] = {0, 1, 3, 2};
+	const auto cut = [&](uint32_t q, size_t ax, float at, bool lowOut) {
 		const Primitive old = primitives[q];
 		std::array<uint32_t, 4> ring, inside, outside;
 		std::array<bool, 4> out;
 		for (size_t k = 0; k < 4; k++) {
 			ring[k] = old.v[Ring[k]];
-			const float c = mesh.vertices[ring[k]].position[size_t(ax)];
+			const float c = mesh.vertices[ring[k]].position[ax];
 			out[k] = lowOut ? c < at : c > at;
 		}
 		for (size_t k = 0; k < 4; k++) {
@@ -497,11 +544,11 @@ void MeshBuild::clip(int axis)
 		for (size_t j = i + 1; j < candidates.size() && !matched; j++) {
 			const uint32_t a = candidates[i], b = candidates[j];
 			const float la = range(a, axis)[0], lb = range(b, axis)[0];
-			const bool coplanar = primitives[a].part != primitives[b].part && (axis == 2 ? la - lb < 0.0049999999f && lb - la < 0.0049999999f : la == lb);
+			const bool coplanar = primitives[a].part != primitives[b].part && (axis == 2 ? la - lb < 0.005f && lb - la < 0.005f : la == lb);
 			if (!coplanar || !overlaps(a, b, plane[0]) || !overlaps(a, b, plane[1])) {
 				continue;
 			}
-			for (int ax : plane) {
+			for (size_t ax : plane) {
 				const auto ra = range(a, ax), rb = range(b, ax);
 				if (ra[0] != rb[0]) {
 					ra[0] < rb[0] ? cut(a, ax, rb[0], true) : cut(b, ax, ra[0], true);
@@ -554,8 +601,8 @@ CarMesh Car::mesh(const PieceLibrary& lib, const std::array<int32_t, 10>& colour
 			// In the colour of the piece under it; under a chassis cell with a raised bottom, the colour whose material
 			// is that number (QUIRK).
 			int32_t colour = 0;
-			if (s.owner >= 0 && size_t(s.owner) < built.entries.size()) {
-				const CarPiece& o = built.entries[size_t(s.owner)].piece;
+			if (inRange(built.entries, s.owner)) {
+				const CarPiece& o = built.entries[s.owner].piece;
 				colour = o.colour;
 				const PieceLibrary::Piece* op = lib.find(o.type);
 				if (op && op->chassis()) {
@@ -571,7 +618,7 @@ CarMesh Car::mesh(const PieceLibrary& lib, const std::array<int32_t, 10>& colour
 		}
 	}
 	if (options.clip) {
-		for (int axis : {2, 1, 0}) {
+		for (size_t axis : {2u, 1u, 0u}) {
 			b.clip(axis);
 		}
 	}
@@ -581,22 +628,7 @@ CarMesh Car::mesh(const PieceLibrary& lib, const std::array<int32_t, 10>& colour
 			b.count(-1);
 		}
 	}
-	// Quads become two triangles; by material.
-	for (const Primitive& q : b.primitives) {
-		if (q.dead) {
-			continue;
-		}
-		b.mesh.triangles.push_back({{q.v[0], q.v[1], q.v[2]}, q.material});
-		if (q.corners == 4) {
-			b.mesh.triangles.push_back({{q.v[2], q.v[1], q.v[3]}, q.material});
-			b.count(1);
-		}
-	}
-	std::stable_sort(b.mesh.triangles.begin(), b.mesh.triangles.end(), [](const CarMesh::Triangle& x, const CarMesh::Triangle& y) { return x.material < y.material; });
-	for (CarMesh::Vertex& v : b.mesh.vertices) {
-		v.position = {v.position[0] + offset[0], v.position[1] + offset[1], v.position[2] * 0.4f + offset[2]};
-	}
-	return std::move(b.mesh);
+	return b.finish(offset, true);
 }
 
 CarMesh Car::itemMesh(const PieceLibrary& lib, const std::array<int32_t, 10>& colourMaterials, int32_t type, int32_t colour)
@@ -611,13 +643,7 @@ CarMesh Car::itemMesh(const PieceLibrary& lib, const std::array<int32_t, 10>& co
 		return {};
 	}
 	b.piece(*p, 0, 0, 0, 0, piece.colour, 0);
-	Vec3 lo{FLT_MAX, FLT_MAX, FLT_MAX}, hi{-FLT_MAX, -FLT_MAX, -FLT_MAX};
-	for (const CarMesh::Vertex& v : b.mesh.vertices) {
-		const Vec3 q = vec(v.position);
-		lo = {std::min(lo.x, q.x), std::min(lo.y, q.y), std::min(lo.z, q.z)};
-		hi = {std::max(hi.x, q.x), std::max(hi.y, q.y), std::max(hi.z, q.z)};
-	}
-	const Vec3 centre = b.mesh.vertices.empty() ? Vec3{} : (lo + hi) * 0.5f;
+	const Vec3 centre = boxCentre(b.mesh.vertices);
 	c.offset = {-centre.x, -centre.y, -centre.z * 0.4f};
 	return c.heldMesh(lib, colourMaterials, piece, 0);
 }
@@ -641,34 +667,15 @@ CarMesh Car::heldMesh(const PieceLibrary& lib, const std::array<int32_t, 10>& co
 			}
 		}
 	}
-	for (const Primitive& q : b.primitives) {
-		if (q.dead) {
-			continue;
-		}
-		b.mesh.triangles.push_back({{q.v[0], q.v[1], q.v[2]}, q.material});
-		if (q.corners == 4) {
-			b.mesh.triangles.push_back({{q.v[2], q.v[1], q.v[3]}, q.material});
-		}
-	}
-	std::stable_sort(b.mesh.triangles.begin(), b.mesh.triangles.end(), [](const CarMesh::Triangle& x, const CarMesh::Triangle& y) { return x.material < y.material; });
-	for (CarMesh::Vertex& v : b.mesh.vertices) {
-		v.position = {v.position[0] + offset[0], v.position[1] + offset[1], v.position[2] * 0.4f + offset[2]};
-	}
-	return std::move(b.mesh);
+	return b.finish(offset, false);
 }
 
 Sphere meshBounds(const CarMesh& m)
 {
-	Vec3 lo{FLT_MAX, FLT_MAX, FLT_MAX}, hi{-FLT_MAX, -FLT_MAX, -FLT_MAX};
-	for (const CarMesh::Vertex& v : m.vertices) {
-		const Vec3 p = vec(v.position);
-		lo = {std::min(lo.x, p.x), std::min(lo.y, p.y), std::min(lo.z, p.z)};
-		hi = {std::max(hi.x, p.x), std::max(hi.y, p.y), std::max(hi.z, p.z)};
-	}
 	if (m.vertices.empty()) {
 		return {};
 	}
-	const Vec3 c = (hi + lo) * 0.5f;
+	const Vec3 c = boxCentre(m.vertices);
 	float r = 0;
 	for (const CarMesh::Vertex& v : m.vertices) {
 		r = std::max(r, lengthZYX(vec(v.position) - c));

@@ -6,6 +6,7 @@
 #include "LRData/Scene.h"
 #include "ProceduralMeshComponent.h"
 #include "GameFramework/Actor.h"
+#include "Engine/World.h"
 #include "Engine/Texture2D.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "Templates/Function.h"
@@ -45,10 +46,28 @@ inline constexpr float Cm = 30.48f;
 inline FVector Ue(const lr::Vec3& V) { return FVector(V.x, -V.y, V.z) * Cm; }
 inline FVector Along(const lr::Vec3& V) { return FVector(V.x, -V.y, V.z); }
 // A frame of the game's rows (forward, left, up; scaled) and a place as UE's transform.
-inline FTransform FrameOf(const lr::Basis& B, const lr::Vec3& At) { return FTransform(FMatrix(Along(B.f), -Along(B.s), Along(B.u), Ue(At))); }
+inline FTransform FrameOf(const lr::Basis& B, const lr::Vec3& At)
+{
+	return FTransform(FMatrix(Along(B.f), -Along(B.s), Along(B.u), Ue(At)));
+}
 // A game file's cache path: a folder, the name upper-cased, an extension (".GDB").
-inline std::string AssetPath(const std::string& Folder, std::string_view Name, const char* Extension) { return Folder + lr::upper(Name) + Extension; }
+inline std::string AssetPath(const std::string& Folder, std::string_view Name, const char* Extension)
+{
+	return Folder + lr::upper(Name) + Extension;
+}
 inline std::string FolderOf(const std::string& Path) { return Path.substr(0, Path.rfind('/') + 1); }
+
+// A plain actor spawned at At with a movable root (what its components attach to).
+inline AActor* NewRootedActor(UWorld* World, const FTransform& At)
+{
+	AActor* A = World->SpawnActor<AActor>(AActor::StaticClass(), At);
+	USceneComponent* Root = NewObject<USceneComponent>(A, TEXT("Root"));
+	Root->SetMobility(EComponentMobility::Movable);
+	A->SetRootComponent(Root);
+	Root->RegisterComponent();
+	A->SetActorTransform(At);
+	return A;
+}
 
 // A movable procedural mesh on the actor's root: no shadow, no collision.
 inline UProceduralMeshComponent* NewMesh(AActor* Actor)
@@ -95,7 +114,8 @@ inline TArray<std::pair<std::string, std::string>> LibrariesOf(const lr::SceneFi
 	TArray<std::pair<std::string, std::string>> Out;
 	for (size_t i = 0; i < Scene.materialLibraries.size(); i++) {
 		const std::string Mdb = Folder + lr::upper(Scene.materialLibraries[i]) + ".MDB";
-		const std::string Tdb = Folder + lr::upper(i < Scene.textureLists.size() ? Scene.textureLists[i] : Scene.materialLibraries[i]) + ".TDB";
+		const std::string Tdb = Folder + lr::upper(i < Scene.textureLists.size() ? Scene.textureLists[i] : Scene.materialLibraries[i]) +
+			".TDB";
 		Out.Add({Mdb, Tdb});
 	}
 	return Out;

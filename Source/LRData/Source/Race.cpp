@@ -11,7 +11,7 @@ namespace lr {
 namespace {
 
 // .RAB
-enum : int {
+enum : int32_t {
 	KeyRace = 0x35,
 	KeyCollision = 0x2b, // "database" "track entity" "another trigger entity"
 	KeySurfaces = 0x43, // "surface table"
@@ -41,14 +41,14 @@ enum : int {
 };
 
 // .SPB
-enum : int {
+enum : int32_t {
 	GridPlaces = 0x27, // [n] { K(0x27) i place { fields } ... }
 	PlacePosition = 0x28, // r r r
 	PlaceAxes = 0x29, // r r r (forward) r r r (up)
 };
 
 // .RRB
-enum : int {
+enum : int32_t {
 	RoutePoints = 0x27, // [n] { 10 integers ... }
 	RouteStartRotation = 0x28,
 	RouteStart = 0x29,
@@ -59,7 +59,7 @@ enum : int {
 };
 
 // .CPB
-enum : int {
+enum : int32_t {
 	CheckpointList = 0x27, // [n] { K(0x27) { fields } ... }
 	CheckpointPlane = 0x28, // r r r r
 	CheckpointNext = 0x29, // i i i i
@@ -67,7 +67,7 @@ enum : int {
 };
 
 // .TRB
-enum : int {
+enum : int32_t {
 	SphereList = 0x27, // [n] { K(0x27) { fields } ... }
 	SphereCentre = 0x29,
 	SphereRadius = 0x2a,
@@ -79,7 +79,7 @@ enum : int {
 };
 
 // .EVB: sections K(kind) [n] { K(0x27) i id [K(0x3c)] { fields } ... }
-enum : int {
+enum : int32_t {
 	SectionSounds = 0x2a,
 	SectionPartAnimations = 0x28,
 	SectionMaterialAnimations = 0x29,
@@ -140,9 +140,11 @@ struct EventField {
 constexpr uint16_t eventKindBit(EventFile::Kind kind) { return uint16_t(1u << kind); }
 
 using EK = EventFile;
-constexpr uint16_t SoundBit = eventKindBit(EK::Sounds), PartBit = eventKindBit(EK::PartAnimations), ParticleBit = eventKindBit(EK::Particles), SkyBit = eventKindBit(EK::SkyStates),
-				   TimerBit = eventKindBit(EK::Timers), NodeBit = eventKindBit(EK::NodeTransforms), ColourBit = eventKindBit(EK::Colours), LapMarkBit = eventKindBit(EK::LapMarks),
-				   DistanceBit = eventKindBit(EK::ModelDistances), LookBit = eventKindBit(EK::LookTargets), ForceBit = eventKindBit(EK::Forces), LinkBit = eventKindBit(EK::Links);
+constexpr uint16_t SoundBit = eventKindBit(EK::Sounds), PartBit = eventKindBit(EK::PartAnimations),
+				   ParticleBit = eventKindBit(EK::Particles), SkyBit = eventKindBit(EK::SkyStates), TimerBit = eventKindBit(EK::Timers),
+				   NodeBit = eventKindBit(EK::NodeTransforms), ColourBit = eventKindBit(EK::Colours),
+				   LapMarkBit = eventKindBit(EK::LapMarks), DistanceBit = eventKindBit(EK::ModelDistances),
+				   LookBit = eventKindBit(EK::LookTargets), ForceBit = eventKindBit(EK::Forces), LinkBit = eventKindBit(EK::Links);
 constexpr uint16_t AllEventKinds = uint16_t((1u << (EK::Links + 1)) - 1);
 
 constexpr EventField EventFields[] = {
@@ -157,9 +159,11 @@ constexpr EventField EventFields[] = {
 	{ResourcePosition, ResourcePosition, SoundBit | ParticleBit, [](TokenReader& r, EK::Resource& e, int) { e.position = r.reals<3>(); }},
 	{ResourceAtEvent, ResourceAtEvent, SoundBit | ParticleBit | PartBit, [](TokenReader&, EK::Resource& e, int) { e.atEvent = true; }},
 	{ColourClear, ColourClear, ColourBit, [](TokenReader&, EK::Resource& e, int) { e.clear = true; }},
-	{ResourceEntity, ResourceEntity, SoundBit | ParticleBit | PartBit | ColourBit | NodeBit | DistanceBit, [](TokenReader& r, EK::Resource& e, int) { e.entity = r.text(); }},
+	{ResourceEntity, ResourceEntity, SoundBit | ParticleBit | PartBit | ColourBit | NodeBit | DistanceBit,
+		[](TokenReader& r, EK::Resource& e, int) { e.entity = r.text(); }},
 	// (QUIRK: the entity is looked up as it is read, so the shared database only if this came first.)
-	{ResourceShared, ResourceShared, ParticleBit | PartBit | DistanceBit, [](TokenReader&, EK::Resource& e, int) { e.shared = e.kind == EK::Particles || e.entity.empty(); }},
+	{ResourceShared, ResourceShared, ParticleBit | PartBit | DistanceBit,
+		[](TokenReader&, EK::Resource& e, int) { e.shared = e.kind == EK::Particles || e.entity.empty(); }},
 	{ResourceNode, ResourceNode, SoundBit | ParticleBit | NodeBit, [](TokenReader& r, EK::Resource& e, int) { e.node = r.integer(); }},
 	{NodeWorld, NodeWorld, NodeBit, [](TokenReader& r, EK::Resource& e, int) { e.world = r.text(); }},
 	{DistanceHide, DistanceHide, DistanceBit, [](TokenReader&, EK::Resource& e, int) { e.hide = true; }},
@@ -175,13 +179,14 @@ constexpr EventField EventFields[] = {
 	{SoundProbability, SoundProbability, SoundBit, [](TokenReader& r, EK::Resource& e, int) { e.probability = r.real(); }},
 	{SkyName, SkyName, SkyBit, [](TokenReader& r, EK::Resource& e, int) { e.sky = r.text(); }},
 	{SkyMs, SkyMs, SkyBit, [](TokenReader& r, EK::Resource& e, int) { e.skyMs = r.integer(); }},
-	{SkyHideDome, SkyHideDome + 3, SkyBit, [](TokenReader&, EK::Resource& e, int key) { e.skyFlags |= uint8_t(1u << (key - SkyHideDome)); }},
+	{SkyHideDome, SkyHideDome + 3, SkyBit,
+		[](TokenReader&, EK::Resource& e, int key) { e.skyFlags |= uint8_t(1u << (key - SkyHideDome)); }},
 	// (Alone, not after K(0x27): the parts) active 0x34, idle 0x35, start 0x36, end 0x37.
 	{ChainActive, ChainEnd, PartBit, [](TokenReader& r, EK::Resource& e, int key) { e.parts[size_t(key - ChainActive)] = r.integer(); }},
 };
 
 // .PWB
-enum : int {
+enum : int32_t {
 	ColourBricks = 0x27, // [n] { K(0x27) { fields } ... }
 	WhiteBricks = 0x2f,
 	BrickPosition = 0x28,
@@ -190,7 +195,7 @@ enum : int {
 };
 
 // .TGB, .TIB
-enum : int {
+enum : int32_t {
 	TargetList = 0x27,
 	TargetPosition = 0x28,
 	TargetDisabledBy = 0x29,
@@ -203,7 +208,7 @@ enum : int {
 };
 
 // .HZB: K(0x27) [n] { K(type) [body] ... }
-enum : int {
+enum : int32_t {
 	HazardList = 0x27,
 	HazardLauncher = 0x33,
 	HazardOpener = 0x34, // a triggered animation
@@ -228,22 +233,10 @@ enum : int {
 
 // "K(key) [n] { K(key) ... { fields } ... }": calls entry(r) n times, after each entry's keyword (and before its
 // optional value and brace); entry reads up to and including the entry's closing brace.
-template <typename Entry> bool forEachEntry(const Tokens& tokens, int key, Entry entry)
+template <typename Entry> bool forEachEntry(std::span<const uint8_t> bytes, int key, Entry entry)
 {
-	TokenReader r(tokens);
-	if (r.keyword() != key) {
-		return false;
-	}
-	const uint32_t count = r.openCounted();
-	for (uint32_t i = 0; i < count && !r.failed(); i++) {
-		if (r.keyword() != key) {
-			return false;
-		}
-		if (!entry(r)) {
-			return false;
-		}
-	}
-	r.close();
+	TokenReader r(bytes);
+	r.table(key, [&] { return entry(r); });
 	return !r.failed() && r.atEnd();
 }
 
@@ -252,11 +245,7 @@ template <typename Entry> bool forEachEntry(const Tokens& tokens, int key, Entry
 bool RaceFile::decode(std::span<const uint8_t> bytes)
 {
 	*this = {};
-	Tokens tokens;
-	if (!tokens.decode(bytes)) {
-		return false;
-	}
-	TokenReader r(tokens);
+	TokenReader r(bytes);
 	if (r.keyword() != KeyRace) {
 		return false;
 	}
@@ -327,19 +316,18 @@ std::string binaryName(std::string_view sourceName)
 bool StartGrid::decode(std::span<const uint8_t> bytes)
 {
 	*this = {};
-	Tokens tokens;
-	std::vector<uint8_t> seen;
-	const bool ok = tokens.decode(bytes) && forEachEntry(tokens, GridPlaces, [&](TokenReader& r) {
+	List<uint8_t> seen;
+	const bool ok = forEachEntry(bytes, GridPlaces, [&](TokenReader& r) {
 		const int32_t index = r.integer();
 		if (index < 0 || index > 255) {
 			return false;
 		}
-		if (size_t(index) >= places.size()) {
+		if (!inRange(places, index)) {
 			places.resize(size_t(index) + 1);
 			seen.resize(size_t(index) + 1);
 		}
-		Place& p = places[size_t(index)];
-		seen[size_t(index)] = 1;
+		Place& p = places[index];
+		seen[index] = 1;
 		r.expect(Token::Open);
 		while (!r.failed() && !r.next(Token::Close)) {
 			switch (r.keyword()) {
@@ -364,11 +352,7 @@ bool StartGrid::decode(std::span<const uint8_t> bytes)
 bool RouteFile::decode(std::span<const uint8_t> bytes)
 {
 	*this = {};
-	Tokens tokens;
-	if (!tokens.decode(bytes)) {
-		return false;
-	}
-	TokenReader r(tokens);
+	TokenReader r(bytes);
 	while (!r.atEnd() && !r.failed()) {
 		switch (r.keyword()) {
 		case RouteStart: start = r.reals<3>(); break;
@@ -379,30 +363,28 @@ bool RouteFile::decode(std::span<const uint8_t> bytes)
 		case RouteLoopPoint: loopPoint = r.integer(); break;
 		case RoutePoints: {
 			// (Read until the count or the stream runs out: a broken file's count can be any size.)
-			const uint32_t count = r.openCounted();
-			for (uint32_t i = 0; i < count && !r.failed(); i++) {
+			r.counted([&] {
 				int32_t v[10];
 				for (int32_t& x : v) {
 					x = r.integer();
 				}
 				// Each value is truncated to its field's width.
-				points.push_back({int16_t(v[0]), int16_t(v[1]), int8_t(v[2]), {int8_t(v[3]), int8_t(v[4]), int8_t(v[5]), int8_t(v[6])}, int8_t(v[7]), int8_t(v[8]), uint8_t(v[9])});
-			}
-			r.close();
+				points.push_back({int16_t(v[0]), int16_t(v[1]), int8_t(v[2]), {int8_t(v[3]), int8_t(v[4]), int8_t(v[5]), int8_t(v[6])},
+					int8_t(v[7]), int8_t(v[8]), uint8_t(v[9])});
+			});
 			break;
 		}
 		case -1: return false;
 		default: r.skipValues(); // unknown blocks' values
 		}
 	}
-	return !r.failed() && loopPoint >= 0 && size_t(loopPoint) < points.size();
+	return !r.failed() && inRange(points, loopPoint);
 }
 
 bool CheckpointFile::decode(std::span<const uint8_t> bytes)
 {
 	*this = {};
-	Tokens tokens;
-	return tokens.decode(bytes) && forEachEntry(tokens, CheckpointList, [&](TokenReader& r) {
+	return forEachEntry(bytes, CheckpointList, [&](TokenReader& r) {
 		Checkpoint& c = checkpoints.emplace_back();
 		r.expect(Token::Open);
 		while (!r.failed() && !r.next(Token::Close)) {
@@ -429,8 +411,7 @@ bool CheckpointFile::decode(std::span<const uint8_t> bytes)
 bool TouchFile::decode(std::span<const uint8_t> bytes)
 {
 	*this = {};
-	Tokens tokens;
-	return tokens.decode(bytes) && forEachEntry(tokens, SphereList, [&](TokenReader& r) {
+	return forEachEntry(bytes, SphereList, [&](TokenReader& r) {
 		Sphere& s = spheres.emplace_back();
 		r.expect(Token::Open);
 		while (!r.failed() && !r.next(Token::Close)) {
@@ -455,14 +436,11 @@ bool TouchFile::decode(std::span<const uint8_t> bytes)
 bool EventFile::decode(std::span<const uint8_t> bytes)
 {
 	*this = {};
-	Tokens tokens;
-	if (!tokens.decode(bytes)) {
-		return false;
-	}
-	static const std::pair<int, Kind> sections[] = {{SectionSounds, Sounds}, {SectionPartAnimations, PartAnimations}, {SectionMaterialAnimations, MaterialAnimations},
-		{SectionParticles, Particles}, {SectionSkyStates, SkyStates}, {SectionTimers, Timers}, {SectionNodeTransforms, NodeTransforms}, {SectionColours, Colours},
-		{SectionLapMarks, LapMarks}, {SectionModelDistances, ModelDistances}, {SectionLookTargets, LookTargets}, {SectionForces, Forces}, {SectionLinks, Links}};
-	TokenReader r(tokens);
+	static const std::pair<int, Kind> sections[] = {{SectionSounds, Sounds}, {SectionPartAnimations, PartAnimations},
+		{SectionMaterialAnimations, MaterialAnimations}, {SectionParticles, Particles}, {SectionSkyStates, SkyStates},
+		{SectionTimers, Timers}, {SectionNodeTransforms, NodeTransforms}, {SectionColours, Colours}, {SectionLapMarks, LapMarks},
+		{SectionModelDistances, ModelDistances}, {SectionLookTargets, LookTargets}, {SectionForces, Forces}, {SectionLinks, Links}};
+	TokenReader r(bytes);
 	while (!r.atEnd() && !r.failed()) {
 		const int section = r.keyword();
 		const auto it = std::find_if(std::begin(sections), std::end(sections), [&](const auto& s) { return s.first == section; });
@@ -470,11 +448,7 @@ bool EventFile::decode(std::span<const uint8_t> bytes)
 			return false;
 		}
 		const Kind kind = it->second;
-		const uint32_t count = r.openCounted();
-		for (uint32_t i = 0; i < count && !r.failed(); i++) {
-			if (r.keyword() != EventRecord) {
-				return false;
-			}
+		r.entries(EventRecord, [&] {
 			Resource& e = resources.emplace_back();
 			e.kind = kind;
 			e.id = r.integer();
@@ -495,7 +469,7 @@ bool EventFile::decode(std::span<const uint8_t> bytes)
 					static constexpr int ChainSlots[] = {ChainStart, ChainActive, ChainEnd};
 					const auto chain = std::find(std::begin(ChainSlots), std::end(ChainSlots), slot);
 					if (chain != std::end(ChainSlots)) {
-						e.chains[size_t(chain - std::begin(ChainSlots))] = event;
+						e.chains[chain - std::begin(ChainSlots)] = event;
 					}
 					continue;
 				}
@@ -506,8 +480,8 @@ bool EventFile::decode(std::span<const uint8_t> bytes)
 				}
 				r.skipValues(); // the presentation's fields (sounds, models, particles, tints...)
 			}
-		}
-		r.close();
+			return true;
+		});
 	}
 	return !r.failed();
 }
@@ -515,21 +489,13 @@ bool EventFile::decode(std::span<const uint8_t> bytes)
 bool PowerupFile::decode(std::span<const uint8_t> bytes)
 {
 	*this = {};
-	Tokens tokens;
-	if (!tokens.decode(bytes)) {
-		return false;
-	}
-	TokenReader r(tokens);
+	TokenReader r(bytes);
 	while (!r.atEnd() && !r.failed()) {
 		const int section = r.keyword();
 		if (section != ColourBricks && section != WhiteBricks) {
 			return false;
 		}
-		const uint32_t count = r.openCounted();
-		for (uint32_t i = 0; i < count && !r.failed(); i++) {
-			if (r.keyword() != section) {
-				return false;
-			}
+		r.entries(section, [&] {
 			Brick b;
 			r.expect(Token::Open);
 			while (!r.failed() && !r.next(Token::Close)) {
@@ -555,8 +521,8 @@ bool PowerupFile::decode(std::span<const uint8_t> bytes)
 			else {
 				whiteBricks.push_back(b.position);
 			}
-		}
-		r.close();
+			return true;
+		});
 	}
 	return !r.failed();
 }
@@ -564,8 +530,7 @@ bool PowerupFile::decode(std::span<const uint8_t> bytes)
 bool TargetFile::decode(std::span<const uint8_t> bytes)
 {
 	*this = {};
-	Tokens tokens;
-	return tokens.decode(bytes) && forEachEntry(tokens, TargetList, [&](TokenReader& r) {
+	return forEachEntry(bytes, TargetList, [&](TokenReader& r) {
 		Point& p = points.emplace_back();
 		r.expect(Token::Open);
 		while (!r.failed() && !r.next(Token::Close)) {
@@ -582,19 +547,8 @@ bool TargetFile::decode(std::span<const uint8_t> bytes)
 bool TimerFile::decode(std::span<const uint8_t> bytes)
 {
 	*this = {};
-	Tokens tokens;
-	if (!tokens.decode(bytes)) {
-		return false;
-	}
-	TokenReader r(tokens);
-	if (r.keyword() != TimerList) {
-		return false;
-	}
-	const uint32_t count = r.openCounted();
-	for (uint32_t i = 0; i < count && !r.failed(); i++) {
-		if (r.keyword() != TimerList) {
-			return false;
-		}
+	TokenReader r(bytes);
+	r.table(TimerList, [&] {
 		Timer& t = timers.emplace_back();
 		r.expect(Token::Open);
 		while (!r.failed() && !r.next(Token::Close)) {
@@ -612,8 +566,8 @@ bool TimerFile::decode(std::span<const uint8_t> bytes)
 			default: return false;
 			}
 		}
-	}
-	r.close();
+		return true;
+	});
 	return !r.failed();
 }
 
@@ -622,12 +576,10 @@ namespace {
 // A multi-launcher's counted list of points, each (x, y, z) and an integer.
 void readHazardPoints(TokenReader& r, std::vector<std::array<float, 4>>& into)
 {
-	const uint32_t n = r.openCounted();
-	for (uint32_t i = 0; i < n && !r.failed(); i++) {
+	r.counted([&] {
 		const std::array<float, 3> p = r.reals<3>();
 		into.push_back({p[0], p[1], p[2], float(r.integer())});
-	}
-	r.close();
+	});
 }
 
 // A body of keyword fields (the launcher's, the triggered animation's, the sweep cannon's, the rain's, the grabber's).
@@ -665,16 +617,11 @@ void readHazardFields(TokenReader& r, HazardFile::Hazard& h)
 bool HazardFile::decode(std::span<const uint8_t> bytes)
 {
 	*this = {};
-	Tokens tokens;
-	if (!tokens.decode(bytes)) {
-		return false;
-	}
-	TokenReader r(tokens);
+	TokenReader r(bytes);
 	if (r.keyword() != HazardList) {
 		return false;
 	}
-	const uint32_t count = r.openCounted();
-	for (uint32_t i = 0; i < count && !r.failed(); i++) {
+	r.counted([&] {
 		Hazard& h = hazards.emplace_back();
 		h.type = r.keyword();
 		switch (h.type) {
@@ -718,15 +665,15 @@ bool HazardFile::decode(std::span<const uint8_t> bytes)
 			break;
 		default: break; // the types that read nothing more
 		}
-	}
-	r.close();
+		return true;
+	});
 	return !r.failed() && r.atEnd();
 }
 
 namespace {
 
 // .GHB: K(0x2c) { fields }
-enum : int {
+enum : int32_t {
 	GhostRun = 0x2c,
 	GhostSamples = 0x27, // [n] { 7 i ... }
 	GhostPosition = 0x28, // r r r
@@ -735,7 +682,7 @@ enum : int {
 	GhostUnused = 0x2b, // i (0 in every file)
 };
 // .LSB: K(0x27) { fields }
-enum : int {
+enum : int32_t {
 	LoadingScreenBlock = 0x27,
 	LoadingPicture = 0x28,
 	LoadingDots = 0x29, // [n] { r r ... }
@@ -747,11 +694,7 @@ enum : int {
 bool GhostFile::decode(std::span<const uint8_t> bytes, bool mirrored)
 {
 	*this = {};
-	Tokens tokens;
-	if (!tokens.decode(bytes)) {
-		return false;
-	}
-	TokenReader r(tokens);
+	TokenReader r(bytes);
 	if (r.keyword() != GhostRun) {
 		return false;
 	}
@@ -800,11 +743,7 @@ bool GhostFile::decode(std::span<const uint8_t> bytes, bool mirrored)
 bool LoadingScreen::decode(std::span<const uint8_t> bytes)
 {
 	*this = {};
-	Tokens tokens;
-	if (!tokens.decode(bytes)) {
-		return false;
-	}
-	TokenReader r(tokens);
+	TokenReader r(bytes);
 	if (r.keyword() != LoadingScreenBlock) {
 		return false;
 	}
@@ -829,7 +768,7 @@ bool LoadingScreen::decode(std::span<const uint8_t> bytes)
 namespace {
 
 // .EMB
-enum : int {
+enum : int32_t {
 	EmitterList = 0x27, // [n] { K(0x27) "name" { properties } ... }
 	EmitterRate = 0x28,
 	EmitterChance = 0x29,
@@ -848,7 +787,7 @@ enum : int {
 };
 
 // .SKB
-enum : int {
+enum : int32_t {
 	SkyStates = 0x2c, // [n] { K(0x27) [k] "name" { K(0x27) { keyframe } ... } ... }
 	SkyState = 0x27,
 	SkyDuration = 0x28,
@@ -857,111 +796,65 @@ enum : int {
 	SkyHeight = 0x2e,
 };
 
-// A number written either way (the files mix integers and reals).
-float number(TokenReader& r)
-{
-	if (r.next(Token::Integer)) {
-		return float(r.tokens().list[r.position() - 1].integer);
-	}
-	return r.real();
-}
-
 } // namespace
 
 int32_t EmitterFile::find(std::string_view name) const
 {
-	name = name.substr(0, std::min<size_t>(name.size(), 8));
-	for (size_t i = 0; i < emitters.size(); i++) {
-		if (std::string_view(emitters[i].name).substr(0, 8) == name) {
-			return int32_t(i);
-		}
-	}
-	return -1;
+	return indexWhere(emitters, [&](const Emitter& e) { return std::string_view(e.name).substr(0, 8) == name.substr(0, 8); });
 }
 
 bool EmitterFile::decode(std::span<const uint8_t> bytes)
 {
 	*this = {};
-	Tokens tokens;
-	if (!tokens.decode(bytes)) {
-		return false;
-	}
-	TokenReader r(tokens);
-	if (r.keyword() != EmitterList) {
-		return false;
-	}
-	const uint32_t count = r.openCounted();
-	for (uint32_t i = 0; i < count && !r.failed(); i++) {
-		if (r.keyword() != EmitterList) {
-			return false;
-		}
+	TokenReader r(bytes);
+	r.table(EmitterList, [&] {
 		Emitter& e = emitters.emplace_back();
 		e.name = r.text();
 		r.expect(Token::Open);
 		while (!r.failed() && !r.next(Token::Close)) {
 			switch (r.keyword()) {
-			case EmitterRate: e.intervalMs = int32_t(1000.0f / number(r)); break;
-			case EmitterChance: e.chance = uint8_t(int32_t(number(r) * 256.0f) & 255); break;
-			case EmitterAcceleration: e.acceleration = {number(r), number(r), number(r)}; break;
-			case EmitterLaunches: {
-				const uint32_t n = r.openCounted();
-				for (uint32_t k = 0; k < n && !r.failed(); k++) {
-					e.launches.push_back({number(r), number(r), number(r)});
-				}
-				r.close();
-				break;
-			}
-			case EmitterWidth: e.width = number(r); break;
-			case EmitterHeight: e.height = number(r); break;
-			case EmitterTrack: e.track = int32_t(number(r)); break;
-			case EmitterLife: e.lifeMs = int32_t(number(r)); break;
-			case EmitterDuration: e.durationMs = int32_t(number(r)); break;
-			case EmitterGrowWidth: e.growWidth = number(r); break;
-			case EmitterGrowHeight: e.growHeight = number(r); break;
-			case EmitterRadius: e.radius = number(r); break;
+			case EmitterRate: e.intervalMs = r.truncated(1000.0f / r.number()); break;
+			case EmitterChance: e.chance = uint8_t(r.truncated(r.number() * 256.0f) & 255); break;
+			case EmitterAcceleration: e.acceleration = {r.number(), r.number(), r.number()}; break;
+			case EmitterLaunches: r.counted([&] { e.launches.push_back({r.number(), r.number(), r.number()}); }); break;
+			case EmitterWidth: e.width = r.number(); break;
+			case EmitterHeight: e.height = r.number(); break;
+			case EmitterTrack: e.track = r.truncated(r.number()); break;
+			case EmitterLife: e.lifeMs = r.truncated(r.number()); break;
+			case EmitterDuration: e.durationMs = r.truncated(r.number()); break;
+			case EmitterGrowWidth: e.growWidth = r.number(); break;
+			case EmitterGrowHeight: e.growHeight = r.number(); break;
+			case EmitterRadius: e.radius = r.number(); break;
 			case EmitterMaterial: e.material = r.text(); break;
-			case EmitterPriority: e.priority = uint8_t(int32_t(number(r)) & 255); break;
+			case EmitterPriority: e.priority = uint8_t(r.truncated(r.number()) & 255); break;
 			default: return false; // (an unknown key is an error)
 			}
 		}
-	}
-	r.close();
+		return true;
+	});
 	return !r.failed();
 }
 
 int32_t SkyFile::find(std::string_view name) const
 {
-	for (size_t i = 0; i < states.size(); i++) {
-		if (states[i].name == name) {
-			return int32_t(i);
-		}
-	}
-	return -1;
+	return indexWhere(states, [&](const State& s) { return s.name == name; });
 }
 
 bool SkyFile::decode(std::span<const uint8_t> bytes)
 {
 	*this = {};
-	Tokens tokens;
-	if (!tokens.decode(bytes)) {
-		return false;
-	}
-	TokenReader r(tokens);
+	TokenReader r(bytes);
 	const auto colour = [&] {
 		std::array<uint8_t, 3> c;
 		for (uint8_t& x : c) {
-			x = uint8_t(std::clamp(int32_t(number(r)), 0, 255));
+			x = uint8_t(std::clamp(r.truncated(r.number()), 0, 255));
 		}
 		return c;
 	};
 	while (!r.atEnd() && !r.failed()) {
 		switch (r.keyword()) {
-		case SkyStates: {
-			const uint32_t count = r.openCounted();
-			for (uint32_t i = 0; i < count && !r.failed(); i++) {
-				if (r.keyword() != SkyState) {
-					return false;
-				}
+		case SkyStates:
+			r.entries(SkyState, [&] {
 				State& s = states.emplace_back();
 				// "[k] "name" { K(0x27) { keyframe } × k }"
 				r.expect(Token::OpenCount);
@@ -978,7 +871,7 @@ bool SkyFile::decode(std::span<const uint8_t> bytes)
 					while (!r.failed() && !r.next(Token::Close)) {
 						const int key = r.keyword();
 						if (key == SkyDuration) {
-							k.durationMs = int32_t(number(r));
+							k.durationMs = r.truncated(r.number());
 						}
 						else if (key >= SkyHorizon && key <= SkyHorizon + 2) {
 							k.colours[size_t(key - SkyHorizon)] = colour();
@@ -988,12 +881,11 @@ bool SkyFile::decode(std::span<const uint8_t> bytes)
 						}
 					}
 				}
-			}
-			r.close();
+				return true;
+			});
 			break;
-		}
 		case SkyInitial: initial = r.text(); break;
-		case SkyHeight: height = number(r); break;
+		case SkyHeight: height = r.number(); break;
 		default: return false;
 		}
 	}

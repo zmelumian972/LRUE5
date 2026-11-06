@@ -57,6 +57,40 @@ ULRRaceView::FLook LookOf(const FLRSettings& S)
 	return L;
 }
 
+// A save slot's file in the save folder.
+FString SavePath(const FString& Dir, int32 Slot) { return Dir / FString::Printf(TEXT("%d/racers.lrsave"), Slot); }
+
+// A menu view's capture on its holder: only the view's actor, unlit and without effects, at a fixed exposure.
+USceneCaptureComponent2D* NewViewCapture(AActor* Holder)
+{
+	USceneCaptureComponent2D* C = NewObject<USceneCaptureComponent2D>(Holder);
+	C->bCaptureEveryFrame = false;
+	C->bCaptureOnMovement = false;
+	C->bAlwaysPersistRenderingState = true;
+	C->CaptureSource = SCS_SceneColorHDR;
+	C->CompositeMode = SCCM_Composite;
+	C->PrimitiveRenderMode = ESceneCapturePrimitiveRenderMode::PRM_UseShowOnlyList;
+	C->ShowFlags.SetAtmosphere(false);
+	C->ShowFlags.SetFog(false);
+	C->ShowFlags.SetDynamicShadows(false);
+	C->ShowFlags.SetAmbientOcclusion(false);
+	C->ShowFlags.SetScreenSpaceReflections(false);
+	C->ShowFlags.SetMotionBlur(false);
+	C->ShowFlags.SetBloom(false);
+	C->PostProcessSettings.bOverride_DynamicGlobalIlluminationMethod = true;
+	C->PostProcessSettings.DynamicGlobalIlluminationMethod = EDynamicGlobalIlluminationMethod::None;
+	C->PostProcessSettings.bOverride_ReflectionMethod = true;
+	C->PostProcessSettings.ReflectionMethod = EReflectionMethod::None;
+	C->PostProcessSettings.bOverride_AutoExposureMethod = true;
+	C->PostProcessSettings.AutoExposureMethod = AEM_Manual;
+	C->PostProcessSettings.bOverride_AutoExposureBias = true;
+	C->PostProcessSettings.AutoExposureBias = 0;
+	C->PostProcessSettings.bOverride_AutoExposureApplyPhysicalCameraExposure = true;
+	C->PostProcessSettings.AutoExposureApplyPhysicalCameraExposure = false;
+	C->RegisterComponent();
+	return C;
+}
+
 } // namespace
 
 ALRCoreGameMode::ALRCoreGameMode()
@@ -144,7 +178,7 @@ bool ALRCoreGameMode::Boot()
 	std::array<std::vector<uint8_t>, 2> Saves;
 	for (int32 Slot = 0; Slot < 2; Slot++) {
 		TArray<uint8> Bytes;
-		const FString File = R.SaveDir / FString::Printf(TEXT("%d/racers.lrsave"), Slot);
+		const FString File = SavePath(R.SaveDir, Slot);
 		if (FFileHelper::LoadFileToArray(Bytes, *File, FILEREAD_Silent)) {
 			Saves[Slot].assign(Bytes.GetData(), Bytes.GetData() + Bytes.Num());
 		}
@@ -207,8 +241,8 @@ void ALRCoreGameMode::Tick(float DeltaSeconds)
 	APlayerController* Player = GetWorld()->GetFirstPlayerController();
 	float X = 0, Y = 0;
 	if (Player && Player->GetMousePosition(X, Y) && !R.OwnsInput()) {
-		R.MouseX = FMath::Clamp(int32((X - R.Origin.X) / R.Scale), 0, 639);
-		R.MouseY = FMath::Clamp(int32((Y - R.Origin.Y) / R.Scale), 0, 479);
+		R.MouseX = FMath::Clamp(int32((X - R.Origin.X) / R.Scale), 0, lr::ScreenWidth - 1);
+		R.MouseY = FMath::Clamp(int32((Y - R.Origin.Y) / R.Scale), 0, lr::ScreenHeight - 1);
 	}
 	// The real time in 16 ms frames (four at most).
 	R.ClockMs = FMath::Min(R.ClockMs + DeltaSeconds * 1000.0, 64.0 + 16.0);
@@ -223,7 +257,8 @@ void ALRCoreGameMode::Tick(float DeltaSeconds)
 	// Frame smoothing: above 62.5 Hz a full-screen one-player race shows the view between its last two
 	// frames by the next frame's fraction gone.
 	const lr::World& W = R.Program.world;
-	bool bSmooth = R.Settings.bSmoothing && R.RaceView && RaceView && RaceView->bBuilt && W.raceView.cameras.size() == 1 && !W.raceView.cameras[0].hidden && DeltaSeconds < 0.016f;
+	bool bSmooth = R.Settings.bSmoothing && R.RaceView && RaceView && RaceView->bBuilt && W.raceView.cameras.size() == 1 &&
+		!W.raceView.cameras[0].hidden && DeltaSeconds < 0.016f;
 	bSmooth = bSmooth && !R.OwnsInput();
 	if (RaceView) {
 		RaceView->bSmoothing = bSmooth;
@@ -340,7 +375,9 @@ void ALRCoreGameMode::StepFrame(int32 FrameIndex)
 	// the candidates).
 	if (P.mode == lr::Program::Mode::Menus && (P.menus.tuneStarted || (P.menus.tune < 0 && !R.Tune.IsEmpty()))) {
 		const int32 T = P.menus.tune;
-		R.SetTune(T >= 0 && size_t(T) < R.Data.music.names.size() ? FString(UTF8_TO_TCHAR(R.Data.music.names[size_t(T)].c_str())) : FString(), P.menus.tuneLoops);
+		R.SetTune(T >= 0 && size_t(T) < R.Data.music.names.size() ? FString(UTF8_TO_TCHAR(R.Data.music.names[size_t(T)].c_str()))
+																  : FString(),
+			P.menus.tuneLoops);
 	}
 	WriteSaves();
 	if (P.menus.videoSettings) {
@@ -357,7 +394,7 @@ void ALRCoreGameMode::StepFrame(int32 FrameIndex)
 	else if (P.mode == lr::Program::Mode::Race) {
 		// The show runs on the race's ms (fast forward's x1.75; nothing while paused).
 		const lr::World& W = P.world;
-		R.Show.advance(W, W.paused() ? 0 : (W.session.brief.cheats & lr::CheatFastForward) ? int32(16 * 1.75f) : 16);
+		R.Show.advance(W, W.session.paused() ? 0 : (W.session.brief.cheats & lr::CheatFastForward) ? int32(16 * 1.75f) : 16);
 	}
 	if (P.mode == lr::Program::Mode::Race && P.world.session.tune.started) {
 		const lr::RaceTune& T = P.world.session.tune;
@@ -382,7 +419,7 @@ void ALRCoreGameMode::WriteSaves()
 {
 	FLRCoreRun& R = *Run;
 	for (const lr::Menus::SaveFile& S : R.Program.menus.saves) {
-		const FString File = R.SaveDir / FString::Printf(TEXT("%d/racers.lrsave"), S.slot);
+		const FString File = SavePath(R.SaveDir, S.slot);
 		if (!FFileHelper::SaveArrayToFile(TArrayView<const uint8>(S.bytes.data(), int32(S.bytes.size())), *File)) {
 			UE_LOG(LogLRCore, Error, TEXT("can't write %s"), *File);
 		}
@@ -402,7 +439,9 @@ void ALRCoreGameMode::Sounds()
 		TObjectPtr<UObject>* Found = Assets.Find(Key);
 		if (!Found) {
 			lr::Sound Sound;
-			ULRCoreWave* Made = R.Files.Cache.get(TCHAR_TO_UTF8(*Path), Sound) && !Sound.samples.empty() ? ULRCoreWave::Make(this, Sound, Loops) : nullptr;
+			ULRCoreWave* Made = R.Files.Cache.get(TCHAR_TO_UTF8(*Path), Sound) && !Sound.samples.empty()
+				? ULRCoreWave::Make(this, Sound, Loops)
+				: nullptr;
 			Found = &Assets.Add(Key, Made);
 			if (!Made) {
 				UE_LOG(LogLRCore, Warning, TEXT("no sound %s in the data cache"), *Path);
@@ -458,10 +497,10 @@ void ALRCoreGameMode::PaintLayers()
 			R.LayerCrcs.Add(0);
 		}
 		TArray<uint32>& Pixels = R.LayerPixels[Layer];
-		Pixels.Init(Layer == 0 && !R.RaceView ? 0xff000000u : 0u, 640 * 480);
+		Pixels.Init(Layer == 0 && !R.RaceView ? 0xff000000u : 0u, lr::ScreenWidth * lr::ScreenHeight);
 		lr::paint(R.Data, M.language, Span, Glyphs, Pixels.GetData());
 		if (ScreenLayers.Num() <= Layer) {
-			UTexture2D* T = UTexture2D::CreateTransient(640, 480, PF_B8G8R8A8);
+			UTexture2D* T = UTexture2D::CreateTransient(lr::ScreenWidth, lr::ScreenHeight, PF_B8G8R8A8);
 			T->Filter = TF_Bilinear; // the 640x480 screen scaled to the window filtered
 			T->SRGB = true;
 			T->UpdateResource();
@@ -471,13 +510,14 @@ void ALRCoreGameMode::PaintLayers()
 		const uint32 Crc = FCrc::MemCrc32(Pixels.GetData(), Pixels.Num() * 4);
 		if (Crc != R.LayerCrcs[Layer]) {
 			R.LayerCrcs[Layer] = Crc;
-			uint8* Copy = new uint8[640 * 480 * 4];
-			FMemory::Memcpy(Copy, Pixels.GetData(), 640 * 480 * 4);
-			FUpdateTextureRegion2D* Region = new FUpdateTextureRegion2D(0, 0, 0, 0, 640, 480);
-			ScreenLayers[Layer]->UpdateTextureRegions(0, 1, Region, 640 * 4, 4, Copy, [](uint8* Data, const FUpdateTextureRegion2D* Regions) {
-				delete[] Data;
-				delete Regions;
-			});
+			uint8* Copy = new uint8[lr::ScreenWidth * lr::ScreenHeight * 4];
+			FMemory::Memcpy(Copy, Pixels.GetData(), lr::ScreenWidth * lr::ScreenHeight * 4);
+			FUpdateTextureRegion2D* Region = new FUpdateTextureRegion2D(0, 0, 0, 0, lr::ScreenWidth, lr::ScreenHeight);
+			ScreenLayers[Layer]->UpdateTextureRegions(0, 1, Region, lr::ScreenWidth * 4, 4, Copy,
+				[](uint8* Data, const FUpdateTextureRegion2D* Regions) {
+					delete[] Data;
+					delete Regions;
+				});
 		}
 		Layer++;
 	};
@@ -493,7 +533,7 @@ void ALRCoreGameMode::PaintLayers()
 	}
 	R.WideRace = R.RaceView && R.Program.world.raceView.cameras.size() == 1 && R.WindowAspect > 4.0f / 3 + 0.01f;
 	if (R.WideRace) {
-		const std::pair<uint32_t, uint32_t> Hud = M.hudLayers[0];
+		const std::pair<uint32_t, uint32_t> Hud = M.hud.layers[0];
 		std::vector<lr::MenuElement> Groups[3], Rest;
 		for (size_t i = 0; i < E.size(); i++) {
 			if (i < Hud.first || i >= Hud.second) {
@@ -504,7 +544,7 @@ void ALRCoreGameMode::PaintLayers()
 			const float X = El.kind == lr::MenuElement::Triangle ? (El.vertices[0][0] + El.vertices[1][0] + El.vertices[2][0]) / 3
 				: El.kind == lr::MenuElement::Glyphs			 ? float(El.box[0]) + float(El.box[2]) / 2
 																 : (El.dest[0] + El.dest[2]) / 2;
-			Groups[X < 640.0f / 3 ? 0 : X > 1280.0f / 3 ? 2 : 1].push_back(El);
+			Groups[X < lr::ScreenWidth / 3.0f ? 0 : X > 2 * lr::ScreenWidth / 3.0f ? 2 : 1].push_back(El);
 		}
 		for (const std::vector<lr::MenuElement>& G : Groups) {
 			PaintSpan(G, M.glyphs);
@@ -535,7 +575,8 @@ void ALRCoreGameMode::DrawScreen(UCanvas* Canvas)
 		// The data cache being built (first start, or the install changed).
 		FCanvasTileItem Black(FVector2D::ZeroVector, FVector2D(Canvas->ClipX, Canvas->ClipY), FLinearColor::Black);
 		Canvas->DrawItem(Black);
-		const FString Text = FString::Printf(TEXT("PREPARING THE GAME DATA FROM %s ... %d%%"), *R.Files.GameDir.ToUpper(), int32(R.Files.Progress() * 100));
+		const FString Text = FString::Printf(TEXT("PREPARING THE GAME DATA FROM %s ... %d%%"), *R.Files.GameDir.ToUpper(),
+			int32(R.Files.Progress() * 100));
 		Canvas->SetDrawColor(FColor::White);
 		float W = 0, H = 0;
 		Canvas->StrLen(GEngine->GetMediumFont(), Text, W, H);
@@ -543,9 +584,9 @@ void ALRCoreGameMode::DrawScreen(UCanvas* Canvas)
 		return;
 	}
 	// The 640x480 screen scaled to the window, 4:3 (pillarboxed or letterboxed).
-	R.Scale = FMath::Min(Canvas->ClipX / 640.0f, Canvas->ClipY / 480.0f);
+	R.Scale = FMath::Min(Canvas->ClipX / lr::ScreenWidth, Canvas->ClipY / lr::ScreenHeight);
 	R.WindowAspect = Canvas->ClipY > 0 ? float(Canvas->ClipX / Canvas->ClipY) : 4.0f / 3;
-	R.Origin = FVector2D((Canvas->ClipX - 640.0f * R.Scale) * 0.5f, (Canvas->ClipY - 480.0f * R.Scale) * 0.5f);
+	R.Origin = FVector2D((Canvas->ClipX - lr::ScreenWidth * R.Scale) * 0.5f, (Canvas->ClipY - lr::ScreenHeight * R.Scale) * 0.5f);
 	FCanvasTileItem Black(FVector2D::ZeroVector, FVector2D(Canvas->ClipX, Canvas->ClipY), FLinearColor::Black);
 	Black.BlendMode = SE_BLEND_Opaque;
 	Canvas->DrawItem(Black);
@@ -568,11 +609,12 @@ void ALRCoreGameMode::DrawScreen(UCanvas* Canvas)
 		}
 	}
 	if (R.WideRace) {
-		const float Right = Canvas->ClipX - 640.0f * R.Scale;
+		const float Right = Canvas->ClipX - lr::ScreenWidth * R.Scale;
 		const float Xs[4] = {0, float(R.Origin.X), Right, float(R.Origin.X)};
 		for (int32 Layer = 0; Layer < 4 && Layer < ScreenLayers.Num(); Layer++) {
 			if (ScreenLayers[Layer] && ScreenLayers[Layer]->GetResource()) {
-				FCanvasTileItem Item(FVector2D(Xs[Layer], R.Origin.Y), ScreenLayers[Layer]->GetResource(), FVector2D(640.0f, 480.0f) * R.Scale, FLinearColor::White);
+				FCanvasTileItem Item(FVector2D(Xs[Layer], R.Origin.Y), ScreenLayers[Layer]->GetResource(),
+					FVector2D(lr::ScreenWidth, lr::ScreenHeight) * R.Scale, FLinearColor::White);
 				Item.BlendMode = SE_BLEND_Translucent;
 				Canvas->DrawItem(Item);
 			}
@@ -581,13 +623,16 @@ void ALRCoreGameMode::DrawScreen(UCanvas* Canvas)
 	}
 	for (int32 Layer = 0; Layer < ScreenLayers.Num() && Layer <= R.Views.Num(); Layer++) {
 		if (ScreenLayers[Layer] && ScreenLayers[Layer]->GetResource()) {
-			FCanvasTileItem Item(R.Origin, ScreenLayers[Layer]->GetResource(), FVector2D(640.0f, 480.0f) * R.Scale, FLinearColor::White);
+			FCanvasTileItem Item(R.Origin, ScreenLayers[Layer]->GetResource(), FVector2D(lr::ScreenWidth, lr::ScreenHeight) * R.Scale,
+				FLinearColor::White);
 			Item.BlendMode = SE_BLEND_Translucent;
 			Canvas->DrawItem(Item);
 		}
-		if (Layer < R.Views.Num() && Layer < R.ViewShown.Num() && R.ViewShown[Layer] && Layer < ViewTargets.Num() && ViewTargets[Layer] && ViewTargets[Layer]->GetResource()) {
+		if (Layer < R.Views.Num() && Layer < R.ViewShown.Num() && R.ViewShown[Layer] && Layer < ViewTargets.Num() && ViewTargets[Layer] &&
+			ViewTargets[Layer]->GetResource()) {
 			const FIntRect& V = R.Views[Layer].Rect;
-			FCanvasTileItem Item(R.Origin + FVector2D(V.Min) * R.Scale, ViewTargets[Layer]->GetResource(), FVector2D(V.Size()) * R.Scale, FLinearColor::White);
+			FCanvasTileItem Item(R.Origin + FVector2D(V.Min) * R.Scale, ViewTargets[Layer]->GetResource(), FVector2D(V.Size()) * R.Scale,
+				FLinearColor::White);
 			Item.BlendMode = SE_BLEND_Opaque;
 			Canvas->DrawItem(Item);
 		}
@@ -616,17 +661,6 @@ void ALRCoreGameMode::SetUpLights()
 	}
 }
 
-AActor* ALRCoreGameMode::NewActor(const FTransform& Where)
-{
-	AActor* A = GetWorld()->SpawnActor<AActor>(AActor::StaticClass(), Where);
-	USceneComponent* Root = NewObject<USceneComponent>(A, TEXT("Root"));
-	Root->SetMobility(EComponentMobility::Movable);
-	A->SetRootComponent(Root);
-	Root->RegisterComponent();
-	A->SetActorTransform(Where);
-	return A;
-}
-
 // The menus' 3D views: each view's world and things built and posed by the race view's menu side
 // (LRCoreMenus.cpp) from the core's scene, at its own place far below, captured into its target over the 2D under it.
 void ALRCoreGameMode::PoseViews()
@@ -646,38 +680,12 @@ void ALRCoreGameMode::PoseViews()
 		const lr::MenuScene& Scene = M.scenes[size_t(View.Scene)];
 		const FVector Place(0, 0, -1.0e6 * (v + 1));
 		AActor* Actor = nullptr;
-		const ULRRaceView::FMenuCamera Cam = RaceView->PoseMenuView(GetWorld(), R.Files.Cache, R.Data, v, Place, Scene, M, P.game, Actor);
+		const FLRMenuCamera Cam = RaceView->PoseMenuView(GetWorld(), R.Files.Cache, R.Data, v, Place, Scene, M, P.game, Actor);
 		if (!Cam.bValid || !Actor) {
 			continue;
 		}
 		while (Captures.Num() <= v) {
-			AActor* Holder = NewActor(FTransform::Identity);
-			USceneCaptureComponent2D* C = NewObject<USceneCaptureComponent2D>(Holder);
-			C->bCaptureEveryFrame = false;
-			C->bCaptureOnMovement = false;
-			C->bAlwaysPersistRenderingState = true;
-			C->CaptureSource = SCS_SceneColorHDR;
-			C->CompositeMode = SCCM_Composite;
-			C->PrimitiveRenderMode = ESceneCapturePrimitiveRenderMode::PRM_UseShowOnlyList;
-			C->ShowFlags.SetAtmosphere(false);
-			C->ShowFlags.SetFog(false);
-			C->ShowFlags.SetDynamicShadows(false);
-			C->ShowFlags.SetAmbientOcclusion(false);
-			C->ShowFlags.SetScreenSpaceReflections(false);
-			C->ShowFlags.SetMotionBlur(false);
-			C->ShowFlags.SetBloom(false);
-			C->PostProcessSettings.bOverride_DynamicGlobalIlluminationMethod = true;
-			C->PostProcessSettings.DynamicGlobalIlluminationMethod = EDynamicGlobalIlluminationMethod::None;
-			C->PostProcessSettings.bOverride_ReflectionMethod = true;
-			C->PostProcessSettings.ReflectionMethod = EReflectionMethod::None;
-			C->PostProcessSettings.bOverride_AutoExposureMethod = true;
-			C->PostProcessSettings.AutoExposureMethod = AEM_Manual;
-			C->PostProcessSettings.bOverride_AutoExposureBias = true;
-			C->PostProcessSettings.AutoExposureBias = 0;
-			C->PostProcessSettings.bOverride_AutoExposureApplyPhysicalCameraExposure = true;
-			C->PostProcessSettings.AutoExposureApplyPhysicalCameraExposure = false;
-			C->RegisterComponent();
-			Captures.Add(C);
+			Captures.Add(NewViewCapture(LRUe::NewRootedActor(GetWorld(), FTransform::Identity)));
 			ViewTargets.Add(nullptr);
 		}
 		// The target at the view's size in the window, the 2D under the view drawn into it first (a capture's alpha is
@@ -693,8 +701,10 @@ void ALRCoreGameMode::PoseViews()
 		FDrawToRenderTargetContext Context;
 		UKismetRenderingLibrary::BeginDrawCanvasToRenderTarget(this, Target, Under, Extent, Context);
 		for (int32 k = 0; Under && k <= v && k < ScreenLayers.Num(); k++) {
-			Under->K2_DrawTexture(ScreenLayers[k], FVector2D::ZeroVector, Extent, FVector2D(View.Rect.Min) / FVector2D(640, 480), FVector2D(View.Rect.Size()) / FVector2D(640, 480),
-				FLinearColor::White, k == 0 ? BLEND_Opaque : BLEND_Translucent);
+			Under->K2_DrawTexture(ScreenLayers[k], FVector2D::ZeroVector, Extent,
+				FVector2D(View.Rect.Min) / FVector2D(lr::ScreenWidth, lr::ScreenHeight),
+				FVector2D(View.Rect.Size()) / FVector2D(lr::ScreenWidth, lr::ScreenHeight), FLinearColor::White,
+				k == 0 ? BLEND_Opaque : BLEND_Translucent);
 		}
 		UKismetRenderingLibrary::EndDrawCanvasToRenderTarget(this, Context);
 		USceneCaptureComponent2D* C = Captures[v];
@@ -702,7 +712,7 @@ void ALRCoreGameMode::PoseViews()
 		C->ShowOnlyActors.Reset();
 		C->ShowOnlyActors.Add(Actor);
 		C->bOverride_CustomNearClippingPlane = true;
-		C->CustomNearClippingPlane = FMath::Max(0.1f, Scene.nearPlane) * 30.48f;
+		C->CustomNearClippingPlane = FMath::Max(0.1f, Scene.nearPlane) * Cm;
 		C->SetWorldLocationAndRotation(Cam.Eye, Cam.Rotation);
 		// (The vertical field of view: UE's is horizontal.)
 		const float Aspect = float(View.Rect.Width()) / float(View.Rect.Height());

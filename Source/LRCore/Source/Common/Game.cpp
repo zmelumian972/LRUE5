@@ -62,25 +62,26 @@ struct Reader {
 		ok = ok && at < bytes.size();
 		return ok ? bytes[at++] : 0;
 	}
-	uint32_t u16() { return u8() | u8() << 8; }
-	uint32_t u32() { return u16() | u16() << 16; }
-	std::u16string text(size_t most)
+	// Low part first: the operands of | have no set order.
+	uint32_t u16()
 	{
-		const size_t n = u16();
-		ok = ok && n <= most;
-		std::u16string s;
-		for (size_t i = 0; i < n && ok; i++) {
-			s += char16_t(u16());
-		}
-		return s;
+		const uint32_t low = u8();
+		return low | u8() << 8;
 	}
-	std::string narrow(size_t most)
+	uint32_t u32()
 	{
+		const uint32_t low = u16();
+		return low | u16() << 16;
+	}
+	// A counted string of at most `most` characters: 16-bit ones (std::u16string) or bytes (std::string).
+	template <class String> String text(size_t most)
+	{
+		using Char = typename String::value_type;
 		const size_t n = u16();
 		ok = ok && n <= most;
-		std::string s;
+		String s;
 		for (size_t i = 0; i < n && ok; i++) {
-			s += char(u8());
+			s += Char(sizeof(Char) == 2 ? u16() : u8());
 		}
 		return s;
 	}
@@ -107,11 +108,11 @@ void readSettings(Reader& r, Settings& s)
 	}
 	s.parts = uint8_t(r.u8()), s.circuits = uint8_t(r.u8()), s.races = uint16_t(r.u16());
 	for (BestTime& b : s.best) {
-		b.lapMs = r.u32(), b.lapHolder = r.text(14), b.raceMs = r.u32(), b.raceHolder = r.text(14);
+		b.lapMs = r.u32(), b.lapHolder = r.text<std::u16string>(14), b.raceMs = r.u32(), b.raceHolder = r.text<std::u16string>(14);
 	}
 	for (size_t p = 0; p < 2; p++) {
 		const uint32_t l = r.below(r.u8(), 4);
-		s.picks[p] = {l == 1 ? RacerList::Card0 : l == 2 ? RacerList::Card1 : l == 3 ? RacerList::Defaults : RacerList::None, uint16_t(r.u16())};
+		s.picks[p] = {RacerList(l), uint16_t(r.u16())}; // (saved as None, Card0, Card1, Defaults: 0..3)
 		s.layout[p] = uint8_t(r.below(r.u8(), 5));
 	}
 	for (KeyLayout& k : s.layouts) {
@@ -125,13 +126,13 @@ void readSettings(Reader& r, Settings& s)
 // A save's racer (Game::loadSlot's), each value kept in its range.
 void readRacer(Reader& r, RacerRecord& rec)
 {
-	rec.name = r.text(14);
+	rec.name = r.text<std::u16string>(14);
 	for (uint8_t& v : rec.looks) {
 		v = uint8_t(r.u8());
 	}
 	rec.expression = uint8_t(r.below(r.u8(), 128));
 	rec.stockCar = r.below(r.u8(), 2) != 0;
-	rec.chassis = r.narrow(8);
+	rec.chassis = r.text<std::string>(8);
 	rec.pieces.resize(r.below(r.u8(), 65));
 	for (CarPiece& p : rec.pieces) {
 		p.type = uint16_t(r.u16()), p.x = uint8_t(r.u8()), p.y = uint8_t(r.u8()), p.rotation = uint8_t(r.u8());
@@ -171,15 +172,16 @@ void Game::reset(uint8_t padCount)
 
 uint16_t Game::draw() { return randomTable(random = (random + 1) & 1023); }
 
-std::vector<RacerRecord>& Game::list(RacerList which) { return which == RacerList::Card0 ? cards[0] : which == RacerList::Card1 ? cards[1] : session; }
+std::vector<RacerRecord>& Game::list(RacerList which)
+{
+	return which == RacerList::Card0 ? cards[0] : which == RacerList::Card1 ? cards[1] : session;
+}
 
 const RacerRecord* Game::racer(RacerRef ref) const
 {
-	const std::vector<RacerRecord>* l = ref.list == RacerList::Card0 ? &cards[0]
-		: ref.list == RacerList::Card1								 ? &cards[1]
-		: ref.list == RacerList::Session							 ? &session
-		: ref.list == RacerList::Defaults							 ? &defaults
-																	 : nullptr;
+	// By RacerList.
+	const std::vector<RacerRecord>* const lists[] = {nullptr, &cards[0], &cards[1], &defaults, &session};
+	const std::vector<RacerRecord>* l = size_t(ref.list) < std::size(lists) ? lists[size_t(ref.list)] : nullptr;
 	return l && ref.index < l->size() ? &(*l)[ref.index] : nullptr;
 }
 
@@ -254,8 +256,9 @@ void Game::applyCheat(std::u16string_view name)
 {
 	const std::array<std::string, 13>& Codes = executableTables().cheats;
 	// What turning a code on turns off.
-	static const uint32_t Clears[13] = {0, 0, CheatYellowBricks | CheatGreenBricks | CheatRedOnly, CheatRedBricks | CheatGreenBricks | CheatRedOnly,
-		CheatRedBricks | CheatYellowBricks | CheatRedOnly, 0, CheatRedBricks | CheatYellowBricks | CheatGreenBricks | CheatMaxPower, CheatRedOnly, 0, 0, 0, 0, 0};
+	static const uint32_t Clears[13] = {0, 0, CheatYellowBricks | CheatGreenBricks | CheatRedOnly,
+		CheatRedBricks | CheatGreenBricks | CheatRedOnly, CheatRedBricks | CheatYellowBricks | CheatRedOnly, 0,
+		CheatRedBricks | CheatYellowBricks | CheatGreenBricks | CheatMaxPower, CheatRedOnly, 0, 0, 0, 0, 0};
 	std::string text;
 	for (size_t i = 0; i < name.size() && i < 13; i++) {
 		text += char(name[i] & 255);
@@ -303,7 +306,7 @@ std::vector<uint8_t> Game::encodeSlot(size_t slot) const
 		for (size_t p = 0; p < 2; p++) {
 			// Saved: which slot's racer (a session racer isn't saved: none).
 			const RacerList l = s.picks[p].list;
-			w.u8(l == RacerList::Card0 ? 1 : l == RacerList::Card1 ? 2 : l == RacerList::Defaults ? 3 : 0);
+			w.u8(l == RacerList::Session ? 0 : uint8_t(l));
 			w.u16(s.picks[p].index);
 			w.u8(s.layout[p]);
 		}
@@ -390,7 +393,7 @@ bool Game::loadSlot(size_t slot, std::span<const uint8_t> bytes)
 std::vector<std::pair<uint8_t, std::vector<uint8_t>>> Game::openSlots()
 {
 	std::array<bool, 2> made = {};
-	for (size_t slot : {size_t(1), size_t(0)}) {
+	for (size_t slot : {1u, 0u}) {
 		made[slot] = !usable[slot];
 		if (made[slot]) {
 			usable[slot] = true;
@@ -403,7 +406,7 @@ std::vector<std::pair<uint8_t, std::vector<uint8_t>>> Game::openSlots()
 	}
 	// Only a slot just made is written (the active one with the settings).
 	std::vector<std::pair<uint8_t, std::vector<uint8_t>>> files;
-	for (size_t slot : {size_t(1), size_t(0)}) {
+	for (size_t slot : {1u, 0u}) {
 		if (made[slot]) {
 			files.push_back({uint8_t(slot), encodeSlot(slot)});
 			racersChanged[slot] = false;
@@ -431,7 +434,7 @@ std::vector<uint8_t> Game::saveSlot(size_t slot)
 }
 
 uint8_t volumeByte(int32_t step) { return uint8_t(float(step) * 0.05f * 255.0f); }
-int32_t volumeStep(uint8_t byte) { return int32_t(float(byte) * 0.00392156886f * 20.0f + 0.5f); }
+int32_t volumeStep(uint8_t byte) { return int32_t(float(byte) * 0.003921569f * 20.0f + 0.5f); }
 
 RacerRecord Game::racerFrom(const OriginalSave::Record& r)
 {
@@ -467,7 +470,10 @@ std::array<std::vector<uint8_t>, 2> Game::fromOriginal(const std::array<std::vec
 			// A pick's list: 2 a card (its slot), 3 the stock racers.
 			for (size_t p = 0; p < 2; p++) {
 				const OriginalSave::Pick& k = o.picks[p];
-				s.picks[p] = {k.list == 2 ? (k.slot ? RacerList::Card1 : RacerList::Card0) : k.list == 3 ? RacerList::Defaults : RacerList::None, k.record};
+				s.picks[p] = {k.list == 2 ? (k.slot ? RacerList::Card1 : RacerList::Card0)
+						: k.list == 3	  ? RacerList::Defaults
+										  : RacerList::None,
+					k.record};
 				s.layout[p] = k.layout;
 			}
 			for (size_t l = 0; l < 5; l++) {

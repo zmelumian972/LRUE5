@@ -29,15 +29,12 @@ constexpr int32_t FinishView = 4;
 float radians(float degrees) { return degrees * (Pi / 180); }
 float lagRate(float a) { return (1 - a) / (a * 250); }
 
-// Rows from a look and a down: the look, the down made square to it, right = down × look.
-void rowsFrom(Vec3 look, Vec3 down, Vec3& r, Vec3& d, Vec3& l)
+// Rows (right, down, look) from a look and a down: the look, the down made square to it, right = down × look.
+Basis rowsFrom(Vec3 look, Vec3 down)
 {
-	l = normalize(look);
-	d = normalize(down - l * dot(down, l));
-	r = cross(d, l);
+	const Basis b = basisFromForwardUp(look, down);
+	return {b.s, b.u, b.f};
 }
-
-Quat quatOfRows(Vec3 r, Vec3 d, Vec3 l) { return quaternionOf(Basis{r, d, l}); }
 
 void setRows(PlayerCamera& c, Quat q)
 {
@@ -93,22 +90,23 @@ bool PlayerCamera::outside(Vec3 centre, float radius) const
 	if (z < nearPlane - radius || z > farPlane + radius) {
 		return true;
 	}
-	const float tv = std::tan(fov * 0.0087266462f);
+	const float tv = std::tan(fov * 0.008726646f);
 	const float th = tv * aspect;
 	// The side planes through the eye: inside when |x| <= z·th, |y| <= z·tv (signed distances scaled to length).
 	return (z * th - std::fabs(x)) / std::sqrt(1 + th * th) < -radius || (z * tv - std::fabs(y)) / std::sqrt(1 + tv * tv) < -radius;
 }
 
-void World::chooseView(size_t p, uint8_t view)
+void RaceView::chooseView(size_t p, uint8_t view)
 {
-	PlayerCamera& c = raceView.cameras[p];
+	PlayerCamera& c = cameras[p];
 	c.view = view == FinishView ? c.view : view;
 	const uint8_t profile = view == FinishView ? FinishView : c.split && view < 3 ? uint8_t(view + 5) : view;
 	const PlayerCamera::Kind before = c.kind;
 	c.profile = profile;
 	c.lookBack = false;
 	// (The intro's flyby and transition run on; the finish ends a transition.)
-	if ((c.kind != PlayerCamera::Transition && c.kind != PlayerCamera::Flyby) || (c.kind == PlayerCamera::Transition && view == FinishView)) {
+	if ((c.kind != PlayerCamera::Transition && c.kind != PlayerCamera::Flyby) ||
+		(c.kind == PlayerCamera::Transition && view == FinishView)) {
 		c.kind = Profiles[profile].kind;
 	}
 	if (c.kind != before) {
@@ -117,10 +115,10 @@ void World::chooseView(size_t p, uint8_t view)
 	c.dirty = true;
 }
 
-void World::updateCameras(int32_t dt)
+void RaceView::updateCameras(World& w, int32_t dt)
 {
-	for (size_t p = 0; p < raceView.cameras.size(); p++) {
-		updateCamera(p, dt);
+	for (size_t p = 0; p < cameras.size(); p++) {
+		updateCamera(w, p, dt);
 	}
 }
 
@@ -130,18 +128,17 @@ namespace {
 void flybyPose(const World& w, PlayerCamera& c)
 {
 	const Track& track = w.track;
-	const AnimatedModel& m = track.animated[size_t(track.introEntity)];
-	const Animation* a = m.animation >= 0 ? &track.animations[size_t(m.animation)] : nullptr;
-	std::vector<NodeMatrix> nodes;
+	const AnimatedModel& m = track.animated[track.introEntity];
+	const Animation* a = track.animationOf(m);
+	List<NodeMatrix> nodes;
 	const float last = a && !a->parts.empty() ? float(a->parts[0].frames - 1) : w.session.flyby;
 	poseSkeleton(m.nodes, a, {0, std::min(w.session.flyby, last), false}, m.pose, m.scale, nodes);
-	if (size_t(track.introNode) < nodes.size()) {
-		const NodeMatrix& node = nodes[size_t(track.introNode)];
-		Vec3 r, d, l;
-		rowsFrom(node.rows.f, -node.rows.u, r, d, l); // (down: minus the node's up, not its row 1)
+	if (inRange(nodes, track.introNode)) {
+		const NodeMatrix& node = nodes[track.introNode];
+		const Basis rows = rowsFrom(node.rows.f, -node.rows.u); // (down: minus the node's up, not its row 1)
 		c.eye = node.position;
-		c.right = r, c.down = d, c.look = l;
-		c.rotation = quatOfRows(r, d, l);
+		c.right = rows.f, c.down = rows.s, c.look = rows.u;
+		c.rotation = quaternionOf(rows);
 	}
 }
 
@@ -240,21 +237,21 @@ void transitionPose(PlayerCamera& c, int32_t e)
 
 } // namespace
 
-void World::updateCamera(size_t p, int32_t dt)
+void RaceView::updateCamera(World& w, size_t p, int32_t dt)
 {
-	PlayerCamera& c = raceView.cameras[p];
+	PlayerCamera& c = cameras[p];
 	if (c.racer < 0) {
 		return;
 	}
 	const size_t i = size_t(c.racer);
 	const int32_t e = std::min(dt, 100);
-	c.hidden = racers.race[i].flags & RacerGhost;
+	c.hidden = w.racers.race[i].flags & RacerGhost;
 	if (c.kind == PlayerCamera::Flyby) {
 		// Along the intro's camera node; when the flyby is done, from its last pose over to the chosen view.
-		if (track.introEntity >= 0) {
-			flybyPose(*this, c);
+		if (w.track.introEntity >= 0) {
+			flybyPose(w, c);
 		}
-		if (session.watchingFlyby) {
+		if (w.session.watchingFlyby) {
 			return;
 		}
 		c.kind = PlayerCamera::Transition;
@@ -266,7 +263,7 @@ void World::updateCamera(size_t p, int32_t dt)
 	const bool snap = c.dirty;
 	c.dirty = false;
 	const float ef = float(e);
-	const Pose& car = racers.visible[i];
+	const Pose& car = w.racers.visible[i];
 	const Profile& pr = Profiles[c.profile];
 	const PlayerCamera::Kind kind = c.kind == PlayerCamera::Transition ? Profiles[c.profile].kind : c.kind;
 
@@ -279,20 +276,18 @@ void World::updateCamera(size_t p, int32_t dt)
 		c.target = car.position;
 	}
 	else {
-		steerView(c, car, racers.karts[i], racers.playback[i].active, snap, ef);
+		steerView(c, car, w.racers.karts[i], w.racers.playback[i].active, snap, ef);
 		// A turbo's start pulls the camera in; it eases back out.
-		const bool turbo = racers.drivers[i].flags & DriverTurbo;
+		const bool turbo = w.racers.drivers[i].flags & DriverTurbo;
 		if (turbo && !c.turbo) {
-			const uint8_t level = racers.powers.empty() ? 0 : racers.powers[i].turboLevel;
+			const uint8_t level = w.racers.powers.empty() ? 0 : w.racers.powers[i].turboLevel;
 			c.pull = level == 0 ? -0.2f : level == 1 ? -0.4f : level == 2 ? -0.6f : 1.0f;
 		}
 		c.turbo = turbo;
 		chasePose(c, pr, kind, e, snap, rawEye, look);
 		down = {0, 0, -1};
 	}
-	Vec3 r, d, l;
-	rowsFrom(look, down, r, d, l);
-	const Quat raw = quatOfRows(r, d, l);
+	const Quat raw = quaternionOf(rowsFrom(look, down));
 	c.rawEye = rawEye;
 	c.rawRotation = raw;
 
@@ -313,62 +308,64 @@ void World::updateCamera(size_t p, int32_t dt)
 	setRows(c, c.viewRotation);
 }
 
-void World::viewKeys(size_t i)
+void RaceView::viewKeys(World& w, size_t i)
 {
-	const uint16_t now = racers.keys[i], before = racers.lastKeys[i];
-	racers.lastKeys[i] = now;
-	for (size_t p = 0; p < raceView.cameras.size(); p++) {
-		PlayerCamera& c = raceView.cameras[p];
+	const uint16_t now = w.racers.keys[i], before = w.racers.lastKeys[i];
+	w.racers.lastKeys[i] = now;
+	for (size_t p = 0; p < cameras.size(); p++) {
+		PlayerCamera& c = cameras[p];
 		if (c.racer != int32_t(i)) {
 			continue;
 		}
-		const Racer& r = racers.race[i];
-		if ((now & KeyCamera) && !(before & KeyCamera) && !(r.flags & RacerFinished) && session.phase >= Session::Countdown) {
+		const Racer& r = w.racers.race[i];
+		if ((now & KeyCamera) && !(before & KeyCamera) && !(r.flags & RacerFinished) && w.session.phase >= Session::Countdown) {
 			chooseView(p, uint8_t((c.view + 1) & 3));
-			session.brief.views[p] = c.view;
+			w.session.brief.views[p] = c.view;
 		}
-		if ((now & KeyMap) && !(before & KeyMap) && p < raceView.mapModes.size()) {
-			raceView.mapModes[p] = uint8_t((raceView.mapModes[p] + 1) & 3);
-			session.brief.maps[p] = raceView.mapModes[p];
+		if ((now & KeyMap) && !(before & KeyMap) && p < mapModes.size()) {
+			mapModes[p] = uint8_t((mapModes[p] + 1) & 3);
+			w.session.brief.maps[p] = mapModes[p];
 		}
 		c.lookBack = (now & KeyLookBack) && c.kind != PlayerCamera::Transition && c.kind != PlayerCamera::Flyby;
 		// The finish view, once the racer is over the line and not warping (not back to the garage).
-		if ((r.flags & RacerFinished) && !(r.flags & (RacerGhost | RacerWarping)) && c.profile != FinishView && session.brief.mode != RaceBrief::Mode::TestDrive) {
+		if ((r.flags & RacerFinished) && !(r.flags & (RacerGhost | RacerWarping)) && c.profile != FinishView &&
+			w.session.brief.mode != RaceBrief::Mode::TestDrive) {
 			chooseView(p, FinishView);
 			c.dirty = false; // (it swings from where it is: no snap)
 		}
 	}
 }
 
-void World::drawScenery()
+void RaceView::drawScenery(World& w)
 {
-	raceView.drawnBy.assign(scenery.clocks.size(), 0);
-	for (size_t p = 0; p < raceView.cameras.size(); p++) {
-		const PlayerCamera& c = raceView.cameras[p];
+	drawnBy.assign(w.scenery.clocks.size(), 0);
+	for (size_t p = 0; p < cameras.size(); p++) {
+		const PlayerCamera& c = cameras[p];
 		if (c.hidden || c.racer < 0) {
 			continue;
 		}
 		const Vec3 eye = c.shownEye();
-		for (size_t m = 0; m < scenery.clocks.size(); m++) {
-			const AnimatedModel& model = track.animated[m];
+		for (size_t m = 0; m < w.scenery.clocks.size(); m++) {
+			const AnimatedModel& model = w.track.animated[m];
 			if (model.model.empty()) {
 				continue;
 			}
 			// The playing part's bounds (the model's without part animation), scaled and placed.
 			Sphere b = model.bounds;
-			const Clock& clock = scenery.clocks[m];
-			if (model.animation >= 0 && clock.part >= 0) {
-				b = track.animations[size_t(model.animation)].parts[size_t(clock.part)].bounds;
+			const Clock& clock = w.scenery.clocks[m];
+			if (const Animation* a = w.track.animationOf(model); a && inRange(a->parts, clock.part)) {
+				b = a->parts[clock.part].bounds;
 			}
 			const Vec3 centre = toWorld(model.pose.rotation, b.centre * model.scale) + model.pose.position;
-			if (m >= scenery.animatedDistances.size() || !withinDistance(scenery.animatedDistances[m], lengthSquared(centre - eye))) {
+			if (m >= w.scenery.animatedDistances.size() ||
+				!World::withinDistance(w.scenery.animatedDistances[m], lengthSquared(centre - eye))) {
 				continue;
 			}
 			if (c.outside(centre, b.radius * model.scale)) {
 				continue;
 			}
-			raceView.drawnBy[m] |= uint8_t(1u << p);
-			scenery.clocks[m].drawn = scenery.clocks[m].time;
+			drawnBy[m] |= uint8_t(1u << p);
+			w.scenery.clocks[m].drawn = w.scenery.clocks[m].time;
 		}
 	}
 }

@@ -7,10 +7,12 @@
 
 #include "LRData/Cache.h"
 #include "LRData/Cars.h"
+#include "LRData/Index.h"
 #include "LRData/Model.h"
 #include "LRData/Pieces.h"
 #include "LRData/Race.h"
 #include "LRData/Scene.h"
+#include "Show/SoundIds.h"
 
 #include <algorithm>
 #include <cmath>
@@ -46,10 +48,10 @@ enum Figure : int32_t {
 // A part's time moved on by `frames`: a looping one wraps, a one-shot that reaches its end goes on to its follow-up.
 void advancePart(PartClock& c, const Animation& a, float rate, int32_t dt)
 {
-	if (c.part < 0 || size_t(c.part) >= a.parts.size()) {
+	if (!inRange(a.parts, c.part)) {
 		return;
 	}
-	const Animation::Part& p = a.parts[size_t(c.part)];
+	const Animation::Part& p = a.parts[c.part];
 	c.time = rate * float(dt) + c.time;
 	if (c.time < float(p.frames - 1)) {
 		return;
@@ -104,16 +106,16 @@ void advanceFigure(PartClock& c, const Animation& a, int32_t dt)
 			c.progress = 1;
 			c.fromPart = -1;
 		}
-		else if (c.fromPart >= 0 && size_t(c.fromPart) < a.parts.size()) {
-			const Animation::Part& p = a.parts[size_t(c.fromPart)];
+		else if (inRange(a.parts, c.fromPart)) {
+			const Animation::Part& p = a.parts[c.fromPart];
 			c.fromTime = p.rate * float(dt) + c.fromTime;
 			if (c.fromTime >= float(p.frames - 1)) {
 				c.fromTime = wrapLoop(c.fromTime, float(p.loopFrames));
 			}
 		}
 	}
-	if (c.part >= 0 && size_t(c.part) < a.parts.size()) {
-		advancePart(c, a, a.parts[size_t(c.part)].rate, dt);
+	if (inRange(a.parts, c.part)) {
+		advancePart(c, a, a.parts[c.part].rate, dt);
 	}
 }
 
@@ -124,7 +126,7 @@ Sphere merged(Sphere a, Sphere b)
 	return {c, length(b.centre - a.centre) * 0.5f + std::max(a.radius, b.radius)};
 }
 
-Sphere partBounds(const Animation& a, int32_t part) { return part >= 0 && size_t(part) < a.parts.size() ? a.parts[size_t(part)].bounds : Sphere{}; }
+Sphere partBounds(const Animation& a, int32_t part) { return inRange(a.parts, part) ? a.parts[part].bounds : Sphere{}; }
 
 // A model's scale (its .GDB's), 1 if it can't be read.
 float modelScale(const Cache& cache, const std::string& path)
@@ -140,15 +142,18 @@ namespace {
 // The chassis' part by the forward speed, at a rate by it (the file's rate isn't used); the variant alike, part 0.
 void carParts(const World& w, RacerLook& look, const RacerShape& shape, float fs, int32_t dt)
 {
-	const Animation& a = w.raceView.figures[size_t(shape.carAnimation)];
-	const bool still = std::fabs(fs) < 9.9999997e-05f;
+	if (!inRange(w.raceView.figures, shape.carAnimation)) {
+		return; // (a chassis without a part file)
+	}
+	const Animation& a = w.raceView.figures[shape.carAnimation];
+	const bool still = std::fabs(fs) < 1e-4f;
 	const int32_t part = !still && fs < 0 && a.parts.size() > 1 ? 1 : 0;
 	if (part != look.car.part) {
 		play(look.car, part, -1);
 	}
 	advancePart(look.car, a, still ? 0.0f : std::fabs(fs) * 1.8f, dt);
 	if (shape.variantAnimation >= 0) {
-		advancePart(look.variant, w.raceView.figures[size_t(shape.variantAnimation)], still ? 0.0f : std::fabs(fs) * 1.8f, dt);
+		advancePart(look.variant, w.raceView.figures[shape.variantAnimation], still ? 0.0f : std::fabs(fs) * 1.8f, dt);
 	}
 }
 
@@ -171,8 +176,8 @@ void leanBody(RacerLook& look, const Pose& carPose, float m, int32_t dt)
 			v = 0;
 		}
 	};
-	spring(look.pitch, pitchLen, 30, 0.0099999998f);
-	spring(look.roll, rollLen, 100, 0.029999999f);
+	spring(look.pitch, pitchLen, 30, 0.01f);
+	spring(look.roll, rollLen, 100, 0.03f);
 	Vec3 r0 = look.pitch == 0 ? c.f : t0 + c.u * look.pitch;
 	Vec3 r1 = look.roll == 0 ? c.s : t1 + c.u * look.roll;
 	r0 = normalize(r0);
@@ -187,7 +192,7 @@ void finishFigure(World& w, size_t i, PartClock& f, int32_t shown)
 {
 	if (w.racers.race[i].standing == 1) {
 		if (!showing(shown, {Winner, Winner2, Winner2Loop})) {
-			if (w.lookDraw(i, false) & 1) {
+			if (w.raceView.lookDraw(w, i, false) & 1) {
 				play(f, Winner2, Winner2Loop);
 			}
 			else {
@@ -216,12 +221,12 @@ int32_t lookAtNearest(const World& w, size_t i, const Basis& c)
 	}
 	int32_t part = -1;
 	if (nearest >= 0) {
-		const Vec3 u = normalize(w.racers.visible[size_t(nearest)].position - own);
+		const Vec3 u = normalize(w.racers.visible[nearest].position - own);
 		const float ahead = dotZYX(c.f, u), side = dotZYX(c.s, u);
 		if (ahead > -0.2f && ahead < 0.2f) {
 			part = side < 0 ? ShortLookRight : ShortLookLeft;
 		}
-		else if (ahead > -0.60000002f && ahead <= -0.2f) {
+		else if (ahead > -0.6f && ahead <= -0.2f) {
 			part = side < 0 ? LongLookRight : LongLookLeft;
 		}
 	}
@@ -234,9 +239,9 @@ void driverFigure(World& w, size_t i, int32_t shown, uint8_t marks, float fs)
 {
 	RacerLook& look = w.raceView.looks[i];
 	PartClock& f = look.figure;
-	if (look.lastSpeed > 0.050000001f && fs < 0.0099999998f && shown != VeloStop) {
+	if (look.lastSpeed > 0.05f && fs < 0.01f && shown != VeloStop) {
 		look.stoppedHard = true;
-		w.voice(i, RaceEvent::Negative);
+		w.raceView.voice(w, i, RaceEvent::Negative);
 		play(f, VeloStop, Default);
 		look.lastSpeed = 0;
 		return;
@@ -272,7 +277,7 @@ void driverFigure(World& w, size_t i, int32_t shown, uint8_t marks, float fs)
 	if (look.lookMs == 0) {
 		const int32_t part = lookAtNearest(w, i, w.racers.visible[i].rotation);
 		if (part >= 0) {
-			look.lookMs = int32_t(w.lookDraw(i, false) % 1000) + 5000;
+			look.lookMs = int32_t(w.raceView.lookDraw(w, i, false) % 1000) + 5000;
 			play(f, part, Default);
 			return;
 		}
@@ -290,12 +295,12 @@ void driverFigure(World& w, size_t i, int32_t shown, uint8_t marks, float fs)
 
 } // namespace
 
-uint16_t World::lookDraw(size_t racer, bool cooldown)
+uint16_t RaceView::lookDraw(World& w, size_t racer, bool cooldown)
 {
-	if (observer.to) {
-		observer.to->onLook(*this, racer, cooldown);
+	if (w.observer.to) {
+		w.observer.to->onLook(w, racer, cooldown);
 	}
-	return randomTable(raceView.lookRandom = (raceView.lookRandom + 1) & 1023);
+	return randomTable(lookRandom = (lookRandom + 1) & 1023);
 }
 
 namespace {
@@ -317,14 +322,7 @@ int16_t figureOf(World& w, const Cache& cache, const std::string& animation, con
 	(void)cache.get(Common + binaryName(animation) + ".ADB", file);
 	(void)cache.get(Common + binaryName(skeleton.empty() ? animation : skeleton) + ".SDB", nodes);
 	w.raceView.figures.push_back(animationOf(file, false));
-	std::vector<SkeletonNode>& out = w.raceView.skeletons.emplace_back();
-	for (const SkeletonFile::Node& node : nodes.nodes) {
-		int16_t parent = -1;
-		for (size_t k = 0; k < nodes.nodes.size(); k++) {
-			parent = !node.parent.empty() && nodes.nodes[k].name == node.parent ? int16_t(k) : parent;
-		}
-		out.push_back({vec(node.position), basisOf({node.rotation[0], node.rotation[1], node.rotation[2], node.rotation[3]}), parent});
-	}
+	w.raceView.skeletons.push_back(nodesOf(nodes));
 	w.raceView.figureNames.push_back(animation);
 	return int16_t(w.raceView.figures.size() - 1);
 }
@@ -393,11 +391,12 @@ void setupCameras(World& w, const RaceBrief& race, size_t n)
 		PlayerCamera& c = w.raceView.cameras[p];
 		c.split = w.raceView.cameras.size() > 1;
 		c.fov = c.split ? 40.0f : 65.0f;
-		c.viewport = !c.split ? std::array<int32_t, 4>{0, 0, 640, 480} : p == 0 ? std::array<int32_t, 4>{0, 0, 640, 240} : std::array<int32_t, 4>{0, 240, 640, 480};
+		c.viewport = {0, c.split && p == 1 ? ScreenHeight / 2 : 0, ScreenWidth,
+			c.split && p == 0 ? ScreenHeight / 2 : ScreenHeight}; // (split: a half each)
 		c.aspect = c.split ? 2.6666667f : 1.3333334f;
 		w.raceView.mapModes[p] = race.maps[p];
-		w.chooseView(p, race.views[p] & 3);
-		w.updateCamera(p, 1);
+		w.raceView.chooseView(p, race.views[p] & 3);
+		w.raceView.updateCamera(w, p, 1);
 		c.toEye = c.rawEye;
 		c.toRotation = c.rawRotation;
 		c.kind = PlayerCamera::Transition;
@@ -417,13 +416,13 @@ void setupCameras(World& w, const RaceBrief& race, size_t n)
 
 } // namespace
 
-void World::setupView(const Cache& cache, const RaceBrief& race, const std::vector<std::string>& bodies)
+void RaceView::setup(World& w, const Cache& cache, const RaceBrief& race, const std::vector<std::string>& bodies)
 {
-	const size_t n = racers.karts.size();
-	raceView.figures.clear();
-	raceView.skeletons.clear();
-	raceView.figureNames.clear();
-	figureOf(*this, cache, "pelvis", "pelvis");
+	const size_t n = w.racers.karts.size();
+	figures.clear();
+	skeletons.clear();
+	figureNames.clear();
+	figureOf(w, cache, "pelvis", "pelvis");
 
 	ChassisTable chassisTable;
 	ChampionTable champions;
@@ -435,24 +434,26 @@ void World::setupView(const Cache& cache, const RaceBrief& race, const std::vect
 	PieceLibrary low;
 	const bool lowLoaded = cache.get("MENUDATA/PIECEDB/LPIECELO.LEB", low);
 
-	raceView.shapes.assign(n, {});
-	raceView.looks.assign(n, {});
-	raceView.lookRandom = race.random;
+	shapes.assign(n, {});
+	looks.assign(n, {});
+	lookRandom = race.random;
 	for (size_t i = 0; i < n; i++) {
 		const RaceBrief::Slot& slot = race.slots[i];
-		RacerShape& shape = raceView.shapes[i];
+		RacerShape& shape = shapes[i];
 		const DriverTable::Driver* driver = slot.driver.empty() ? driverTable.find("BB") : driverTable.find(slot.driver);
 		const ChampionTable::Champion* champion = !slot.driver.empty() && driver ? champions.find(driver->champion) : nullptr;
 		const ChassisTable::Chassis* chassis = chassisTable.find(champion ? champion->chassis : slot.chassis);
 		if (chassis) {
-			chassisShape(*this, cache, *chassis, shape);
+			chassisShape(w, cache, *chassis, shape);
 		}
 		// (A player's slot races its record's built minifig, body set 1's seated leg box; DRIVERS.DDB's
 		// "bb" only if that can't be had.)
 		const std::string seated = "MENUDATA/PARTDB/GAMEPART/LEG_BOX.GDB";
-		shape.driverScale = slot.driver.empty() && cache.has(seated) ? modelScale(cache, seated) : driver ? modelScale(cache, Common + binaryName(driver->model) + ".GDB") : 1.0f;
+		shape.driverScale = slot.driver.empty() && cache.has(seated) ? modelScale(cache, seated)
+			: driver												 ? modelScale(cache, Common + binaryName(driver->model) + ".GDB")
+																	 : 1.0f;
 		// The body: the champion's model, or the built car (the race's build of its pieces).
-		shape.body = racers.carBounds[i];
+		shape.body = w.racers.carBounds[i];
 		if (i < bodies.size() && !bodies[i].empty()) {
 			Model body;
 			if (cache.get(Common + binaryName(bodies[i]) + ".GDB", body)) {
@@ -462,48 +463,48 @@ void World::setupView(const Cache& cache, const RaceBrief& race, const std::vect
 		else if (!slot.car.empty() && lowLoaded) {
 			shape.body = builtBody(low, slot.car, shape.body);
 		}
-		racers.bodyBounds[i] = shape.body;
+		w.racers.bodyBounds[i] = shape.body;
 		cheatShape(race.cheats, shape);
 
-		RacerLook& look = raceView.looks[i];
-		look.body = racers.visible[i];
+		RacerLook& look = looks[i];
+		look.body = w.racers.visible[i];
 		look.car.part = 0;
 		look.variant.part = 0;
 		look.figure.part = Default;
-		look.lookMs = lookDraw(i, true) % 2000;
+		look.lookMs = lookDraw(w, i, true) % 2000;
 		look.driver = {look.body.position + toWorld(look.body.rotation, shape.mount), look.body.rotation};
-		updateGroup(i);
+		updateGroup(w, i);
 	}
-	racers.groupsStale = true;
-	setupCameras(*this, race, n);
-	raceView.drawnBy.assign(scenery.clocks.size(), 0);
-	raceView.scrollOffsets.assign(track.scrolls.size(), {});
+	w.racers.groupsStale = true;
+	setupCameras(w, race, n);
+	drawnBy.assign(w.scenery.clocks.size(), 0);
+	scrollOffsets.assign(w.track.scrolls.size(), {});
 }
 
-bool World::member(size_t i, RacerShape::Member which, Pose& pose, float& scale) const
+bool RaceView::member(const World& w, size_t i, RacerShape::Member which, Pose& pose, float& scale) const
 {
-	const RacerShape& shape = raceView.shapes[i];
-	const RacerLook& look = raceView.looks[i];
-	const float g = racers.powers.empty() ? 1.0f : racers.powers[i].carScale;
+	const RacerShape& shape = shapes[i];
+	const RacerLook& look = looks[i];
+	const float g = w.racers.powers.empty() ? 1.0f : w.racers.powers[i].carScale;
 	switch (which) {
 	case RacerShape::Body: pose = look.body, scale = g; break;
 	case RacerShape::Variant: pose = look.body, scale = shape.variantScale * g; break;
-	case RacerShape::Car: pose = racers.visible[i], scale = shape.carScale * g; break;
+	case RacerShape::Car: pose = w.racers.visible[i], scale = shape.carScale * g; break;
 	case RacerShape::Driver: pose = look.driver, scale = shape.driverScale * g; break;
 	}
 	return shape.present[which];
 }
 
-void World::updateGroup(size_t i)
+void RaceView::updateGroup(World& w, size_t i)
 {
-	const RacerShape& shape = raceView.shapes[i];
-	const RacerLook& look = raceView.looks[i];
+	const RacerShape& shape = shapes[i];
+	const RacerLook& look = looks[i];
 	Sphere spheres[4];
 	int count = 0;
 	for (int m = 0; m < 4; m++) {
 		Pose pose;
 		float g;
-		if (!member(i, RacerShape::Member(m), pose, g)) {
+		if (!member(w, i, RacerShape::Member(m), pose, g)) {
 			continue;
 		}
 		Sphere local;
@@ -515,19 +516,19 @@ void World::updateGroup(size_t i)
 			if (a < 0) {
 				continue;
 			}
-			local = partBounds(raceView.figures[size_t(a)], (m == RacerShape::Car ? look.car : look.variant).part);
+			local = partBounds(figures[a], (m == RacerShape::Car ? look.car : look.variant).part);
 		}
 		else {
 			const PartClock& c = look.figure;
-			local = partBounds(raceView.figures[0], c.part);
+			local = partBounds(figures[0], c.part);
 			if (c.progress < 1 && c.fromPart >= 0) {
-				local = merged(partBounds(raceView.figures[0], c.fromPart), local);
+				local = merged(partBounds(figures[0], c.fromPart), local);
 			}
 		}
 		spheres[count++] = {toWorld(pose.rotation, local.centre * g) + pose.position, local.radius * g};
 	}
 	if (count == 0) {
-		racers.groups[i] = {racers.visible[i].position, 0};
+		w.racers.groups[i] = {w.racers.visible[i].position, 0};
 		return;
 	}
 	// The members' mean centre (from the first's), and the radius that holds them all.
@@ -541,88 +542,88 @@ void World::updateGroup(size_t i)
 	for (int k = 0; k < count; k++) {
 		radius = std::max(radius, spheres[k].radius + lengthZYX(spheres[k].centre - c0 - off));
 	}
-	racers.groups[i] = {off + c0, radius};
+	w.racers.groups[i] = {off + c0, radius};
 }
 
-void World::racerTouches()
+void RaceView::racerTouches(World& w)
 {
 	// (The first test after the setup places the members as set up with the car where its first step left it.)
-	if (racers.groupsStale) {
-		for (size_t i = 0; i < racers.karts.size(); i++) {
-			updateGroup(i);
+	if (w.racers.groupsStale) {
+		for (size_t i = 0; i < w.racers.karts.size(); i++) {
+			updateGroup(w, i);
 		}
-		racers.groupsStale = false;
+		w.racers.groupsStale = false;
 	}
-	touchRacers(racers.groups.data());
+	w.triggers.touchRacers(w, w.racers.groups.data());
 }
 
-void World::visuals(int32_t dt)
+void RaceView::visuals(World& w, int32_t dt)
 {
-	raceView.stage = RaceEvent::Animation;
-	for (size_t i = 0; i < racers.karts.size(); i++) {
-		racerLook(i, dt);
+	stage = RaceEvent::Animation;
+	for (size_t i = 0; i < w.racers.karts.size(); i++) {
+		racerLook(w, i, dt);
 	}
 }
 
-void World::racerLook(size_t i, int32_t dt)
+void RaceView::racerLook(World& w, size_t i, int32_t dt)
 {
-	RacerLook& look = raceView.looks[i];
-	const RacerShape& shape = raceView.shapes[i];
-	const Kart& k = racers.karts[i];
+	RacerLook& look = looks[i];
+	const RacerShape& shape = shapes[i];
+	const Kart& k = w.racers.karts[i];
 	const float fs = k.headingSpeed;
 	if (shape.carAnimation >= 0) {
-		carParts(*this, look, shape, fs, dt);
+		carParts(w, look, shape, fs, dt);
 	}
-	const Pose& carPose = racers.visible[i];
-	leanBody(look, carPose, racers.params[i].mass, dt);
+	const Pose& carPose = w.racers.visible[i];
+	leanBody(look, carPose, w.racers.params[i].mass, dt);
 	// (The seat isn't scaled: a shrinking car's members shrink about their own origins.)
 	look.driver = {look.body.position + toWorld(look.body.rotation, shape.mount), look.body.rotation};
 
 	// The driver model.
 	PartClock& f = look.figure;
 	const int32_t shown = f.part;
-	advanceFigure(f, raceView.figures[0], dt);
+	advanceFigure(f, figures[0], dt);
 	const uint8_t marks = look.marks;
 	look.marks = 0;
 	look.stoppedHard = false;
 	look.lookMs = dt < look.lookMs ? look.lookMs - dt : 0;
-	if (racers.race[i].laps >= session.raceLaps) {
-		finishFigure(*this, i, f, shown);
+	if (w.racers.race[i].laps >= w.session.raceLaps) {
+		finishFigure(w, i, f, shown);
 	}
 	else {
-		driverFigure(*this, i, shown, marks, fs);
+		driverFigure(w, i, shown, marks, fs);
 	}
-	carVisuals(i);
-	updateGroup(i);
+	carVisuals(w, i);
+	updateGroup(w, i);
 }
 
-void World::driftMarks(size_t i)
+void RaceView::driftMarks(World& w, size_t i)
 {
-	RacerLook& look = raceView.looks[i];
-	const Kart& k = racers.karts[i];
+	RacerLook& look = looks[i];
+	const Kart& k = w.racers.karts[i];
 	const bool sliding = k.flags & KartPowerslide;
 	if (sliding && !look.drifting) {
 		look.drifting = true;
-		if (racers.race[i].player && !(k.flags & KartHover)) {
+		if (w.racers.race[i].player && !(k.flags & KartHover)) {
 			raise(RaceEvent::DustStart, {Owner::Racer, int16_t(i)});
 			if (!look.skidding) {
-				playSound(57, {Owner::Racer, int16_t(i)}, &racers.visible[i].position);
-				skidEffects(i, true, RaceEvent::Drift);
+				playSound(DriftSound, {Owner::Racer, int16_t(i)}, &w.racers.visible[i].position);
+				skidEffects(w, i, true, RaceEvent::Drift);
 			}
 		}
 	}
 	else if (!sliding && look.drifting) {
 		look.drifting = false;
-		if (!(k.flags & KartHover) && !(racers.drivers[i].flags & DriverTurbo)) {
-			skidEffects(i, false, RaceEvent::Drift);
+		if (!(k.flags & KartHover) && !(w.racers.drivers[i].flags & DriverTurbo)) {
+			skidEffects(w, i, false, RaceEvent::Drift);
 		}
 	}
 }
 
-void World::skidEffects(size_t i, bool on, RaceEvent::Reason why)
+void RaceView::skidEffects(World& w, size_t i, bool on, RaceEvent::Reason why)
 {
-	RacerLook& look = raceView.looks[i];
-	if (on && (racers.race[i].flags & RacerHalted)) {
+	RacerLook& look = looks[i];
+	if (on && (w.racers.race[i].flags & RacerHalted)) {
 		return; // (ignored while held)
 	}
 	look.skidding = on;
@@ -631,26 +632,26 @@ void World::skidEffects(size_t i, bool on, RaceEvent::Reason why)
 
 // The car's visuals the show's events need: the spin's tyre smoke, a held racer's skid
 // stopped, the landing.
-void World::carVisuals(size_t i)
+void RaceView::carVisuals(World& w, size_t i)
 {
-	RacerLook& look = raceView.looks[i];
-	const Kart& k = racers.karts[i];
-	const Racer& r = racers.race[i];
+	RacerLook& look = looks[i];
+	const Kart& k = w.racers.karts[i];
+	const Racer& r = w.racers.race[i];
 	if (r.flags & RacerGhost) {
 		return;
 	}
 	if ((k.flags & KartSpinning) && !look.spinSkid) {
 		look.spinSkid = true;
 		if (!r.ai) {
-			skidEffects(i, true, RaceEvent::Spin);
+			skidEffects(w, i, true, RaceEvent::Spin);
 		}
 	}
 	else if (!(k.flags & KartSpinning) && look.spinSkid) {
 		look.spinSkid = false;
-		skidEffects(i, false, RaceEvent::Spin);
+		skidEffects(w, i, false, RaceEvent::Spin);
 	}
 	if ((r.flags & RacerHalted) && look.skidding) {
-		skidEffects(i, false, RaceEvent::Halted);
+		skidEffects(w, i, false, RaceEvent::Halted);
 	}
 	if (k.airborneMs > 400) {
 		look.airborne = true;
@@ -661,46 +662,46 @@ void World::carVisuals(size_t i)
 			const int32_t rise = k.contacts - look.grounded;
 			RaceEvent& e = raise(RaceEvent::Landed, {Owner::Racer, int16_t(i)});
 			e.value = rise;
-			e.place = racers.visible[i].position;
-			playSound(rise == 1 ? 63 : rise <= 3 ? 64 : 4, {Owner::Racer, int16_t(i)}, &racers.visible[i].position);
+			e.place = w.racers.visible[i].position;
+			playSound(LandingSounds[rise == 1 ? 0 : rise <= 3 ? 1 : 2], {Owner::Racer, int16_t(i)}, &w.racers.visible[i].position);
 		}
 		look.grounded = k.contacts;
 	}
 }
 
-void World::showMaterial(size_t k)
+void RaceView::showMaterial(World& w, size_t k)
 {
-	const Track::MaterialTrack& t = track.materialTracks[k];
-	const int32_t f = int32_t(raceView.materials[k].cursor) % std::max(1, t.duration);
+	const Track::MaterialTrack& t = w.track.materialTracks[k];
+	const int32_t f = int32_t(materials[k].cursor) % std::max(1, t.duration);
 	int16_t shown = int16_t(t.frames.size()) - 1;
 	for (size_t e = 0; e < t.frames.size(); e++) {
 		shown = t.frames[e].second <= f ? int16_t(e) : shown;
 	}
-	raceView.materials[k].shown = shown;
+	materials[k].shown = shown;
 }
 
-void World::advanceMaterials(int32_t ms)
+void RaceView::advanceMaterials(World& w, int32_t ms)
 {
 	// Each assigned track: its cursor runs; one not looping stops at its end, its slots keep what they show.
-	raceView.materials.resize(track.materialTracks.size());
-	for (size_t k = 0; k < raceView.materials.size(); k++) {
-		RaceView::MaterialState& m = raceView.materials[k];
+	materials.resize(w.track.materialTracks.size());
+	for (size_t k = 0; k < materials.size(); k++) {
+		RaceView::MaterialState& m = materials[k];
 		if (!m.assigned) {
 			continue;
 		}
 		m.cursor = m.rate * float(ms) + m.cursor;
-		if (!m.looping && int32_t(m.cursor) >= track.materialTracks[k].duration) {
+		if (!m.looping && int32_t(m.cursor) >= w.track.materialTracks[k].duration) {
 			m.assigned = false;
 			m.cursor = 0;
 			continue;
 		}
-		showMaterial(k);
+		showMaterial(w, k);
 	}
-	raceView.scrollOffsets.resize(track.scrolls.size());
-	for (size_t s = 0; s < track.scrolls.size(); s++) {
-		const Track::Scroll& sc = track.scrolls[s];
-		raceView.scrollOffsets[s][0] = uint16_t(raceView.scrollOffsets[s][0] + uint32_t(sc.u * ms));
-		raceView.scrollOffsets[s][1] = uint16_t(raceView.scrollOffsets[s][1] + uint32_t(sc.v * ms));
+	scrollOffsets.resize(w.track.scrolls.size());
+	for (size_t s = 0; s < w.track.scrolls.size(); s++) {
+		const Track::Scroll& sc = w.track.scrolls[s];
+		scrollOffsets[s][0] = uint16_t(scrollOffsets[s][0] + uint32_t(sc.u * ms));
+		scrollOffsets[s][1] = uint16_t(scrollOffsets[s][1] + uint32_t(sc.v * ms));
 	}
 }
 

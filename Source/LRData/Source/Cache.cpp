@@ -109,7 +109,7 @@ struct KindFile {
 	{
 		const size_t start = records.size();
 		RecordWriter w{records};
-		w.put(value);
+		w(value);
 		items.push_back({type, std::string(path), uint32_t(start), uint32_t(records.size() - start)});
 	}
 
@@ -160,7 +160,10 @@ std::vector<std::string> languageFolders(const Archive& archive, const Executabl
 
 using KindFiles = std::array<KindFile, size_t(CacheKind::Count)>;
 
-template <class T> void addTo(KindFiles& kinds, Type type, std::string_view path, T& value) { kinds[size_t(kindOf(type))].add(type, path, value); }
+template <class T> void addTo(KindFiles& kinds, Type type, std::string_view path, T& value)
+{
+	kinds[size_t(kindOf(type))].add(type, path, value);
+}
 
 template <class T> void addIf(KindFiles& kinds, Type type, std::string_view path, T& value, bool decoded)
 {
@@ -239,7 +242,8 @@ void addTextures(KindFiles& kinds, const std::string& p, std::span<const uint8_t
 }
 
 // A race table decodes against its circuit table and completes it: both as the pair leaves them.
-void addCircuitsOrRaces(KindFiles& kinds, const Archive& archive, const std::string& ext, const std::string& p, std::span<const uint8_t> bytes)
+void addCircuitsOrRaces(KindFiles& kinds, const Archive& archive, const std::string& ext, const std::string& p,
+	std::span<const uint8_t> bytes)
 {
 	const Archive::File* races = archive.find(stemOf(p) + ".RCB");
 	const Archive::File* circuitFile = archive.find(stemOf(p) + ".CRB");
@@ -306,7 +310,8 @@ void addFile(KindFiles& kinds, const Archive& archive, const Archive::File& f, c
 
 } // namespace
 
-bool buildCache(const CacheSource& source, std::array<std::vector<uint8_t>, size_t(CacheKind::Count)>& files, std::string& error, const std::function<void(float)>& progress)
+bool buildCache(const CacheSource& source, std::array<std::vector<uint8_t>, size_t(CacheKind::Count)>& files, std::string& error,
+	const std::function<void(float)>& progress)
 {
 	Archive archive;
 	if (!archive.open(source.jam)) {
@@ -363,7 +368,8 @@ bool buildCache(const CacheSource& source, std::array<std::vector<uint8_t>, size
 	PieceLibrary library;
 	CarSets sets;
 	const std::string setsPath = "MENUDATA/PIECEDB/CRSTMGR.LEB";
-	if (library.decode(archive.read("MENUDATA/PIECEDB/LPIECEHI.LEB"), archive.read("MENUDATA/PIECEDB/LPIECEHI.MDB")) && sets.load(archive, library)) {
+	if (library.decode(archive.read("MENUDATA/PIECEDB/LPIECEHI.LEB"), archive.read("MENUDATA/PIECEDB/LPIECEHI.MDB")) &&
+		sets.load(archive, library)) {
 		add(Type::CarSets, setsPath, sets);
 	}
 	// The tunes, by their names.
@@ -414,7 +420,8 @@ bool Cache::open(const std::array<std::span<const uint8_t>, size_t(CacheKind::Co
 		}
 		for (uint32_t i = 0; i < count; i++) {
 			const size_t at = HeaderSize + size_t(i) * IndexRecord;
-			const uint32_t type = u32(f, at), pathAt = u32(f, at + 4), pathSize = u32(f, at + 8), offset = u32(f, at + 12), size = u32(f, at + 16);
+			const uint32_t type = u32(f, at), pathAt = u32(f, at + 4), pathSize = u32(f, at + 8), offset = u32(f, at + 12),
+						   size = u32(f, at + 16);
 			if (!fits(f, pathAt, pathSize) || !fits(f, offset, size) || kindOf(Type(type)) != CacheKind(k)) {
 				return false;
 			}
@@ -424,8 +431,8 @@ bool Cache::open(const std::array<std::span<const uint8_t>, size_t(CacheKind::Co
 	}
 	m_files = files;
 	std::vector<uint32_t> sizes;
-	if (!read(Type::Directory, "", m_paths) || !read(Type::Sizes, "", sizes) || sizes.size() != m_paths.size() || !read(Type::Languages, "", m_languages) ||
-		!read(Type::Tunes, "", m_tunes) || !read(Type::Executable, "", m_executable)) {
+	if (!read(Type::Directory, "", m_paths) || !read(Type::Sizes, "", sizes) || sizes.size() != m_paths.size() ||
+		!read(Type::Languages, "", m_languages) || !read(Type::Tunes, "", m_tunes) || !read(Type::Executable, "", m_executable)) {
 		return false;
 	}
 	for (size_t i = 0; i < m_paths.size(); i++) {
@@ -450,7 +457,7 @@ template <class T> bool Cache::read(Type type, std::string_view path, T& out) co
 		return false;
 	}
 	RecordReader r{m_files[it->second.first].subspan(it->second.second.offset, it->second.second.size)};
-	r.get(out);
+	r(out);
 	return !r.failed && r.at == r.in.size();
 }
 

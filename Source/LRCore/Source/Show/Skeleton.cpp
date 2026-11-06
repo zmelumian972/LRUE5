@@ -45,30 +45,30 @@ struct Sample {
 Sample sample(const Animation& a, size_t node, int32_t part, float time, bool loop)
 {
 	Sample s;
-	if (part < 0 || time < 0 || size_t(part) >= a.parts.size() || size_t(a.parts[size_t(part)].track) + node >= a.tracks.size()) {
+	if (time < 0 || !inRange(a.parts, part) || size_t(a.parts[part].track) + node >= a.tracks.size()) {
 		return s;
 	}
-	const Animation::Part& p = a.parts[size_t(part)];
+	const Animation::Part& p = a.parts[part];
 	const Animation::Track& t = a.tracks[size_t(p.track) + node];
 	const float n = float(loop ? p.loopFrames : p.frames);
 	const float at = loop ? wrapLoop(time, float(p.loopFrames)) : time;
 	int32_t from, to;
 	if (t.rotationKeys == 1) {
-		s.rotation = a.rotations[size_t(t.rotationFrame)];
+		s.rotation = a.rotations[t.rotationFrame];
 		s.rotated = true;
 	}
 	else if (t.rotationKeys > 1) {
-		const float f = between(&a.keys[size_t(t.rotationKey)], t.rotationKeys, at, n, from, to);
-		s.rotation = blend(a.rotations[size_t(t.rotationFrame + from)], a.rotations[size_t(t.rotationFrame + to)], f);
+		const float f = between(&a.keys[t.rotationKey], t.rotationKeys, at, n, from, to);
+		s.rotation = blend(a.rotations[t.rotationFrame + from], a.rotations[t.rotationFrame + to], f);
 		s.rotated = true;
 	}
 	if (t.positionKeys == 1) {
-		s.position = a.positions[size_t(t.positionFrame)];
+		s.position = a.positions[t.positionFrame];
 		s.moved = true;
 	}
 	else if (t.positionKeys > 1) {
-		const float f = between(&a.keys[size_t(t.positionKey)], t.positionKeys, at, n, from, to);
-		const Vec3 A = a.positions[size_t(t.positionFrame + from)], B = a.positions[size_t(t.positionFrame + to)];
+		const float f = between(&a.keys[t.positionKey], t.positionKeys, at, n, from, to);
+		const Vec3 A = a.positions[t.positionFrame + from], B = a.positions[t.positionFrame + to];
 		s.position = (B - A) * f + A;
 		s.moved = true;
 	}
@@ -121,6 +121,9 @@ Quat quaternionOf(const Basis& rows) { return quatOf(rows); }
 
 Pose sampleNode(const std::vector<SkeletonNode>& nodes, const Animation* a, size_t node, int32_t part, float time, bool loop)
 {
+	if (node >= nodes.size()) {
+		return {};
+	}
 	const SkeletonNode& rest = nodes[node];
 	Pose out{rest.position, rest.rotation};
 	if (!a) {
@@ -170,7 +173,8 @@ void sampleLocals(const std::vector<SkeletonNode>& nodes, const Animation* a, co
 	}
 }
 
-void placeNodes(const std::vector<SkeletonNode>& nodes, const std::vector<Pose>& locals, const Pose& place, float scale, std::vector<NodeMatrix>& out)
+void placeNodes(const std::vector<SkeletonNode>& nodes, const std::vector<Pose>& locals, const Pose& place, float scale,
+	std::vector<NodeMatrix>& out)
 {
 	out.resize(nodes.size());
 	for (size_t n = 0; n < nodes.size() && n < locals.size(); n++) {
@@ -193,7 +197,8 @@ void placeNodes(const std::vector<SkeletonNode>& nodes, const std::vector<Pose>&
 	}
 }
 
-void poseSkeleton(const std::vector<SkeletonNode>& nodes, const Animation* a, const PartPose& pose, const Pose& place, float scale, std::vector<NodeMatrix>& out)
+void poseSkeleton(const std::vector<SkeletonNode>& nodes, const Animation* a, const PartPose& pose, const Pose& place, float scale,
+	std::vector<NodeMatrix>& out)
 {
 	std::vector<Pose> locals;
 	sampleLocals(nodes, a, pose, locals);

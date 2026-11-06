@@ -19,7 +19,7 @@ namespace lr {
 namespace {
 
 constexpr uint16_t MainMenu = 2, Garage = 3, LostAward = 25, VeronicasCar = 28;
-constexpr int32_t TestRace = 26, RecordSlots = 13, UnlockingRaces = 12;
+constexpr int32_t TestRace = 26, UnlockingRaces = 12;
 
 } // namespace
 
@@ -74,7 +74,7 @@ int32_t Game::nextRace()
 		else {
 			firstRace = current == 0;
 		}
-		if (races[size_t(current)] < 0) {
+		if (races[current] < 0) {
 			continue;
 		}
 		if (aborted) {
@@ -108,7 +108,7 @@ int32_t Game::nextRace()
 RaceBrief Game::brief(const MenuData& data, const Cache& cache) const
 {
 	RaceBrief b;
-	const RaceTable::Race& race = data.races.races[size_t(races[size_t(current)])];
+	const RaceTable::Race& race = data.races.races[races[current]];
 	b.track = upper(race.folder);
 	b.mirrored = race.mirrored || ((cheats & CheatMirrorRocket) && circuit == 6);
 	b.laps = players == 2 ? settings.laps : 3;
@@ -124,8 +124,8 @@ RaceBrief Game::brief(const MenuData& data, const Cache& cache) const
 		: mode == Mode::TimeRace ? RaceBrief::Mode::TimeRace
 								 : RaceBrief::Mode::Single;
 	// The circuit's drivers in the slots the players don't take (AI slot i races driver i), the players first.
-	const std::vector<std::string> none;
-	const std::vector<std::string>& drivers = circuit >= 0 ? data.circuits.circuits[size_t(circuit)].drivers : none;
+	const List<std::string> none;
+	const List<std::string>& drivers = circuit >= 0 ? data.circuits.circuits[circuit].drivers : none;
 	const int32_t picked = demo ? 0 : players;
 	int32_t count = racerCount;
 	if (count > picked) {
@@ -135,17 +135,17 @@ RaceBrief Game::brief(const MenuData& data, const Cache& cache) const
 	const MenuData::Language& text = data.languages[settings.language];
 	b.slots.resize(size_t(count));
 	for (int32_t i = 0; i < count; i++) {
-		RaceBrief::Slot& s = b.slots[size_t(i)];
-		s.points = points[size_t(i)];
+		RaceBrief::Slot& s = b.slots[i];
+		s.points = points[i];
 		if (i >= picked) {
-			s.driver = drivers[size_t(i)];
+			s.driver = drivers[i];
 			s.player = demo && i == 0; // the demo's racer 0 is a player's slot the AI drives
 			const DriverTable::Driver* d = data.drivers.find(s.driver);
 			s.name = d ? std::u16string(text.drivers.at(size_t(d->nameIndex))) : std::u16string();
 			continue;
 		}
 		s.player = true;
-		const RacerRecord* r = racer(chosen[size_t(i)]);
+		const RacerRecord* r = racer(chosen[i]);
 		if (!r) {
 			continue;
 		}
@@ -173,7 +173,7 @@ void Game::takeResult(const World& w)
 	if (mode == Mode::Circuit) {
 		points = w.session.circuitPoints;
 	}
-	RaceRecord& entry = times[size_t(current)];
+	RaceRecord& entry = times[current];
 	const RaceRecord& r = w.session.record;
 	if (r.lapMs) {
 		if (entry.lapMs == 0 || r.lapMs <= entry.lapMs) {
@@ -200,17 +200,17 @@ uint16_t Game::menusStart(bool& save)
 		bestTimesPending = false;
 		for (size_t i = 0; i < 4; i++) {
 			const RaceRecord& t = times[i];
-			const int32_t n = races[i];
-			const int32_t slot = n < 0 ? -1 : n < RecordSlots ? n : n < 2 * RecordSlots ? n - RecordSlots : -1;
+			const int32_t slot = recordSlot(races[i]);
 			if (t.lapMs == 0 || slot < 0) {
 				continue;
 			}
-			BestTime& best = settings.best[size_t(slot)];
+			BestTime& best = settings.best[slot];
 			const auto holder = [&](int32_t by) {
-				const RacerRecord* r = size_t(by) < chosen.size() ? racer(chosen[size_t(by)]) : nullptr;
+				const RacerRecord* r = inRange(chosen, by) ? racer(chosen[by]) : nullptr;
 				return r ? r->name.substr(0, 14) : std::u16string();
 			};
-			for (const auto& [ms, held, by, race] : {std::tuple{t.lapMs, &best.lapMs, t.lapBy, 0}, std::tuple{t.raceMs, &best.raceMs, t.raceBy, 1}}) {
+			for (const auto& [ms, held, by, race] :
+				{std::tuple{t.lapMs, &best.lapMs, t.lapBy, 0}, std::tuple{t.raceMs, &best.raceMs, t.raceBy, 1}}) {
 				const bool taken = *held == 0 || uint32_t(ms) < *held;
 				if (taken) {
 					*held = uint32_t(ms);
@@ -251,7 +251,7 @@ void Game::grantAward(uint16_t screen, const MenuData& data)
 	if (place < 1 || place > 3 || circuit < 0) {
 		return;
 	}
-	const CircuitTable::Circuit& c = data.circuits.circuits[size_t(circuit)];
+	const CircuitTable::Circuit& c = data.circuits.circuits[circuit];
 	bool trophy = false, parts = false, opened = false;
 	if (chosen[0].list != RacerList::Defaults) {
 		if (const RacerRecord* r = racer(chosen[0])) {

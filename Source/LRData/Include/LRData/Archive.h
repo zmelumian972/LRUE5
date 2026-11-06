@@ -52,6 +52,21 @@ inline bool equalsIgnoreCase(std::string_view a, std::string_view b)
 	return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [&](char x, char y) { return lower(x) == lower(y); });
 }
 // Names as the scene files compare them: up to `most` characters, case-insensitively.
-inline bool sameName(std::string_view a, std::string_view b, size_t most = 8) { return equalsIgnoreCase(a.substr(0, most), b.substr(0, most)); }
+inline bool sameName(std::string_view a, std::string_view b, size_t most = 8)
+{
+	return equalsIgnoreCase(a.substr(0, most), b.substr(0, most));
+}
+
+// The first item `match` accepts: its index (-1 if none), or the item (null if none).
+template <class T, class Match> int32_t indexWhere(const std::vector<T>& list, Match match)
+{
+	const auto it = std::find_if(list.begin(), list.end(), match);
+	return it == list.end() ? -1 : int32_t(it - list.begin());
+}
+template <class T, class Match> const T* findWhere(const std::vector<T>& list, Match match)
+{
+	const auto it = std::find_if(list.begin(), list.end(), match);
+	return it == list.end() ? nullptr : &*it;
+}
 
 } // namespace lr

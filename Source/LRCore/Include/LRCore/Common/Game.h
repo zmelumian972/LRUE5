@@ -9,6 +9,7 @@
 // its racers changed since its last write, or (the active slot) when the settings changed.
 
 #include "LRCore/Common/Api.h"
+#include "LRData/Index.h"
 #include "LRData/Saves.h"
 
 #include <array>
@@ -63,6 +64,10 @@ struct BestTime {
 	bool operator==(const BestTime&) const = default;
 };
 
+// A race's best-times slot (Settings::best): a mirrored race folds into its plain one; -1 none.
+constexpr int32_t RecordSlots = 13;
+constexpr int32_t recordSlot(int32_t race) { return race >= 0 && race < 2 * RecordSlots ? race % RecordSlots : -1; }
+
 // The saved state (in the active slot).
 struct Settings {
 	uint8_t opponents = 5, laps = 3, music = 255, sound = 255, stereo = 1, language = 0;
@@ -70,7 +75,7 @@ struct Settings {
 	std::array<uint8_t, 16> device = {}; // the display device (presentation's): carried through
 	uint8_t parts = 0, circuits = 0; // unlock bits
 	uint16_t races = 0; // time races won
-	std::array<BestTime, 13> best; // by record slot
+	Array<BestTime, RecordSlots> best; // by record slot
 	std::array<RacerRef, 2> picks = {RacerRef{RacerList::Card0, 0}, RacerRef{RacerList::Card0, 0}}; // each player's last
 	std::array<uint8_t, 2> layout = {0, 1}; // each player's KeyLayout
 	std::array<KeyLayout, 5> layouts;
@@ -125,7 +130,7 @@ struct LRCORE_API Game {
 	uint32_t random = 0; // the gameplay random index: the menus' draws and every race's
 	uint8_t currentCard = 0; // the card new racers go to
 	RacerRecord working; // the racer the builders edit (a copy)
-	std::array<RacerRef, 2> chosen; // the racers chosen for the next race (and for the builders: player 1's)
+	Array<RacerRef, 2> chosen; // the racers chosen for the next race (and for the builders: player 1's)
 	uint8_t players = 0; // how many are chosen
 	std::array<uint8_t, 2> views = {}; // each player's camera view as last chosen in a race (not saved)
 	bool newRacer = false, copying = false, versus = false, backToGarage = false, circuitNotice = false;
@@ -137,11 +142,11 @@ struct LRCORE_API Game {
 	enum class Mode : uint8_t { Circuit, Single, TimeRace };
 	Mode mode = Mode::Single;
 	int32_t circuit = 0;
-	std::array<int16_t, 4> races = {-1, -1, -1, -1}; // the race table's
+	Array<int16_t, 4> races = {-1, -1, -1, -1}; // the race table's
 	int32_t racerCount = 5; // the racers to race (the setup screens' and racer select's)
 	int32_t current = 0;
-	std::array<int32_t, 6> points = {};
-	std::array<RaceRecord, 4> times;
+	Array<int32_t, 6> points = {};
+	Array<RaceRecord, 4> times;
 	bool firstRace = true, restartCircuit = false, aborted = false, bestTimesPending = false, recordBeaten = false;
 	bool demo = false, racing = false; // racing: the slot `current` is being raced
 	uint16_t nextScreen = 2;

@@ -1,5 +1,6 @@
 #include "LRData/Model.h"
 #include "LRData/Archive.h"
+#include "LRData/Index.h"
 
 #include "LRData/Tokens.h"
 
@@ -12,7 +13,7 @@ namespace lr {
 namespace {
 
 // Top-level keywords.
-enum : int {
+enum : int32_t {
 	KeyMaterials = 0x27,
 	KeyPlainVertices = 0x28, // position, uv
 	KeyLitVertices = 0x29, // position, uv, normal
@@ -23,7 +24,7 @@ enum : int {
 	KeyPositions = 0x34, // position only
 };
 // The draw records' keywords.
-enum : int {
+enum : int32_t {
 	RecordMaterial = 0x27, // material index
 	RecordDraw = 0x2d, // first triangle, count
 	RecordPushPart = 0x2f, // part index
@@ -32,7 +33,7 @@ enum : int {
 	RecordSetPart = 0x32, // part index
 };
 // A head library's (.GCB, Model.h).
-enum : int {
+enum : int32_t {
 	HeadPool = 0x28, // [n] { x y z u v nx ny nz ... }
 	HeadEntries = 0x2c, // [m] { K(0x2c) "name" { fields } ... }
 	HeadScale = 0x2d,
@@ -114,7 +115,7 @@ bool readRecords(TokenReader& r, Model& m, const std::vector<uint8_t>& slots)
 			break;
 		case RecordLoad: {
 			const uint32_t slot = uint32_t(r.integer()), first = uint32_t(r.integer()), n = uint32_t(r.integer());
-			if (slot + n > CacheSize || first + n > vertexTotal) {
+			if (uint64_t(slot) + n > CacheSize || uint64_t(first) + n > vertexTotal) {
 				return false;
 			}
 			for (uint32_t j = 0; j < n; j++) {
@@ -126,7 +127,7 @@ bool readRecords(TokenReader& r, Model& m, const std::vector<uint8_t>& slots)
 		}
 		case RecordDraw: {
 			const uint32_t first = uint32_t(r.integer()), n = uint32_t(r.integer());
-			if ((first + n) * 3 > slots.size()) {
+			if ((uint64_t(first) + n) * 3 > slots.size()) {
 				return false;
 			}
 			if (!section) {
@@ -153,25 +154,17 @@ bool readRecords(TokenReader& r, Model& m, const std::vector<uint8_t>& slots)
 
 bool Model::decode(std::span<const uint8_t> bytes)
 {
-	Tokens tokens;
-	if (!tokens.decode(bytes)) {
+	TokenReader r(bytes);
+	if (r.failed()) {
 		return false;
 	}
 	*this = Model();
-	TokenReader r(tokens);
 	std::vector<uint8_t> slots; // the triangles: three cache slots each
 	// The records can come before the triangles they draw, so they're read last.
 	size_t records = SIZE_MAX;
 	while (!r.atEnd() && !r.failed()) {
 		switch (r.keyword()) {
-		case KeyMaterials: {
-			const uint32_t count = r.openCounted();
-			for (uint32_t i = 0; i < count && !r.failed(); i++) {
-				materials.emplace_back(r.text());
-			}
-			r.close();
-			break;
-		}
+		case KeyMaterials: r.counted([&] { materials.emplace_back(r.text()); }); break;
 		case KeyPlainVertices: readVertices(r, *this, Vertices::Plain); break;
 		case KeyColoredVertices: readVertices(r, *this, Vertices::Colored); break;
 		case KeyLitVertices: readVertices(r, *this, Vertices::Lit); break;
@@ -204,16 +197,13 @@ bool Model::decode(std::span<const uint8_t> bytes)
 }
 
 namespace {
-// A pool value: the file writes integers, but a real reads the same.
-float poolValue(TokenReader& r) { return r.next(Token::Real) ? r.tokens().list[r.position() - 1].real : float(r.integer()); }
-
 // A head's pool vertex: position, uv and normal, shared by every head that names it.
 struct HeadVertex {
 	float p[3], uv[2], n[3];
 };
 
 // The pool of vertices the heads index.
-void readHeadPool(TokenReader& r, std::vector<HeadVertex>& pool)
+void readHeadPool(TokenReader& r, List<HeadVertex>& pool)
 {
 	const uint32_t n = r.openCounted();
 	pool.resize(n);
@@ -221,13 +211,13 @@ void readHeadPool(TokenReader& r, std::vector<HeadVertex>& pool)
 		// (Signed 16-bit positions and uvs)
 		const auto signed16 = [](float x) { return x > 32767 ? x - 65536 : x; };
 		for (float& x : v.p) {
-			x = signed16(poolValue(r));
+			x = signed16(r.number());
 		}
 		for (float& x : v.uv) {
-			x = signed16(poolValue(r)) / 4096.0f;
+			x = signed16(r.number()) / 4096.0f;
 		}
 		for (float& x : v.n) {
-			const int32_t b = int32_t(poolValue(r));
+			const int32_t b = r.truncated(r.number());
 			x = float(b > 127 ? b - 256 : b) / 127.0f;
 		}
 	}
@@ -235,38 +225,33 @@ void readHeadPool(TokenReader& r, std::vector<HeadVertex>& pool)
 }
 
 // A head's triangles: each pool vertex it uses is copied into the model once (remap: pool index to the model's).
-void readHeadTriangles(TokenReader& r, const std::vector<HeadVertex>& pool, std::vector<int32_t>& remap, Model& model, Model::Section& section)
+void readHeadTriangles(TokenReader& r, const List<HeadVertex>& pool, List<int32_t>& remap, Model& model, Model::Section& section)
 {
 	const uint32_t t = r.openCounted();
 	for (uint32_t c = 0; c < t * 3 && !r.failed(); c++) {
 		const int32_t v = r.integer();
-		if (v < 0 || size_t(v) >= pool.size()) {
+		if (!inRange(pool, v)) {
 			r.fail();
 			break;
 		}
-		if (remap[size_t(v)] < 0) {
-			remap[size_t(v)] = int32_t(model.positions.size() / 3);
-			const HeadVertex& pv = pool[size_t(v)];
+		if (remap[v] < 0) {
+			remap[v] = int32_t(model.positions.size() / 3);
+			const HeadVertex& pv = pool[v];
 			model.positions.insert(model.positions.end(), pv.p, pv.p + 3);
 			model.uvs.insert(model.uvs.end(), pv.uv, pv.uv + 2);
 			model.normals.insert(model.normals.end(), pv.n, pv.n + 3);
 			model.colors.insert(model.colors.end(), {255, 255, 255, 255});
 			model.vertexParts.push_back(0);
 		}
-		section.indices.push_back(uint32_t(remap[size_t(v)]));
+		section.indices.push_back(uint32_t(remap[v]));
 	}
 	r.close();
 }
 
 // A head's counted groups, each a section: its material and its triangles.
-void readHeadGroups(TokenReader& r, const std::vector<HeadVertex>& pool, std::vector<int32_t>& remap, Model& model)
+void readHeadGroups(TokenReader& r, const List<HeadVertex>& pool, List<int32_t>& remap, Model& model)
 {
-	const uint32_t g = r.openCounted();
-	for (uint32_t i = 0; i < g && !r.failed(); i++) {
-		if (r.keyword() != HeadGroups) {
-			r.fail();
-			break;
-		}
+	r.entries(HeadGroups, [&] {
 		r.expect(Token::Open);
 		Model::Section section{0, 0, {}};
 		while (!r.failed() && !r.next(Token::Close)) {
@@ -288,53 +273,38 @@ void readHeadGroups(TokenReader& r, const std::vector<HeadVertex>& pool, std::ve
 		}
 		model.faceCount += uint32_t(section.indices.size() / 3);
 		model.sections.push_back(std::move(section));
-	}
-	r.close();
+	});
 }
 
 } // namespace
 
 const HeadLibrary::Head* HeadLibrary::find(std::string_view name) const
 {
-	for (const Head& h : heads) {
-		if (equalsIgnoreCase(h.name, name)) {
-			return &h;
-		}
-	}
-	return nullptr;
+	return findWhere(heads, [&](const Head& h) { return equalsIgnoreCase(h.name, name); });
 }
 
 bool HeadLibrary::decode(std::span<const uint8_t> bytes)
 {
 	*this = {};
-	Tokens tokens;
-	if (!tokens.decode(bytes)) {
-		return false;
-	}
-	TokenReader r(tokens);
-	std::vector<HeadVertex> pool;
+	TokenReader r(bytes);
+	List<HeadVertex> pool;
 	while (!r.atEnd() && !r.failed()) {
 		const int key = r.keyword();
 		if (key == HeadPool) {
 			readHeadPool(r, pool);
 		}
 		else if (key == HeadEntries) {
-			const uint32_t m = r.openCounted();
-			for (uint32_t e = 0; e < m && !r.failed(); e++) {
-				if (r.keyword() != HeadEntries) {
-					r.fail();
-					break;
-				}
+			r.entries(HeadEntries, [&] {
 				Head& h = heads.emplace_back();
 				h.name = std::string(r.text());
 				r.expect(Token::Open);
 				Model& model = h.model;
 				model.kind = Model::Vertices::Lit;
-				std::vector<int32_t> remap(pool.size(), -1);
+				List<int32_t> remap(pool.size(), -1);
 				while (!r.failed() && !r.next(Token::Close)) {
 					const int k = r.keyword();
 					if (k == HeadScale) {
-						model.scale = poolValue(r);
+						model.scale = r.number();
 					}
 					else if (k == HeadGroups) {
 						readHeadGroups(r, pool, remap, model);
@@ -343,8 +313,7 @@ bool HeadLibrary::decode(std::span<const uint8_t> bytes)
 						r.fail();
 					}
 				}
-			}
-			r.close();
+			});
 		}
 		else if (key < 0) {
 			r.fail();

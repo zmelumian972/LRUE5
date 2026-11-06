@@ -183,7 +183,7 @@ struct AnimatedModel {
 	Sphere bounds; // the model's (model frame, unscaled)
 	int16_t animation = -1; // Track::animations, -1 none
 	int16_t part = -1; // played looping from load, -1 none
-	std::vector<Node> nodes;
+	List<Node> nodes;
 	// Material animation bindings (Track::materialTracks).
 	std::vector<std::array<int32_t, 3>> bindings; // track, material slot, level of detail
 };
@@ -198,10 +198,10 @@ struct Animation {
 	struct Track {
 		int32_t rotationFrame, rotationKey, rotationKeys, positionFrame, positionKey, positionKeys;
 	};
-	std::vector<Part> parts;
-	std::vector<Vec3> positions;
-	std::vector<Quat> rotations;
-	std::vector<int32_t> keys;
+	List<Part> parts;
+	List<Vec3> positions;
+	List<Quat> rotations;
+	List<int32_t> keys;
 	std::vector<Track> tracks;
 };
 
@@ -214,7 +214,7 @@ struct HazardSpec {
 	int16_t surface = -1;
 	Vec3 source, target, triggerPoint;
 	float triggerRadius;
-	std::vector<std::array<float, 4>> launches, targets; // x y z, event
+	List<std::array<float, 4>> launches, targets; // x y z, event
 	float startFrame;
 	Vec3 size;
 	int32_t periodMs, intervalMs;
@@ -256,14 +256,14 @@ public:
 	// The segment a->b, in volume's frame.
 	bool query(uint32_t volume, Vec3 a, Vec3 b, SegmentHit& hit) const;
 
-	std::vector<Volume> volumes;
+	List<Volume> volumes;
 	std::vector<CollisionMesh> meshes;
-	std::vector<Surface> surfaces;
+	List<Surface> surfaces;
 	uint32_t trackVolume = 0;
 	int32_t checkpointVolume = -1;
 
 	std::vector<Pose> grid; // by start place
-	std::vector<Checkpoint> checkpoints;
+	List<Checkpoint> checkpoints;
 	std::vector<TouchSphere> touchSpheres; // the racers' (not the projectiles-only ones), by xlo
 	std::vector<LapMark> lapMarks;
 	int32_t introFrames = 0, introRate = 0; // the flyby camera's animation (frames per second); 0 frames: no flyby
@@ -272,16 +272,16 @@ public:
 	bool mirrored = false;
 
 	std::vector<BrickPlace> bricks; // the colour bricks, then the white ones
-	std::vector<TargetPoint> targets;
+	List<TargetPoint> targets;
 	std::vector<TouchSphere> places; // the positional spheres, in file order
-	std::vector<EventResource> events;
+	List<EventResource> events;
 	std::vector<TrackTimer> timers;
-	std::vector<HazardSpec> hazards;
-	std::vector<AnimatedModel> animated; // the track's, then the shared database's (from sharedAnimated on)
+	List<HazardSpec> hazards;
+	List<AnimatedModel> animated; // the track's, then the shared database's (from sharedAnimated on)
 	size_t sharedAnimated = 0;
-	std::vector<Animation> animations;
-	std::vector<std::pair<std::string, Pose>> models; // the plain models' places, by name
-	std::vector<std::array<float, 3>> modelDistances; // and their draw distances (as AnimatedModel::distances)
+	List<Animation> animations;
+	List<std::pair<std::string, Pose>> models; // the plain models' places, by name
+	List<std::array<float, 3>> modelDistances; // and their draw distances (as AnimatedModel::distances)
 	// Material animation: the worlds' tracks, each its frames (a material and the frame it shows
 	// from), its length in frames and rate (frames per ms); the bindings of tracks to entities' material slots.
 	struct MaterialTrack {
@@ -300,7 +300,7 @@ public:
 		int32_t entity;
 		int32_t u, v;
 	};
-	std::vector<MaterialTrack> materialTracks;
+	List<MaterialTrack> materialTracks;
 	std::vector<MaterialBinding> materialBindings;
 	std::vector<Scroll> scrolls;
 	std::vector<Sprite> sprites; // the track's (mirrored)
@@ -311,22 +311,33 @@ public:
 	// brick's cube and streaks, each with its animation (after the track's), at the origin, entity scale 1.
 	enum BrickModel : uint8_t { BrickCube, BrickStreak, WhiteCube, WhiteStreaks };
 	std::array<AnimatedModel, 4> brickModels;
+	// The hazards' entities by name (-1 none), found at the load: the animated pillar top, ghost, lava bubbles, sphinx
+	// blow-up, crane, hammer and smoke stack; the rocket's models (off, lit) and the code display's lights; the rocket's,
+	// the sphinx's and the pillar's surfaces.
+	struct HazardEntities {
+		int16_t pillarTop = -1, ghost = -1, lava = -1, blowup = -1, crane = -1, hammer = -1, smokeStack = -1;
+		int32_t rocketOff = -1, rocketLit = -1;
+		Array<int32_t, 3> codeLights = {-1, -1, -1};
+		int16_t rocketSurface = -1, sphinxSurface = -1, pillarSurface = -1;
+	};
+	HazardEntities hazardEntities;
 
 	// An animated model by name (first 8 characters), -1 none; in one database only (the shared one, or the track's).
 	int16_t animatedOf(std::string_view name) const;
 	int16_t animatedIn(std::string_view name, bool shared) const;
+	// An animated model's animation, nullptr none.
+	const Animation* animationOf(const AnimatedModel& model) const { return itemAt(animations, model.animation); }
 	// A plain model by name, -1 none.
 	int32_t modelOf(std::string_view name) const;
-	// A plain model's place, null if none.
-	const Pose* modelPlace(std::string_view name) const;
 
 	// The surface of a material name (first 8 characters), -1 none.
 	int16_t surfaceOf(std::string_view material) const;
 
 private:
 	[[nodiscard]] bool loadMeshes(const Cache& cache, const std::string& dir, const CollisionDatabase& db, bool mirror);
-	void findEventEntities();
-	[[nodiscard]] bool loadRace(const Cache& cache, const std::string& dir, const RaceFile& race, const CollisionDatabase& db, bool mirrored);
+	void findEntities();
+	[[nodiscard]] bool loadRace(const Cache& cache, const std::string& dir, const RaceFile& race, const CollisionDatabase& db,
+		bool mirrored);
 	[[nodiscard]] bool loadPowerups(const Cache& cache, const std::string& dir, const RaceFile& race, bool timeRace);
 	[[nodiscard]] bool loadScenery(const Cache& cache, const std::string& dir, const RaceFile& race);
 };

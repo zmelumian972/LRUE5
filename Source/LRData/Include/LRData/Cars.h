@@ -6,6 +6,7 @@
 // (bounds, frame counts, rates, first track), the key frames and the tracks that sample them per scene node.
 
 #include "LRData/Api.h"
+#include "LRData/Index.h"
 
 #include <array>
 #include <cstdint>
@@ -98,7 +99,7 @@ struct LRDATA_API AnimationFile {
 		int32_t rotationFrame, rotationKey, rotationKeys, positionFrame, positionKey, positionKeys;
 		bool operator==(const Track&) const = default;
 	};
-	std::vector<Part> parts;
+	List<Part> parts;
 	std::vector<std::array<float, 3>> positions;
 	std::vector<std::array<float, 4>> rotations; // x y z w
 	std::vector<int32_t> keys; // frame numbers

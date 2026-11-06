@@ -21,13 +21,17 @@ bool samePrefix(std::string_view a, std::string_view b) { return a.substr(0, 8) 
 const std::string CommonFolder = "GAMEDATA/COMMON/";
 
 // A file the race names, in the track's folder or else the common one.
-std::string named(const Cache& cache, const std::string& dir, const std::string& name) { return cache.size(dir + name) ? dir + name : CommonFolder + name; }
+std::string named(const Cache& cache, const std::string& dir, const std::string& name)
+{
+	return cache.size(dir + name) ? dir + name : CommonFolder + name;
+}
 
 // An entity's pose as placed (mirrored: y negated, the axes rebuilt from the flipped ones).
 Pose placed(const SceneFile::Entity& e, bool mirrored)
 {
 	const float flip = mirrored ? -1.0f : 1.0f;
-	return {{e.position[0], e.position[1] * flip, e.position[2]}, basisFromForwardUp({e.forward[0], e.forward[1] * flip, e.forward[2]}, {e.up[0], e.up[1] * flip, e.up[2]})};
+	return {{e.position[0], e.position[1] * flip, e.position[2]},
+		basisFromForwardUp({e.forward[0], e.forward[1] * flip, e.forward[2]}, {e.up[0], e.up[1] * flip, e.up[2]})};
 }
 
 // Each checkpoint's share of a lap: the main lap (next[0] from 0 back to 0) in even steps, then each branch's
@@ -196,8 +200,9 @@ bool Track::loadMeshes(const Cache& cache, const std::string& dir, const Collisi
 
 // The entities the track's sounds ride, the part animations play and the node transforms follow (the scenery is
 // loaded after the events): a part animation's in the database it names, the others' the
-// track's first, then the shared one; a model distance's model a plain one first, then an animated one.
-void Track::findEventEntities()
+// track's first, then the shared one; a model distance's model a plain one first, then an animated one. Then the
+// hazards' own.
+void Track::findEntities()
 {
 	for (EventResource& r : events) {
 		if (r.kind == EventResource::PartAnimation) {
@@ -213,6 +218,19 @@ void Track::findEventEntities()
 			r.entity = r.entityName.empty() ? int16_t(-1) : animatedOf(r.entityName);
 		}
 	}
+	hazardEntities = {.pillarTop = animatedOf("piltop"),
+		.ghost = animatedOf("ghostly"),
+		.lava = animatedOf("mmlavbl"),
+		.blowup = animatedOf("blowup"),
+		.crane = animatedOf("crane"),
+		.hammer = animatedOf("rkhamm02"),
+		.smokeStack = animatedOf("dp_def"),
+		.rocketOff = modelOf("mmrocof"),
+		.rocketLit = modelOf("mmrocon"),
+		.codeLights = {modelOf("mmcode1"), modelOf("mmcode2"), modelOf("mmcode3")},
+		.rocketSurface = surfaceOf("mmrocc"),
+		.sphinxSurface = surfaceOf("sphinx"),
+		.pillarSurface = surfaceOf("pilcol")};
 }
 
 bool Track::load(const Cache& cache, std::string_view raceFile, bool mirror, bool timeRace)
@@ -232,7 +250,8 @@ bool Track::load(const Cache& cache, std::string_view raceFile, bool mirror, boo
 		for (const SurfaceFile::Surface& s : table.surfaces) {
 			Vec3 push = vec(s.push);
 			push.y = mirror ? -push.y : push.y;
-			surfaces.push_back({s.name, s.flags, push, s.slopeHold, s.friction, s.grip, s.rolling, s.touchEvent, s.projectileEvent, {}, s.sound});
+			surfaces.push_back(
+				{s.name, s.flags, push, s.slopeHold, s.friction, s.grip, s.rolling, s.touchEvent, s.projectileEvent, {}, s.sound});
 			std::copy_n(s.particle.begin(), std::min<size_t>(s.particle.size(), 8), surfaces.back().particle.begin());
 		}
 	}
@@ -267,7 +286,7 @@ bool Track::load(const Cache& cache, std::string_view raceFile, bool mirror, boo
 	if (!loadRace(cache, dir, race, db, mirror) || !loadScenery(cache, dir, race) || !loadPowerups(cache, dir, race, timeRace)) {
 		return false;
 	}
-	findEventEntities();
+	findEntities();
 	return true;
 }
 
@@ -293,7 +312,8 @@ bool loadGrid(Track& t, const Cache& cache, const std::string& dir, const RaceFi
 			return false;
 		}
 		for (const CheckpointFile::Checkpoint& c : file.checkpoints) {
-			t.checkpoints.push_back({flipped(c.normal, flip), c.offset, {c.next[0], c.next[1], c.next[2], c.next[3]}, -1, flipped(c.position, flip)});
+			t.checkpoints.push_back(
+				{flipped(c.normal, flip), c.offset, {c.next[0], c.next[1], c.next[2], c.next[3]}, -1, flipped(c.position, flip)});
 		}
 		lapFractions(t.checkpoints);
 	}
@@ -324,9 +344,11 @@ bool loadSpheres(Track& t, const Cache& cache, const std::string& dir, const Rac
 			}
 		}
 		const Vec3 c = flipped(s.centre, flip);
-		t.touchSpheres.push_back({c, s.radius, c.x - s.radius, s.radius + c.x, int32_t(i), s.event, world, s.lapGated ? s.lap : -1, s.playersOnly});
+		t.touchSpheres.push_back(
+			{c, s.radius, c.x - s.radius, s.radius + c.x, int32_t(i), s.event, world, s.lapGated ? s.lap : -1, s.playersOnly});
 	}
-	std::stable_sort(t.touchSpheres.begin(), t.touchSpheres.end(), [](const TouchSphere& a, const TouchSphere& b) { return a.xlo < b.xlo; });
+	std::stable_sort(t.touchSpheres.begin(), t.touchSpheres.end(),
+		[](const TouchSphere& a, const TouchSphere& b) { return a.xlo < b.xlo; });
 
 	if (!race.positionalFile.empty()) {
 		TouchFile file;
@@ -342,6 +364,22 @@ bool loadSpheres(Track& t, const Cache& cache, const std::string& dir, const Rac
 	return true;
 }
 
+// The track's resource kind of an event file's kind that addEvent keeps.
+EventResource::Kind resourceKind(EventFile::Kind kind)
+{
+	switch (kind) {
+	case EventFile::Timers: return EventResource::Timer;
+	case EventFile::Forces: return EventResource::Force;
+	case EventFile::Sounds: return EventResource::Sound;
+	case EventFile::Particles: return EventResource::Particle;
+	case EventFile::PartAnimations: return EventResource::PartAnimation;
+	case EventFile::NodeTransforms: return EventResource::NodeTransform;
+	case EventFile::ModelDistances: return EventResource::ModelDistance;
+	case EventFile::SkyStates: return EventResource::Sky;
+	default: return EventResource::Link;
+	}
+}
+
 // One event resource of the race's event file: a lap mark, or the track's own event kinds (the presentation's skipped).
 void addEvent(Track& t, const EventFile::Resource& e, float flip)
 {
@@ -351,8 +389,8 @@ void addEvent(Track& t, const EventFile::Resource& e, float flip)
 	case EventFile::Timers:
 	case EventFile::Forces:
 	case EventFile::Links: {
-		const EventResource::Kind kind = e.kind == EventFile::Timers ? EventResource::Timer : e.kind == EventFile::Forces ? EventResource::Force : EventResource::Link;
-		t.events.push_back({kind, e.id, e.onEnd, e.noEnd, {c[0], c[1], c[2]}, e.durationMs, e.holdEvent, flipped(e.force, flip), e.channel, e.armingEvent, e.forced});
+		t.events.push_back({resourceKind(e.kind), e.id, e.onEnd, e.noEnd, {c[0], c[1], c[2]}, e.durationMs, e.holdEvent,
+			flipped(e.force, flip), e.channel, e.armingEvent, e.forced});
 		break;
 	}
 	case EventFile::Colours: {
@@ -366,10 +404,7 @@ void addEvent(Track& t, const EventFile::Resource& e, float flip)
 	case EventFile::Particles:
 	case EventFile::SkyStates: {
 		EventResource& r = t.events.emplace_back();
-		r = {e.kind == EventFile::Sounds		 ? EventResource::Sound
-				: e.kind == EventFile::Particles ? EventResource::Particle
-												 : EventResource::Sky,
-			e.id, e.onEnd, e.noEnd, {c[0], c[1], c[2]}, 0, -1, {}, 0, -1, -1};
+		r = {resourceKind(e.kind), e.id, e.onEnd, e.noEnd, {c[0], c[1], c[2]}, 0, -1, {}, 0, -1, -1};
 		r.position = flipped(e.position, flip);
 		r.atEvent = e.atEvent;
 		const std::string& name = e.kind == EventFile::Particles ? e.emitter : e.sky;
@@ -380,7 +415,7 @@ void addEvent(Track& t, const EventFile::Resource& e, float flip)
 		r.nearDistance = e.nearDistance;
 		r.farDistance = e.farDistance;
 		r.looping = e.looping;
-		r.chance = int32_t(e.probability * 255.0f);
+		r.chance = truncatedInt(e.probability * 255.0f);
 		r.skyMs = e.skyMs;
 		r.skyFlags = e.skyFlags;
 		if (e.kind == EventFile::Sounds) {
@@ -394,10 +429,7 @@ void addEvent(Track& t, const EventFile::Resource& e, float flip)
 	case EventFile::ModelDistances: {
 		// (Their entities are found once the scenery is loaded.)
 		EventResource& r = t.events.emplace_back();
-		const EventResource::Kind kind = e.kind == EventFile::PartAnimations ? EventResource::PartAnimation
-			: e.kind == EventFile::NodeTransforms							 ? EventResource::NodeTransform
-																			 : EventResource::ModelDistance;
-		r = {kind, e.id, e.onEnd, e.noEnd, {c[0], c[1], c[2]}, 0, -1, {}, 0, -1, -1};
+		r = {resourceKind(e.kind), e.id, e.onEnd, e.noEnd, {c[0], c[1], c[2]}, 0, -1, {}, 0, -1, -1};
 		r.entityName = e.entity;
 		r.node = e.node;
 		r.looping = e.looping;
@@ -501,27 +533,9 @@ int32_t Track::modelOf(std::string_view name) const
 
 int16_t Track::animatedOf(std::string_view name) const
 {
-	for (size_t i = 0; i < animated.size(); i++) {
-		if (samePrefix(animated[i].name, name)) {
-			return int16_t(i);
-		}
-	}
-	return -1;
+	const int16_t own = animatedIn(name, false);
+	return own >= 0 ? own : animatedIn(name, true);
 }
-
-const Pose* Track::modelPlace(std::string_view name) const
-{
-	for (const auto& [n, pose] : models) {
-		if (samePrefix(n, name)) {
-			return &pose;
-		}
-	}
-	return nullptr;
-}
-
-namespace {
-
-} // namespace
 
 // An animation's frames and tracks, mirrored like the scene (positions' y negated, rotations' y and w).
 Animation animationOf(const AnimationFile& file, bool mirrored)
@@ -529,7 +543,8 @@ Animation animationOf(const AnimationFile& file, bool mirrored)
 	const float flip = mirrored ? -1.0f : 1.0f;
 	Animation a;
 	for (const AnimationFile::Part& p : file.parts) {
-		a.parts.push_back({p.frames, p.loopFrames, float(p.rate) / 1000, p.track, {{p.bounds[0], p.bounds[1] * flip, p.bounds[2]}, p.bounds[3]}});
+		a.parts.push_back(
+			{p.frames, p.loopFrames, float(p.rate) / 1000, p.track, {{p.bounds[0], p.bounds[1] * flip, p.bounds[2]}, p.bounds[3]}});
 	}
 	for (const std::array<float, 3>& v : file.positions) {
 		a.positions.push_back({v[0], v[1] * flip, v[2]});
@@ -562,22 +577,22 @@ std::array<float, 3> squaredDistances(const SceneFile::Entity& e)
 }
 
 // An animated entity of a scene: its pose, size, skeleton and animation (added to the track's once per name).
-bool animatedModel(const Cache& cache, const std::string& dir, const SceneFile& scene, const SceneFile::Entity& e, bool mirrored, std::vector<Animation>& animations,
-	std::vector<std::string>& animationNames, AnimatedModel& out)
+bool animatedModel(const Cache& cache, const std::string& dir, const SceneFile& scene, const SceneFile::Entity& e, bool mirrored,
+	std::vector<Animation>& animations, std::vector<std::string>& animationNames, AnimatedModel& out)
 {
 	const float flip = mirrored ? -1.0f : 1.0f;
 	out.name = e.name;
 	out.pose = placed(e, mirrored);
 	out.distances = squaredDistances(e);
 	float modelScale = 1;
-	if (e.model >= 0 && size_t(e.model) < scene.models.size()) {
+	if (inRange(scene.models, e.model)) {
 		Model model;
-		if (!cache.get(named(cache, dir, binaryName(scene.models[size_t(e.model)]) + ".GDB"), model)) {
+		if (!cache.get(named(cache, dir, binaryName(scene.models[e.model]) + ".GDB"), model)) {
 			return false;
 		}
 		modelScale = model.scale;
 		out.radius = modelBounds(model).radius;
-		out.model = scene.models[size_t(e.model)];
+		out.model = scene.models[e.model];
 		out.bounds = modelBounds(model);
 		out.bounds.centre = out.bounds.centre * (1 / modelScale);
 		out.bounds.radius /= modelScale;
@@ -586,9 +601,9 @@ bool animatedModel(const Cache& cache, const std::string& dir, const SceneFile& 
 		}
 	}
 	out.scale = modelScale * e.scale;
-	if (e.skeleton >= 0 && size_t(e.skeleton) < scene.skeletons.size()) {
+	if (inRange(scene.skeletons, e.skeleton)) {
 		SkeletonFile skeleton;
-		if (!cache.get(named(cache, dir, binaryName(scene.skeletons[size_t(e.skeleton)]) + ".SDB"), skeleton)) {
+		if (!cache.get(named(cache, dir, binaryName(scene.skeletons[e.skeleton]) + ".SDB"), skeleton)) {
 			return false;
 		}
 		for (const SkeletonFile::Node& n : skeleton.nodes) {
@@ -603,8 +618,8 @@ bool animatedModel(const Cache& cache, const std::string& dir, const SceneFile& 
 			out.nodes.push_back({{n.position[0], n.position[1] * flip, n.position[2]}, rows, parent});
 		}
 	}
-	if (e.animation >= 0 && size_t(e.animation) < scene.animations.size()) {
-		const std::string& name = scene.animations[size_t(e.animation)];
+	if (inRange(scene.animations, e.animation)) {
+		const std::string& name = scene.animations[e.animation];
 		const auto known = std::find(animationNames.begin(), animationNames.end(), name);
 		out.animation = int16_t(known - animationNames.begin());
 		AnimationFile file;
@@ -619,7 +634,7 @@ bool animatedModel(const Cache& cache, const std::string& dir, const SceneFile& 
 		for (size_t k = 0; k < file.parts.size() && !e.partName.empty(); k++) {
 			out.part = file.parts[k].name == e.partName ? int16_t(k) : out.part;
 		}
-		out.part = size_t(out.part) < file.parts.size() ? out.part : -1;
+		out.part = inRange(file.parts, out.part) ? out.part : -1;
 	}
 	return true;
 }
@@ -656,9 +671,9 @@ std::array<Vec3, 4> Sprite::corners(Vec3 right, Vec3 down, Vec3 look) const
 namespace {
 
 // A scene's material animation files' tracks, added to the track's; the first of each file's, then the end.
-std::vector<int32_t> loadMaterialTracks(Track& t, const Cache& cache, const std::string& dir, const SceneFile& scene)
+List<int32_t> loadMaterialTracks(Track& t, const Cache& cache, const std::string& dir, const SceneFile& scene)
 {
-	std::vector<int32_t> firstTrack;
+	List<int32_t> firstTrack;
 	for (const std::string& file : scene.materialAnimations) {
 		MaterialAnimationFile mab;
 		firstTrack.push_back(int32_t(t.materialTracks.size()));
@@ -667,8 +682,8 @@ std::vector<int32_t> loadMaterialTracks(Track& t, const Cache& cache, const std:
 		}
 		for (const MaterialAnimationFile::Track& track : mab.tracks) {
 			Track::MaterialTrack& out = t.materialTracks.emplace_back();
-			for (int32_t f = track.firstFrame; f < track.firstFrame + track.frames && f >= 0 && size_t(f) < mab.frames.size(); f++) {
-				out.frames.push_back({mab.frames[size_t(f)].material, mab.frames[size_t(f)].start});
+			for (int32_t f = track.firstFrame; f < track.firstFrame + track.frames && inRange(mab.frames, f); f++) {
+				out.frames.push_back({mab.frames[f].material, mab.frames[f].start});
 			}
 			out.duration = std::max(1, track.duration);
 			out.rate = float(track.rate) / 1000;
@@ -679,15 +694,16 @@ std::vector<int32_t> loadMaterialTracks(Track& t, const Cache& cache, const std:
 }
 
 // An entity's material animation bindings (a file index out of range skipped) and its texture scroll.
-void bindMaterials(Track& t, const SceneFile& scene, const std::vector<int32_t>& firstTrack, const SceneFile::Entity& e, bool isAnimated, int32_t index)
+void bindMaterials(Track& t, const SceneFile& scene, const List<int32_t>& firstTrack, const SceneFile::Entity& e, bool isAnimated,
+	int32_t index)
 {
 	for (const std::array<int32_t, 4>& b : e.materialBindings) {
 		// (A file index out of range is skipped.)
-		if (b[0] < 0 || size_t(b[0]) >= scene.materialAnimations.size()) {
+		if (!inRange(scene.materialAnimations, b[0])) {
 			continue;
 		}
-		const int32_t track = firstTrack[size_t(b[0])] + b[1];
-		if (b[1] >= 0 && track < firstTrack[size_t(b[0]) + 1]) {
+		const int32_t track = firstTrack[b[0]] + b[1];
+		if (b[1] >= 0 && track < firstTrack[b[0] + 1]) {
 			t.materialBindings.push_back({isAnimated, index, track, b[2], b[3]});
 		}
 	}
@@ -698,7 +714,8 @@ void bindMaterials(Track& t, const SceneFile& scene, const std::vector<int32_t>&
 
 // One of the race's scenes (the track's, or the shared database): its material tracks, sprites, plain models, the intro's
 // camera and the animated models; the shared one's also the sphinx's blow-up.
-bool loadScene(Track& t, const Cache& cache, const std::string& dir, const RaceFile& race, const std::string* name, std::vector<std::string>& animationNames, bool& sharedSeen)
+bool loadScene(Track& t, const Cache& cache, const std::string& dir, const RaceFile& race, const std::string* name,
+	std::vector<std::string>& animationNames, bool& sharedSeen)
 {
 	if (name->empty()) {
 		return true;
@@ -711,12 +728,12 @@ bool loadScene(Track& t, const Cache& cache, const std::string& dir, const RaceF
 	if (!cache.get(path, scene)) {
 		return false;
 	}
-	const std::vector<int32_t> firstTrack = loadMaterialTracks(t, cache, dir, scene);
+	const List<int32_t> firstTrack = loadMaterialTracks(t, cache, dir, scene);
 	for (const SceneFile::Sprite& s : scene.sprites) {
 		Sprite& out = t.sprites.emplace_back(Sprite::of(s, t.mirrored));
-		if (s.animationFile >= 0 && size_t(s.animationFile) < scene.materialAnimations.size()) {
-			const int32_t track = firstTrack[size_t(s.animationFile)] + s.animationTrack;
-			out.track = s.animationTrack >= 0 && track < firstTrack[size_t(s.animationFile) + 1] ? track : -1;
+		if (inRange(scene.materialAnimations, s.animationFile)) {
+			const int32_t track = firstTrack[s.animationFile] + s.animationTrack;
+			out.track = s.animationTrack >= 0 && track < firstTrack[s.animationFile + 1] ? track : -1;
 		}
 	}
 	for (const SceneFile::Entity& e : scene.entities) {
@@ -730,7 +747,8 @@ bool loadScene(Track& t, const Cache& cache, const std::string& dir, const RaceF
 	}
 	// The intro's camera: the scene camera of the race file's name, following a node of an animated entity.
 	for (const SceneFile::Camera& c : scene.cameras) {
-		if (!race.introCamera.empty() && binaryName(c.name) == binaryName(race.introCamera) && c.entity >= 0 && t.introEntity < 0) {
+		if (!race.introCamera.empty() && binaryName(c.name) == binaryName(race.introCamera) && inRange(scene.animated, c.entity) &&
+			t.introEntity < 0) {
 			t.introEntity = int16_t(t.animated.size() + size_t(c.entity));
 			t.introNode = int16_t(c.node);
 		}
@@ -745,8 +763,8 @@ bool loadScene(Track& t, const Cache& cache, const std::string& dir, const RaceF
 		// A sphinx's blow-up plays the material animation named "blowup".
 		for (size_t i = 0; i < scene.materialAnimations.size(); i++) {
 			MaterialAnimationFile file;
-			if (samePrefix(scene.materialAnimations[i], "blowup") && cache.get(named(cache, dir, binaryName(scene.materialAnimations[i]) + ".MAB"), file) &&
-				file.tracks.size() > 2) {
+			if (samePrefix(scene.materialAnimations[i], "blowup") &&
+				cache.get(named(cache, dir, binaryName(scene.materialAnimations[i]) + ".MAB"), file) && file.tracks.size() > 2) {
 				t.blowupDuration = file.tracks[2].duration;
 				t.blowupRate = file.tracks[2].rate;
 			}
@@ -766,18 +784,22 @@ bool loadPowerupModels(Track& t, const Cache& cache, const std::string& dir, con
 	}
 	auto bounds = [&](const SceneFile::Entity& e, Sphere& out) {
 		Model model;
-		if (e.model < 0 || size_t(e.model) >= powerups.models.size() || !cache.get(named(cache, pdir, binaryName(powerups.models[size_t(e.model)]) + ".GDB"), model)) {
+		if (!inRange(powerups.models, e.model) || !cache.get(named(cache, pdir, binaryName(powerups.models[e.model]) + ".GDB"), model)) {
 			return false;
 		}
 		out = modelBounds(model);
 		return true;
 	};
-	const auto stickEntity = std::find_if(powerups.entities.begin(), powerups.entities.end(), [](const auto& e) { return e.name == "barrel"; });
-	const auto missileEntity = std::find_if(powerups.animated.begin(), powerups.animated.end(), [](const auto& e) { return e.name == "dmissil"; });
+	const auto stickEntity = std::find_if(powerups.entities.begin(), powerups.entities.end(),
+		[](const auto& e) { return e.name == "barrel"; });
+	const auto missileEntity = std::find_if(powerups.animated.begin(), powerups.animated.end(),
+		[](const auto& e) { return e.name == "dmissil"; });
 	std::vector<Animation> missileAnimation;
 	std::vector<std::string> missileNames;
-	if (powerups.entities.empty() || stickEntity == powerups.entities.end() || missileEntity == powerups.animated.end() || !bounds(powerups.entities[0], t.hook) ||
-		!bounds(*stickEntity, t.stick) || !animatedModel(cache, pdir, powerups, *missileEntity, false, missileAnimation, missileNames, t.missile) || missileAnimation.empty()) {
+	if (powerups.entities.empty() || stickEntity == powerups.entities.end() || missileEntity == powerups.animated.end() ||
+		!bounds(powerups.entities[0], t.hook) || !bounds(*stickEntity, t.stick) ||
+		!animatedModel(cache, pdir, powerups, *missileEntity, false, missileAnimation, missileNames, t.missile) ||
+		missileAnimation.empty()) {
 		return false;
 	}
 	// (Its sphere is its model's bounds.) Its animation goes after the track's.
@@ -786,7 +808,8 @@ bool loadPowerupModels(Track& t, const Cache& cache, const std::string& dir, con
 	// The bricks' entities, their animations after it.
 	static const char* const BrickNames[4] = {"gen", "genblen", "enh", "enhblen"};
 	for (size_t b = 0; b < 4; b++) {
-		const auto entity = std::find_if(powerups.animated.begin(), powerups.animated.end(), [&](const auto& e) { return e.name == BrickNames[b]; });
+		const auto entity = std::find_if(powerups.animated.begin(), powerups.animated.end(),
+			[&](const auto& e) { return e.name == BrickNames[b]; });
 		std::vector<Animation> brickAnimation;
 		std::vector<std::string> brickNames;
 		AnimatedModel& m = t.brickModels[b];

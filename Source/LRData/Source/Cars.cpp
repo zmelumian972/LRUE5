@@ -1,4 +1,5 @@
 #include "LRData/Cars.h"
+#include "LRData/Archive.h"
 
 #include "LRData/Tokens.h"
 
@@ -12,7 +13,7 @@ namespace {
 constexpr int TableEntry = 0x27;
 
 // .CMB
-enum : int {
+enum : int32_t {
 	ChassisVariant = 0x28, // { K(0x34..0x38) "name" ... }; 0x29 is the second variant
 	ChassisVariant2 = 0x29,
 	VariantMaterials = 0x34,
@@ -37,7 +38,7 @@ enum : int {
 };
 
 // .CCB
-enum : int {
+enum : int32_t {
 	ChampionMaterials = 0x28,
 	ChampionTextures = 0x29,
 	ChampionModel = 0x2a,
@@ -47,7 +48,7 @@ enum : int {
 };
 
 // .DDB
-enum : int {
+enum : int32_t {
 	DriverMaterials = 0x28,
 	DriverTextures = 0x29,
 	DriverModel = 0x2a,
@@ -60,7 +61,7 @@ enum : int {
 };
 
 // .ADB
-enum : int {
+enum : int32_t {
 	AnimationFrames = 0x27, // { K(0x28) positions, K(0x29) rotations, K(0x2a) key times }
 	FramePositions = 0x28, // [n] { (r r r) ... }
 	FrameRotations = 0x29, // [n] { (r r r r) ... }
@@ -75,26 +76,12 @@ enum : int {
 	PartTrack = 0x2b,
 };
 
-// A real that may be stored as an integer.
-float number(TokenReader& r) { return r.next(Token::Integer) ? float(r.tokens().list[r.position() - 1].integer) : r.real(); }
-
 // A table of named entries; field(r, key, entry) reads one field's values, false for a malformed one.
 template <typename T, typename Field> bool decodeTable(std::span<const uint8_t> bytes, std::vector<T>& out, Field field)
 {
 	out.clear();
-	Tokens tokens;
-	if (!tokens.decode(bytes)) {
-		return false;
-	}
-	TokenReader r(tokens);
-	if (r.keyword() != TableEntry) {
-		return false;
-	}
-	const uint32_t count = r.openCounted();
-	for (uint32_t i = 0; i < count && !r.failed(); i++) {
-		if (r.keyword() != TableEntry) {
-			return false;
-		}
+	TokenReader r(bytes);
+	r.table(TableEntry, [&] {
 		T& entry = out.emplace_back();
 		entry.name = r.text();
 		r.expect(Token::Open);
@@ -104,19 +91,14 @@ template <typename T, typename Field> bool decodeTable(std::span<const uint8_t> 
 				return false;
 			}
 		}
-	}
-	r.close();
+		return true;
+	});
 	return !r.failed() && r.atEnd();
 }
 
 template <typename T> const T* findNamed(const std::vector<T>& list, std::string_view name)
 {
-	for (const T& entry : list) {
-		if (entry.name == name) {
-			return &entry;
-		}
-	}
-	return nullptr;
+	return findWhere(list, [&](const T& entry) { return entry.name == name; });
 }
 
 } // namespace
@@ -251,24 +233,19 @@ bool DriverTable::decode(std::span<const uint8_t> bytes)
 bool AnimationFile::decode(std::span<const uint8_t> bytes)
 {
 	*this = {};
-	Tokens tokens;
-	if (!tokens.decode(bytes)) {
-		return false;
-	}
-	TokenReader r(tokens);
+	TokenReader r(bytes);
 	while (!r.atEnd() && !r.failed()) {
 		switch (r.keyword()) {
 		case AnimationFrames:
 			r.expect(Token::Open);
 			while (!r.failed() && !r.next(Token::Close)) {
 				const int key = r.keyword();
-				const uint32_t n = r.openCounted();
-				for (uint32_t i = 0; i < n && !r.failed(); i++) {
+				r.counted([&] {
 					if (key == FramePositions) {
-						positions.push_back({number(r), number(r), number(r)});
+						positions.push_back({r.number(), r.number(), r.number()});
 					}
 					else if (key == FrameRotations) {
-						rotations.push_back({number(r), number(r), number(r), number(r)});
+						rotations.push_back({r.number(), r.number(), r.number(), r.number()});
 					}
 					else if (key == FrameKeys) {
 						keys.push_back(r.integer());
@@ -276,27 +253,19 @@ bool AnimationFile::decode(std::span<const uint8_t> bytes)
 					else {
 						r.fail();
 					}
-				}
-				r.close();
+				});
 			}
 			break;
-		case AnimationTracks: {
-			const uint32_t n = r.openCounted();
-			for (uint32_t i = 0; i < n && !r.failed(); i++) {
+		case AnimationTracks:
+			r.counted([&] {
 				Track& t = tracks.emplace_back();
 				for (int32_t* v : {&t.rotationFrame, &t.rotationKey, &t.rotationKeys, &t.positionFrame, &t.positionKey, &t.positionKeys}) {
 					*v = r.integer();
 				}
-			}
-			r.close();
+			});
 			break;
-		}
-		case PartList: {
-			const uint32_t count = r.openCounted();
-			for (uint32_t i = 0; i < count && !r.failed(); i++) {
-				if (r.keyword() != PartList) {
-					return false;
-				}
+		case PartList:
+			r.entries(PartList, [&] {
 				Part& p = parts.emplace_back();
 				p.name = r.text();
 				r.expect(Token::Open);
@@ -311,17 +280,18 @@ bool AnimationFile::decode(std::span<const uint8_t> bytes)
 					default: return false;
 					}
 				}
-			}
-			r.close();
+				return true;
+			});
 			break;
-		}
 		default: return false;
 		}
 	}
 	for (const Track& t : tracks) {
 		if (t.rotationFrame < 0 || t.positionFrame < 0 || t.rotationKey < 0 || t.positionKey < 0 ||
-			size_t(t.rotationFrame) + size_t(std::max(0, t.rotationKeys)) > rotations.size() || size_t(t.positionFrame) + size_t(std::max(0, t.positionKeys)) > positions.size() ||
-			size_t(t.rotationKey) + size_t(std::max(0, t.rotationKeys)) > keys.size() || size_t(t.positionKey) + size_t(std::max(0, t.positionKeys)) > keys.size()) {
+			size_t(t.rotationFrame) + size_t(std::max(0, t.rotationKeys)) > rotations.size() ||
+			size_t(t.positionFrame) + size_t(std::max(0, t.positionKeys)) > positions.size() ||
+			size_t(t.rotationKey) + size_t(std::max(0, t.rotationKeys)) > keys.size() ||
+			size_t(t.positionKey) + size_t(std::max(0, t.positionKeys)) > keys.size()) {
 			return false;
 		}
 	}

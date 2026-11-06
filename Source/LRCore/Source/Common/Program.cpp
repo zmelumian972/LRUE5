@@ -25,7 +25,7 @@ void Program::startRace()
 	RaceBrief brief = game.brief(*data, *cache);
 	// The standings' and the dialogs' blinks run on from race to race.
 	const int32_t standingsBlink = world.session.blinkMs, dialogBlink = world.session.dialog.blinkMs;
-	if (!(world.replaying() ? world.setupSession(*cache, brief) : world.setup(*cache, brief))) {
+	if (!(world.replaying() ? world.session.setup(world, *cache, brief) : world.setup(*cache, brief))) {
 		// The race's files are missing or malformed: the session ends and the menus start again at the main menu.
 		game.racing = false;
 		mode = Mode::Menus;
@@ -78,8 +78,8 @@ void Program::frame(int32_t dt, const Input& input)
 	if (world.raceView.cameras.size() == 1) {
 		world.raceView.cameras[0].aspect = input.windowAspect > 4.0f / 3 + 0.01f ? input.windowAspect : 4.0f / 3;
 	}
-	world.update(dt, pressed, released, world.replaying() ? nullptr : cache);
-	world.updateHuds(dt);
+	world.session.update(world, dt, pressed, released, world.replaying() ? nullptr : cache);
+	world.raceView.updateHuds(world, dt);
 	menus.drawRace(world);
 	if (world.session.ending == Session::End::None) {
 		return;

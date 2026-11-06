@@ -51,7 +51,7 @@ struct LRCORE_API VideoSettings {
 	void draw(const MenuData& data, size_t language, std::vector<MenuElement>& elements, std::vector<MenuGlyph>& glyphs) const;
 
 private:
-	int32_t mouseX = -1, mouseY = -1;
+	int32_t m_mouseX = -1, m_mouseY = -1; // where the mouse was
 };
 
 } // namespace lr

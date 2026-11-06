@@ -27,7 +27,10 @@ std::u16string Text(const FString& S)
 	return Out;
 }
 
-EWindowMode::Type WindowModeOf(int32 Window) { return Window == 2 ? EWindowMode::Fullscreen : Window == 1 ? EWindowMode::WindowedFullscreen : EWindowMode::Windowed; }
+EWindowMode::Type WindowModeOf(int32 Window)
+{
+	return Window == 2 ? EWindowMode::Fullscreen : Window == 1 ? EWindowMode::WindowedFullscreen : EWindowMode::Windowed;
+}
 } // namespace
 
 void FLRSettings::Load()

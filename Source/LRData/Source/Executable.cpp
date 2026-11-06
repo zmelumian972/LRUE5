@@ -21,7 +21,8 @@ constexpr Place Random = {"random table", 0xbefec, 2048, "dc18033635bc1006b0e41d
 constexpr Place Cheats = {"cheat codes", 0xc2028, 112, "e5e43dd9977b41bc81c2c643b5960f6a4b17916bd85592898f41becd9d5cd50b"};
 // 9 NUL-padded, 4-byte aligned folder names in language order.
 constexpr Place Languages = {"language folders", 0xb05dc, 72, "2f91b1274c442bafd1a6107a66e4170e9908bcc6fbad4881102cac2040df06a6"};
-constexpr Place Frames = {"frame colours", 0xc2278, 45, "3ebc12378eb5daffc475948b22dd9656e414284e5391319d6f0c10cef82f13db"}; // 5 RGBA, 25-byte map
+constexpr Place Frames = {"frame colours", 0xc2278, 45,
+	"3ebc12378eb5daffc475948b22dd9656e414284e5391319d6f0c10cef82f13db"}; // 5 RGBA, 25-byte map
 constexpr Place Points = {"place points", 0xb0b58, 24, "e5bb9b3f055ee6f0925bb587ae2396c1747daf1cdd6245c371230c2157f790d2"};
 constexpr Place Curse = {"curse drop", 0xb4208, 36, "c0ec3c6078cab6784c57baf840bd3533d9c5b2ab90d6c7eb0dc4d629adb0854c"};
 constexpr Place LavaSpots = {"lava spots", 0xc22d8, 36, "7004157b23c47d909a8f50b4e4f27fd2402d9b62435836077ff7bdefaa7933df"};
@@ -102,9 +103,10 @@ template <size_t N> void readFloats(std::span<const uint8_t> b, std::array<std::
 bool ExecutableTables::locate(std::span<const uint8_t> exe, std::string& error)
 {
 	*this = {};
-	const std::span<const uint8_t> r = find(exe, Random, error), c = find(exe, Cheats, error), f = find(exe, Frames, error), p = find(exe, Points, error),
-								   cu = find(exe, Curse, error), ls = find(exe, LavaSpots, error), lf = find(exe, LavaFrames, error), e = find(exe, Eyes, error),
-								   l = find(exe, Languages, error), s = find(exe, Steps, error);
+	const std::span<const uint8_t> r = find(exe, Random, error), c = find(exe, Cheats, error), f = find(exe, Frames, error),
+								   p = find(exe, Points, error), cu = find(exe, Curse, error), ls = find(exe, LavaSpots, error),
+								   lf = find(exe, LavaFrames, error), e = find(exe, Eyes, error), l = find(exe, Languages, error),
+								   s = find(exe, Steps, error);
 	if (r.empty() || c.empty() || l.empty() || f.empty() || p.empty() || cu.empty() || ls.empty() || lf.empty() || e.empty() || s.empty()) {
 		return false;
 	}

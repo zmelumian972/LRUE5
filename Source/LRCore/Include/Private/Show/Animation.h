@@ -20,17 +20,20 @@ inline int32_t partIndex(const AnimationFile& file, std::string_view name)
 	return -1;
 }
 
-inline bool partEnded(const AnimationFile& file, int32_t part, float position) { return part >= 0 && position >= float(file.parts[size_t(part)].frames - 1); }
+inline bool partEnded(const AnimationFile& file, int32_t part, float position)
+{
+	return part >= 0 && position >= float(file.parts[part].frames - 1);
+}
 
 inline float advance(const AnimationFile& file, int32_t part, float position, int32_t dt)
 {
-	return part >= 0 ? position + float(dt * file.parts[size_t(part)].rate) / 1000.0f : position;
+	return part >= 0 ? position + float(dt * file.parts[part].rate) / 1000.0f : position;
 }
 
 // Where a part is, in frames, ms after it started blending in over 200 ms (blended: not from the first frame).
 inline float blendedFrame(const AnimationFile& file, int32_t part, int32_t ms, bool blended)
 {
-	return float(std::max(0, ms - (blended ? 200 : 0)) * file.parts[size_t(part)].rate) / 1000.0f;
+	return float(std::max(0, ms - (blended ? 200 : 0)) * file.parts[part].rate) / 1000.0f;
 }
 
 } // namespace lr

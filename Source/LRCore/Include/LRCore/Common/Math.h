@@ -13,10 +13,14 @@
 
 namespace lr {
 
-constexpr float Pi = 3.14159274f, Tau = 6.28318548f; // float(pi), float(2pi)
+constexpr float Pi = 3.1415927f, Tau = 6.2831855f; // float(pi), float(2pi)
+
+// x truncated to an integer, clamped to int32's range and NaN as 0 (converting those is undefined): for a value from
+// the game's files, which may be anything.
+inline int32_t truncatedInt(float x) { return x >= 2147483648.0f ? INT32_MAX : x >= -2147483648.0f ? int32_t(x) : x < 0 ? INT32_MIN : 0; }
 
 // A looping time wrapped into the loop.
-inline float wrapLoop(float t, float loop) { return t >= loop ? t - loop * float(int32_t(t / loop)) : t; }
+inline float wrapLoop(float t, float loop) { return t >= loop ? t - loop * float(truncatedInt(t / loop)) : t; }
 
 struct Vec3 {
 	float x = 0, y = 0, z = 0;
@@ -50,8 +54,8 @@ inline Vec3 normalize(Vec3 a)
 }
 
 // The game's sines and cosines: in double, rounded to float.
-inline float sinf64(float a) { return float(std::sin(double(a))); }
-inline float cosf64(float a) { return float(std::cos(double(a))); }
+inline float sinPrecise(float a) { return float(std::sin(double(a))); }
+inline float cosPrecise(float a) { return float(std::cos(double(a))); }
 
 struct Basis {
 	Vec3 f{1, 0, 0}, s{0, 1, 0}, u{0, 0, 1}; // forward, left, up
@@ -80,36 +84,32 @@ inline Vec3 toWorld(const Basis& b, Vec3 local) { return b.f * local.x + b.s * l
 inline Vec3 toLocal(const Basis& b, Vec3 world) { return {dot(b.f, world), dot(b.s, world), dot(b.u, world)}; }
 
 // Orthonormal bases from two vectors: the first is kept (normalized), the second made perpendicular to it.
+inline std::array<Vec3, 2> squareUp(Vec3 first, Vec3 second)
+{
+	const Vec3 a = normalize(first);
+	return {a, normalize(second - a * dot(second, a))};
+}
 inline Basis basisFromForwardUp(Vec3 forward, Vec3 up)
 {
-	Basis b;
-	b.f = normalize(forward);
-	b.u = normalize(up - b.f * dot(up, b.f));
-	b.s = cross(b.u, b.f);
-	return b;
+	const auto [f, u] = squareUp(forward, up);
+	return {f, cross(u, f), u};
 }
 inline Basis basisFromForwardSide(Vec3 forward, Vec3 side)
 {
-	Basis b;
-	b.f = normalize(forward);
-	b.s = normalize(side - b.f * dot(side, b.f));
-	b.u = cross(b.f, b.s);
-	return b;
+	const auto [f, s] = squareUp(forward, side);
+	return {f, s, cross(f, s)};
 }
 inline Basis basisFromUpForward(Vec3 up, Vec3 forward)
 {
-	Basis b;
-	b.u = normalize(up);
-	b.f = normalize(forward - b.u * dot(forward, b.u));
-	b.s = cross(b.u, b.f);
-	return b;
+	const auto [u, f] = squareUp(up, forward);
+	return {f, cross(u, f), u};
 }
 
 // v turned by -angle about axis (right-hand rule), with the axis used as given: for a non-unit axis the result is
 // scaled and sheared, and the callers normalize it.
 inline Vec3 turnAbout(Vec3 v, Vec3 a, float angle)
 {
-	const float c = cosf64(angle), s = sinf64(angle), t = 1 - c;
+	const float c = cosPrecise(angle), s = sinPrecise(angle), t = 1 - c;
 	return {
 		(a.x * a.x * t + c) * v.x + (a.x * a.y * t + a.z * s) * v.y + (a.x * a.z * t - a.y * s) * v.z,
 		(a.x * a.y * t - a.z * s) * v.x + (a.y * a.y * t + c) * v.y + (a.y * a.z * t + a.x * s) * v.z,

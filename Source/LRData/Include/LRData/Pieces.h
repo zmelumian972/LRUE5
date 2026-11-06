@@ -12,6 +12,7 @@
 // All token streams.
 
 #include "LRData/Api.h"
+#include "LRData/Index.h"
 
 #include <array>
 #include <cstdint>
@@ -56,9 +57,9 @@ struct LRDATA_API PieceLibrary {
 	std::vector<Piece> pieces; // by type
 	std::vector<Cell> cells;
 	std::vector<uint16_t> commands;
-	std::vector<std::array<int16_t, 3>> positions; // 1/256 units
-	std::vector<std::array<int8_t, 3>> normals; // 1/127
-	std::vector<std::array<int16_t, 2>> uvs; // 1/1024
+	List<std::array<int16_t, 3>> positions; // 1/256 units
+	List<std::array<int8_t, 3>> normals; // 1/127
+	List<std::array<int16_t, 2>> uvs; // 1/1024
 	std::vector<std::string> materials; // its material list's names (the .MDB beside it), in order
 
 	const Piece* find(int32_t type) const;
@@ -78,12 +79,12 @@ struct LRDATA_API CarSets {
 	struct Set {
 		int32_t part = 0; // what its pieces store, and its chassis' type
 		std::string chassis; // 16 characters
-		std::vector<Choice> choices;
+		List<Choice> choices;
 		bool operator==(const Set&) const = default;
 	};
 	std::array<std::string, 10> colours; // black white biege ltgray dkgray red brown yellow green blue
 	std::array<int32_t, 10> materials = {}; // each colour's in the library's material list (-1 none; LO's are HI's)
-	std::vector<Set> sets; // 12
+	List<Set> sets; // 12
 
 	int32_t setOfPart(int32_t part) const; // -1 none
 	// CRSTMGR.LEB, the set files it names and L_COLORS.LEB; false if one is missing or malformed.
@@ -100,7 +101,7 @@ struct LRDATA_API PartCatalog {
 		bool operator==(const Part&) const = default;
 	};
 	// Hat, face, torso, legs.
-	std::array<std::vector<Part>, 4> rings;
+	std::array<List<Part>, 4> rings;
 	std::vector<std::string> hatModels; // each hat's model in the head library
 	std::array<std::string, 5> bodies; // the plain/hooked x plain/pegs bodies, then the seated one
 

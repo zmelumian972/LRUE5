@@ -71,7 +71,8 @@ enum class CacheKind : uint32_t { Tables, Executable, Models, Materials, Texture
 // The records' format: raised whenever a record's layout changes, so an older cache is rebuilt.
 inline constexpr uint32_t CacheFormat = 12;
 // Each kind's file name in the cache folder.
-inline constexpr const char* CacheFileNames[size_t(CacheKind::Count)] = {"tables.lrc", "executable.lrc", "models.lrc", "materials.lrc", "textures.lrc", "sounds.lrc"};
+inline constexpr const char* CacheFileNames[size_t(CacheKind::Count)] = {"tables.lrc", "executable.lrc", "models.lrc", "materials.lrc",
+	"textures.lrc", "sounds.lrc"};
 
 struct CacheSource {
 	std::span<const uint8_t> jam, exe;

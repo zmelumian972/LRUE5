@@ -11,6 +11,7 @@
 // - The power-up bricks (.PWB), the points players aim at (.TGB), the hazards (.HZB) and the track timers (.TIB).
 
 #include "LRData/Api.h"
+#include "LRData/Index.h"
 
 #include <array>
 #include <cstdint>
@@ -63,7 +64,7 @@ struct LRDATA_API StartGrid {
 		std::array<float, 3> position, forward, up;
 		bool operator==(const Place&) const = default;
 	};
-	std::vector<Place> places; // by place index
+	List<Place> places; // by place index
 
 	// False on a malformed file, or one missing a place below the highest.
 	[[nodiscard]] bool decode(std::span<const uint8_t> bytes);
@@ -151,7 +152,7 @@ struct LRDATA_API EventFile {
 		int32_t id = 0;
 		bool onEnd = false; // reacts to its event's end instead of its start
 		bool noEnd = false;
-		std::array<int32_t, 3> chains = {-1, -1, -1}; // started as it starts, while active, as it ends
+		Array<int32_t, 3> chains = {-1, -1, -1}; // started as it starts, while active, as it ends
 		// Timers.
 		int32_t durationMs = 0, holdEvent = -1;
 		// Lap marks.
@@ -304,7 +305,7 @@ struct LRDATA_API EmitterFile {
 		uint8_t priority = 0;
 		bool operator==(const Emitter&) const = default;
 	};
-	std::vector<Emitter> emitters;
+	List<Emitter> emitters;
 
 	int32_t find(std::string_view name) const; // exact on up to 8 characters; -1 none
 	// False on a malformed file.
@@ -325,7 +326,7 @@ struct LRDATA_API SkyFile {
 		std::vector<Keyframe> keyframes;
 		bool operator==(const State&) const = default;
 	};
-	std::vector<State> states;
+	List<State> states;
 	std::string initial;
 	float height = 0;
 
@@ -340,7 +341,7 @@ struct LRDATA_API SkyFile {
 struct LRDATA_API LoadingScreen {
 	std::string picture;
 	int32_t name = 0;
-	std::vector<std::array<float, 2>> dots;
+	List<std::array<float, 2>> dots;
 
 	// False on a malformed file.
 	[[nodiscard]] bool decode(std::span<const uint8_t> bytes);
