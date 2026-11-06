@@ -15,7 +15,7 @@ The original game's races, handling and menus, on a new engine.</p>
 > [!WARNING]
 > **Alpha: experimental.** The whole game is playable, but expect bugs, crashes and visual glitches, and saves
 > that may not carry over between versions. Tested so far: Linux on a desktop
-> PC; the Windows and AYN Thor builds haven't been played on real hardware yet. Reports are welcome in
+> PC and the AYN Thor; the Windows build hasn't been played on real hardware yet. Reports are welcome in
 > [Issues](https://github.com/zmelumian972/LRUE5/issues).
 
 ## What is this?

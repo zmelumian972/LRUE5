@@ -46,15 +46,26 @@ uint32 UsbOf(const FKey& Key)
 	return Code ? *Code : 0;
 }
 
-// A pad's buttons as SDL numbers them (the bindings'); -1 not a button.
+// A pad's buttons in the order the original game numbered an XInput pad's (DirectInput's: A, B, X, Y, LB, RB, Back,
+// Start, the sticks' clicks), so its default bindings (accelerate 0 ... look back 6) land on A, B, X, Y, LB, RB and Back;
+// -1 not a button (the d-pad steers as the stick: FLRCoreRun::Key). The AYN Thor's face buttons are labelled the Nintendo
+// way round (A right, B bottom), so there they swap places, and its triggers accelerate and brake as on its other racers.
 int32 PadButtonOf(const FKey& Key)
 {
-	static const FKey Buttons[15] = {EKeys::Gamepad_FaceButton_Bottom, EKeys::Gamepad_FaceButton_Right, EKeys::Gamepad_FaceButton_Left,
-		EKeys::Gamepad_FaceButton_Top, EKeys::Gamepad_Special_Left, FKey(), EKeys::Gamepad_Special_Right, EKeys::Gamepad_LeftThumbstick,
-		EKeys::Gamepad_RightThumbstick, EKeys::Gamepad_LeftShoulder, EKeys::Gamepad_RightShoulder, EKeys::Gamepad_DPad_Up,
-		EKeys::Gamepad_DPad_Down, EKeys::Gamepad_DPad_Left, EKeys::Gamepad_DPad_Right};
-	for (int32 i = 0; i < 15; i++) {
-		if (Buttons[i].IsValid() && Buttons[i] == Key) {
+#if PLATFORM_LINUXARM64
+	if (Key == EKeys::Gamepad_RightTrigger || Key == EKeys::Gamepad_LeftTrigger) {
+		return Key == EKeys::Gamepad_RightTrigger ? 0 : 1;
+	}
+	static const FKey Face[4] = {EKeys::Gamepad_FaceButton_Right, EKeys::Gamepad_FaceButton_Bottom, EKeys::Gamepad_FaceButton_Top,
+		EKeys::Gamepad_FaceButton_Left};
+#else
+	static const FKey Face[4] = {EKeys::Gamepad_FaceButton_Bottom, EKeys::Gamepad_FaceButton_Right, EKeys::Gamepad_FaceButton_Left,
+		EKeys::Gamepad_FaceButton_Top};
+#endif
+	static const FKey Buttons[10] = {Face[0], Face[1], Face[2], Face[3], EKeys::Gamepad_LeftShoulder, EKeys::Gamepad_RightShoulder,
+		EKeys::Gamepad_Special_Left, EKeys::Gamepad_Special_Right, EKeys::Gamepad_LeftThumbstick, EKeys::Gamepad_RightThumbstick};
+	for (int32 i = 0; i < 10; i++) {
+		if (Buttons[i] == Key) {
 			return i;
 		}
 	}

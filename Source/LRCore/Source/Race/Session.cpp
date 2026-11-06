@@ -486,10 +486,12 @@ void Session::update(World& w, int32_t frameMs, std::span<const uint32_t> presse
 	// Esc pauses. The race runs unless a dialog is up; then the dialog: its blink (it runs on from dialog to dialog),
 	// Up and Down move, Enter or Space chooses and the key's release acts. A dialog closing lets the race run this
 	// frame, its clock held.
+	bool opened = false; // (the Esc that opens the dialog doesn't also cancel it)
 	if (!paused()) {
 		for (uint32_t k : pressed) {
 			if (k == MenuEscape && brief.mode != RaceBrief::Mode::Demo) {
 				openDialog(w, RaceDialog::Pause);
+				opened = true;
 				break;
 			}
 		}
@@ -517,10 +519,18 @@ void Session::update(World& w, int32_t frameMs, std::span<const uint32_t> presse
 		if (d.chosen) {
 			continue;
 		}
-		if (k == MenuUp || k == MenuDown) {
-			d.selection = (d.selection + (k == MenuUp ? d.count - 1 : 1)) % d.count;
+		// A pad's stick (or d-pad) moves as Up and Down do.
+		const bool up = k == MenuUp || k == (SourceAxis | 3), down = k == MenuDown || k == (SourceAxis | 2);
+		if (up || down) {
+			d.selection = (d.selection + (up ? d.count - 1 : 1)) % d.count;
 		}
 		else if (k == MenuEnter || k == MenuSpace || k == MenuPadButton) {
+			d.chosen = true;
+			d.key = k;
+		}
+		// Esc (a pad's B) cancels: CONTINUE, or NO.
+		else if (k == MenuEscape && !opened && d.kind != RaceDialog::TimeRaceEnd) {
+			d.selection = d.kind == RaceDialog::Pause ? 0 : 1;
 			d.chosen = true;
 			d.key = k;
 		}

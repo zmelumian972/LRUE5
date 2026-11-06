@@ -188,6 +188,12 @@ bool ALRCoreGameMode::Boot()
 		R.Harness->BootSaves(Saves, PadCount);
 	}
 	R.Program.boot(R.Data, R.Files.Cache, PadCount, Saves);
+#if PLATFORM_LINUXARM64
+	// The AYN Thor has no keyboard: player 1 left on one (a save from a start that missed the pad) gets the pad.
+	if (PadCount > 0 && R.Program.game.settings.layout[0] >= 2) {
+		R.Program.game.pickLayout(0, 0);
+	}
+#endif
 	R.Frames = 1; // the boot is frame 1
 	if (R.Harness) {
 		R.Harness->Booted(R);

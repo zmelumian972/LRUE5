@@ -17,7 +17,7 @@
 
 // UE's keys as USB usages.
 uint32 UsbOf(const FKey& Key);
-// A pad's buttons as SDL numbers them (the bindings'); -1 not a button.
+// A pad's buttons as the bindings number them; -1 not a button.
 int32 PadButtonOf(const FKey& Key);
 
 // Everything the program needs that isn't a UObject.
@@ -142,6 +142,20 @@ struct FLRCoreRun
 
 	void Key(const FKey& K, bool Down, int32 User)
 	{
+		// The d-pad is the stick pushed all the way (the menus move with it; a race steers with it).
+		if (K.IsGamepadKey() &&
+			(K == EKeys::Gamepad_DPad_Left || K == EKeys::Gamepad_DPad_Right || K == EKeys::Gamepad_DPad_Up ||
+				K == EKeys::Gamepad_DPad_Down)) {
+			const bool X = K == EKeys::Gamepad_DPad_Left || K == EKeys::Gamepad_DPad_Right;
+			const float Full = K == EKeys::Gamepad_DPad_Left || K == EKeys::Gamepad_DPad_Down ? -1.f : 1.f;
+			Stick(X ? EKeys::Gamepad_LeftX : EKeys::Gamepad_LeftY, Down ? Full : 0.f, User);
+			return;
+		}
+		// Start pauses a race, as Esc does (the menus keep it a button).
+		if (K == EKeys::Gamepad_Special_Right && Program.mode == lr::Program::Mode::Race) {
+			Keys.Add({lr::MenuEscape, Down, false});
+			return;
+		}
 		const int32 Button = PadButtonOf(K);
 		if (Button >= 0) {
 			// The menus see every pad button as one; the race its own number.
@@ -149,7 +163,9 @@ struct FLRCoreRun
 			if (Down) {
 				PadHeld[User & 1].Add(lr::SourcePad | uint32(Button));
 			}
-			Keys.Add({lr::MenuPadButton, Down, false});
+			// The paused race's dialog takes A as Enter and B as Esc (cancel).
+			const bool bDialog = Program.mode == lr::Program::Mode::Race && Program.world.session.paused() && Button <= 1;
+			Keys.Add({bDialog ? (Button == 0 ? lr::MenuEnter : lr::MenuEscape) : lr::MenuPadButton, Down, false});
 			return;
 		}
 		if (K.IsMouseButton()) {
