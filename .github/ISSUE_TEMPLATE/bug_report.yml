@@ -1,0 +1,30 @@
+name: Bug report
+description: Something broke, crashed or looks wrong
+labels: [bug]
+body:
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options: [Windows, Linux, AYN Thor]
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The release you downloaded, e.g. v0.0.5
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got. Screenshots help.
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: Drag in LegoRacers.log from a Saved/Logs folder (in the game folder, or under ~/.config/Epic/LegoRacers on Linux).
