@@ -3,7 +3,7 @@
 <p align="center"><b>The 1999 classic, rebuilt in Unreal Engine 5.</b><br>
 The original game's races, handling and menus, on a new engine.</p>
 
-<p align="center"><img src="https://raw.githubusercontent.com/zmelumian972/LRUE5/main/media/classic-beach.jpg" alt="The beach track" width="100%"></p>
+<p align="center"><img src="https://raw.githubusercontent.com/zmelumian972/LRUE5/main/media/race.webp" alt="A race start on the castle track: the countdown, then the karts racing off through the gate" width="100%"></p>
 
 <p align="center">
 <a href="https://github.com/zmelumian972/LRUE5/releases/latest/download/LegoRacers-Windows.zip"><b>Windows</b></a> ·
