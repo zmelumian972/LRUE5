@@ -52,7 +52,7 @@ struct LRCORE_API RoutePlace {
 
 	void attachAtStart() { *this = {}; }
 	// At the end of the loop point's segment. qb is left as it was.
-	void attachAtLoop(const Route& route);
+	void joinAtLoop(const Route& route);
 	// time += rate * ms, then the pose there.
 	void advance(const Route& route, float ms);
 	// To where a kart moved by `moved` would be along the line; moved keeps what the line didn't take. False (and no
@@ -74,7 +74,7 @@ struct Playback {
 
 // Route mode from the route's start (paused) or its loop. The visible pose and the body follow the cursor.
 LRCORE_API void attachAtStart(Playback& play, Kart& kart, Pose& visible, const KartParams& params, const Route& route, int32_t slot);
-LRCORE_API void attachAtLoop(Playback& play, Kart& kart, Pose& visible, const KartParams& params, const Route& route, int32_t slot);
+LRCORE_API void joinAtLoop(Playback& play, Kart& kart, Pose& visible, const KartParams& params, const Route& route, int32_t slot);
 
 // One step of dt ms: the rate, the cursor, the motion (side offset, hop, lift, tilt, spin) into the visible pose, the
 // velocity, and the sweep of the worlds past the track. What the sweep met is appended to hits.

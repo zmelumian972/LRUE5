@@ -33,7 +33,7 @@ void shooterMotion(const World& w, int8_t shooter, Vec3& direction, float& speed
 	direction = {};
 	speed = 0;
 	if (shooter >= 0) {
-		direction = w.racers.karts[shooter].velocityDirection;
+		direction = w.racers.karts[shooter].travelDir;
 		speed = w.racers.karts[shooter].speed;
 	}
 }

@@ -34,7 +34,7 @@ struct KartSource {
 };
 
 struct KartParams {
-	float mass = 0, invMass = 0, massScale = 0;
+	float mass = 0, invMass = 0, massFactor = 0;
 	Vec3 inertia{}, invInertia{}; // diagonal, body frame
 	Vec3 centerOfMass{};
 	Vec3 anchor{};
@@ -117,13 +117,13 @@ struct Kart {
 	int32_t wallHits = 0;
 
 	// Set by the driver.
-	float thrust = 0, turnRadius = 0, maxSpeed = 0, dragCoefficient = 0, gripScale = 0;
-	float steerGain = 0, steerAlignMin = 0, lagLimit = 0, slipRatio = 0;
+	float thrust = 0, turnRadius = 0, maxSpeed = 0, dragCoefficient = 0, gripFactor = 0;
+	float steerGain = 0, steerAlignMin = 0, lagLimit = 0, skidShare = 0;
 	float yawRate = 0;
 
 	// Velocity statistics, along and across the heading (refreshed at fixed points of the step only).
 	float speed = 0, headingSpeed = 0;
-	Vec3 velocityDirection{}, forwardVelocity{}, lateralVelocity{};
+	Vec3 travelDir{}, forwardVelocity{}, lateralVelocity{};
 
 	Vec3 pushes[2]{}; // KartPushA, KartPushB
 	int32_t airborneMs = 0, spinOutMs = 0, pitchMs = 0, yawMs = 0, spinAlignMs = 0;
@@ -186,7 +186,7 @@ LRCORE_API void snapHeading(Kart& kart);
 // A push (0: A, 1: B) of q (a force, times the mass scale) until ended.
 inline void startPush(Kart& k, const KartParams& p, int32_t which, Vec3 q)
 {
-	k.pushes[which] = q * p.massScale;
+	k.pushes[which] = q * p.massFactor;
 	k.flags |= which ? KartPushB : KartPushA;
 }
 

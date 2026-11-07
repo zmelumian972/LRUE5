@@ -263,7 +263,7 @@ void Body::probeGround(int32_t dt)
 		return;
 	}
 	touchBand(4, bestDepth2);
-	snapToGround(best);
+	settleOnGround(best);
 	if (m_kart.contacts >= 3) {
 		m_kart.groundNormal = m_kart.rotation.u;
 		for (int i = 0; i < 4; i++) {
@@ -314,7 +314,7 @@ void Body::probeHover(int32_t dt)
 	weigh(2, landing, HoverBounce);
 }
 
-void Body::snapToGround(int best)
+void Body::settleOnGround(int best)
 {
 	Wheel* w = m_kart.wheels;
 	int anchor = best;

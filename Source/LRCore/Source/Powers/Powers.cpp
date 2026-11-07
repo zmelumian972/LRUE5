@@ -223,7 +223,7 @@ void PowerUps::cancelShield(size_t i)
 	}
 }
 
-void PowerUps::cancelMagnetHold(size_t i)
+void PowerUps::dropMagnetGrip(size_t i)
 {
 	for (uint8_t index : actionList) {
 		Action& a = actions[index];

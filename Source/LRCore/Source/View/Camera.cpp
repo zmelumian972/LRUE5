@@ -12,7 +12,7 @@ namespace {
 // The views: pitch and height (degrees), distance (ft), position and rotation lag.
 struct Profile {
 	PlayerCamera::Kind kind;
-	float pitch, height, distance, positionLag, rotationLag;
+	float pitch, height, distance, positionDelay, rotationDelay;
 };
 constexpr Profile Profiles[8] = {
 	{PlayerCamera::Chase, 5, 35, 20, 0.1f, 0.25f},
@@ -297,8 +297,8 @@ void RaceView::updateCamera(World& w, size_t p, int32_t dt)
 		c.viewRotation = raw;
 	}
 	else {
-		c.viewEye = rawEye + (c.viewEye - rawEye) * (1 / (lagRate(pr.positionLag) * ef + 1));
-		c.viewRotation = blend(raw, c.viewRotation, 1 / (lagRate(pr.rotationLag) * ef + 1));
+		c.viewEye = rawEye + (c.viewEye - rawEye) * (1 / (lagRate(pr.positionDelay) * ef + 1));
+		c.viewRotation = blend(raw, c.viewRotation, 1 / (lagRate(pr.rotationDelay) * ef + 1));
 	}
 	if (c.kind == PlayerCamera::Transition) {
 		transitionPose(c, e);

@@ -113,7 +113,7 @@ void startWarp(World& w, Action& a, int32_t, const Aim* aim)
 	}
 	a.ms = aim ? 0 : WarpStartMs;
 	a.state = WarpStarting;
-	w.powerUps.cancelMagnetHold(r);
+	w.powerUps.dropMagnetGrip(r);
 	a.demo = w.racers.race[r].ai;
 	w.racers.race[r].flags |= RacerWarping;
 }

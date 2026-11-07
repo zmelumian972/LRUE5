@@ -98,12 +98,12 @@ void refreshStatistics(Kart& k)
 {
 	if (isZero(k.velocity)) {
 		k.speed = 0;
-		k.velocityDirection = k.rotation.f;
+		k.travelDir = k.rotation.f;
 		k.flags = isZero(k.angularVelocity) ? k.flags | KartAtRest : k.flags & ~KartAtRest;
 	}
 	else {
 		k.speed = length(k.velocity);
-		k.velocityDirection = normalize(k.velocity);
+		k.travelDir = normalize(k.velocity);
 		k.flags &= ~KartAtRest;
 	}
 	k.headingSpeed = dotZYX(k.velocity, k.heading);
@@ -111,22 +111,22 @@ void refreshStatistics(Kart& k)
 	k.lateralVelocity = k.velocity - k.forwardVelocity;
 }
 
-void Body::accumulateForces()
+void Body::sumForces()
 {
 	const float g = gravityForce();
 	m_kart.yawRate = 0;
 	float align = 0;
 	if (m_kart.flags & KartSteering) {
-		align = dot(m_kart.rotation.f, m_kart.velocityDirection);
+		align = dot(m_kart.rotation.f, m_kart.travelDir);
 		if (align <= 0) {
-			stopSteering();
+			endTurn();
 		}
 	}
 
 	if (m_kart.contacts == 0) {
 		// Airborne: four times the gravity, the thrust along the heading but never lifting.
 		addForce({0, 0, 4 * g});
-		Vec3 thrust = m_kart.heading * (m_kart.thrust * m_params.massScale);
+		Vec3 thrust = m_kart.heading * (m_kart.thrust * m_params.massFactor);
 		thrust.z = std::min(thrust.z, -g);
 		addForce(thrust);
 		if (m_kart.turnRadius != 0 && !(m_kart.flags & KartYawLock)) {
@@ -140,7 +140,7 @@ void Body::accumulateForces()
 	const Wheel* w = m_kart.wheels;
 	const bool hover = m_kart.flags & KartHover;
 	if (!(m_kart.flags & (KartHover | KartSpinOut))) {
-		addForce((((w[0].push + w[1].push) + w[2].push) + w[3].push) * (m_params.massScale * 0.25f));
+		addForce((((w[0].push + w[1].push) + w[2].push) + w[3].push) * (m_params.massFactor * 0.25f));
 	}
 	const float rolling = hover ? 0.0f : wheelMean(w, &Wheel::rolling);
 	addForce(m_kart.velocity * -((rolling + m_kart.dragCoefficient) * m_kart.speed));
@@ -156,7 +156,7 @@ void Body::accumulateForces()
 // brake, and the turn's pull and yaw. (align: the heading against the velocity's direction, steering.)
 void Body::groundForces(float align)
 {
-	const float gm = Gravity * m_params.massScale;
+	const float gm = Gravity * m_params.massFactor;
 	const Basis& r = m_kart.rotation;
 	const Wheel* w = m_kart.wheels;
 	const float slopeHold = wheelMean(w, &Wheel::slopeHold);
@@ -185,14 +185,14 @@ void Body::groundForces(float align)
 	}
 	float grip = 1;
 	if (m_kart.flags & (KartSteering | KartSpinning)) {
-		addForce(m_kart.velocityDirection * -((gm * friction) * m_kart.slipRatio));
-		grip = 1 - m_kart.slipRatio;
+		addForce(m_kart.travelDir * -((gm * friction) * m_kart.skidShare));
+		grip = 1 - m_kart.skidShare;
 	}
 	if (!(m_kart.flags & (KartSpinning | KartYawLock))) {
 		addForce(m_kart.lateralVelocity * ((m_params.mass * -LateralGrip) * grip));
 		if (m_kart.thrust != 0) {
 			const Vec3 along = m_kart.contacts >= 3 && !(m_kart.flags & KartSteering) ? r.f : m_kart.heading;
-			addForce(along * (m_kart.thrust * m_params.massScale));
+			addForce(along * (m_kart.thrust * m_params.massFactor));
 		}
 		else {
 			addForce(m_kart.forwardVelocity * (m_params.mass * -EngineBrake)); // engine brake
@@ -307,7 +307,7 @@ void Body::updateHeading(int32_t dt)
 	}
 }
 
-void Body::updateWheelSurfaces()
+void Body::sampleWheelGround()
 {
 	// Each wheel's surface for its particle: in contact, the body neither hovering nor spun out,
 	// going forward.
@@ -332,7 +332,7 @@ void Body::updateWheelSurfaces()
 
 void Body::substep(int32_t dt)
 {
-	accumulateForces();
+	sumForces();
 	integrate(float(dt));
 	limitTilt();
 	if (m_kart.flags & KartHover) {
@@ -343,7 +343,7 @@ void Body::substep(int32_t dt)
 	}
 	updateHeading(dt);
 	refreshStatistics(m_kart);
-	updateWheelSurfaces();
+	sampleWheelGround();
 	m_kart.centerOfMassWorld = toWorld(m_kart.rotation, m_params.centerOfMass) + m_kart.position;
 	m_kart.invInertiaWorld = worldInverseInertia(m_kart.rotation, m_params.invInertia);
 }
@@ -473,7 +473,7 @@ void Body::bounceOffWall()
 {
 	const Vec3 n = m_kart.wallNormal;
 	if (m_kart.flags & KartSteering) {
-		stopSteering();
+		endTurn();
 	}
 	const float into = dotZYX(m_kart.velocity, n);
 	if (into < 0) {
@@ -641,7 +641,7 @@ KartParams makeKartParams(const KartSource& src)
 	KartParams p;
 	p.mass = src.mass;
 	p.invMass = 1 / p.mass;
-	p.massScale = (p.mass * 0.001f) * 0.001f;
+	p.massFactor = (p.mass * 0.001f) * 0.001f;
 	p.inertia = boxInertia(p.mass, BoxSize);
 	p.invInertia = {1 / p.inertia.x, 1 / p.inertia.y, 1 / p.inertia.z};
 	p.centerOfMass = src.centerOfMass;
@@ -670,7 +670,7 @@ void placeKart(Kart& k, const KartParams& p, Vec3 position, Basis rotation)
 	k.rotation = rotation;
 	k.invInertiaWorld = worldInverseInertia(rotation, p.invInertia);
 	k.heading = rotation.f;
-	k.gripScale = 1;
+	k.gripFactor = 1;
 	k.maxSpeed = p.topSpeedScale * 120.0f;
 	k.centerOfMassWorld = toWorld(rotation, p.centerOfMass) + position;
 	wheelsAt(k, p, false);
@@ -763,7 +763,7 @@ void startBoost(Kart& k, const KartParams& p, bool boosted)
 	else {
 		k.flags &= ~KartBoost;
 	}
-	k.gripScale = boosted ? 1.5f : 1.0f;
+	k.gripFactor = boosted ? 1.5f : 1.0f;
 	k.maxSpeed = p.topSpeedScale * (boosted ? 176.0f : 120.0f);
 	k.dragCoefficient = (p.mass * std::fabs(k.thrust)) / (k.maxSpeed * k.maxSpeed);
 }

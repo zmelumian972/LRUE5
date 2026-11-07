@@ -147,7 +147,7 @@ bool Route::load(const Cache& cache, std::string_view path, bool mirrored)
 	return true;
 }
 
-void RoutePlace::attachAtLoop(const Route& r)
+void RoutePlace::joinAtLoop(const Route& r)
 {
 	const Route::Point& at = r.points[r.loopPoint];
 	pa = position = r.loop;
@@ -424,11 +424,11 @@ void attachAtStart(Playback& pl, Kart& k, Pose& vis, const KartParams& p, const 
 	attached(k, vis, p, r.start, r.startRotation);
 }
 
-void attachAtLoop(Playback& pl, Kart& k, Pose& vis, const KartParams& p, const Route& r, int32_t slot)
+void joinAtLoop(Playback& pl, Kart& k, Pose& vis, const KartParams& p, const Route& r, int32_t slot)
 {
 	pl.route = slot;
 	pl.active = true;
-	pl.cursor.attachAtLoop(r);
+	pl.cursor.joinAtLoop(r);
 	attached(k, vis, p, r.loop, r.loopRotation);
 }
 

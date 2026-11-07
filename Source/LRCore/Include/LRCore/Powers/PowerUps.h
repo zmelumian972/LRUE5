@@ -47,7 +47,7 @@ struct LRCORE_API PowerUps {
 	void dropWhite(World& w, size_t racer);
 	void cancelTurbo(size_t racer);
 	void cancelShield(size_t racer);
-	void cancelMagnetHold(size_t racer);
+	void dropMagnetGrip(size_t racer);
 	// What touched a racer in a step: a brick, a trap, a projectile.
 	void touchBrick(World& w, size_t brick, size_t racer);
 	void touchTrap(World& w, size_t action, size_t racer);

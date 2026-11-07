@@ -66,7 +66,7 @@ public:
 	// The racers' chassis (load's): the shadows' and skid trails' sizes, the engines' pitch.
 	struct Chassis {
 		float shadowWidth = 8, shadowLength = 9;
-		std::array<float, 2> skidWidths = {1.2f, 1.2f};
+		std::array<float, 2> skidMarkWidths = {1.2f, 1.2f};
 		std::array<Vec3, 4> skidPoints = {};
 		float enginePitch = 0;
 	};

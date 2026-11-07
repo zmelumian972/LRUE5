@@ -20,9 +20,10 @@ The original game's races, handling and menus, on a new engine.</p>
 
 ## What is this?
 
-LEGO Racers on Unreal Engine 5. The game's logic is a from-scratch rewrite, tested so that the karts'
-handling, the AI's racing and the power-ups stay as they were in 1999. Unreal Engine 5 draws it, plays its sound and
-reads your controller. Everything it shows and plays comes from your own copy of the game.
+LEGO Racers on Unreal Engine 5. The game's logic is a new implementation, built on what the community's
+reverse-engineering of the original learned (see [Credits](#credits)), and tested so that the karts' handling, the
+AI's racing and the power-ups stay as they were in 1999. Unreal Engine 5 draws it, plays its sound and reads your
+controller. Everything it shows and plays comes from your own copy of the game.
 
 ## Features
 
@@ -97,6 +98,9 @@ its content or its trademarks, and not Unreal Engine, which has its own license 
 
 - **LEGO Racers** (1999) was developed by **High Voltage Software** and published by **LEGO Media International**.
   The game, its content and its design belong to the LEGO Group. Thank you for one of the best racers of its time.
+- **[isledecomp/racers](https://github.com/isledecomp/racers)**, the community's decompilation of LEGO Racers. Much
+  of how the original works, from the karts' physics and steering to many of its values, was learned from their work.
+  Thank you.
 - **[Unreal Engine 5](https://www.unrealengine.com)** by **Epic Games**. This project uses the Unreal® Engine. Unreal® is
   a trademark or registered trademark of Epic Games, Inc. in the United States of America and elsewhere.
   Unreal® Engine, Copyright 1998 – 2026, Epic Games, Inc. All rights reserved.

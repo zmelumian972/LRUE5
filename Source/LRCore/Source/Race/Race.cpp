@@ -27,7 +27,7 @@ bool boxesTouch(const Box& a, const Box& b, Vec3& normal, float& penetration, Ve
 // Ahead of the kart on the route: the preview cursor attached at the loop and advanced by ms.
 void aimAlong(RoutePlace& c, const Route& route, int32_t ms, bool resetRate)
 {
-	c.attachAtLoop(route);
+	c.joinAtLoop(route);
 	if (resetRate) {
 		c.rate = 1;
 	}
@@ -82,7 +82,7 @@ void rejoinRoute(World& w, size_t i, const Route& route)
 	Driver& d = w.racers.drivers[i];
 	Kart& k = w.racers.karts[i];
 	Playback& pl = w.racers.playback[i];
-	attachAtLoop(pl, k, w.racers.visible[i], w.racers.params[i], route, pl.route);
+	joinAtLoop(pl, k, w.racers.visible[i], w.racers.params[i], route, pl.route);
 	RoutePlace& c = pl.cursor;
 	c.rate = 1;
 	Vec3 none{};

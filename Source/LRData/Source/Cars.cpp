@@ -144,7 +144,7 @@ bool ChassisTable::decode(std::span<const uint8_t> bytes)
 		case ChassisDriverMount: c.driverMount = r.reals<3>(); return true;
 		case ChassisSkids:
 			r.expect(Token::Open);
-			c.skidWidths = r.reals<2>();
+			c.skidMarkWidths = r.reals<2>();
 			for (std::array<float, 3>& point : c.skidPoints) {
 				point = r.reals<3>();
 			}

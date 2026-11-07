@@ -33,7 +33,7 @@ struct LRDATA_API ChassisTable {
 		float shadowWidth = 0, shadowLength = 0;
 		float enginePitch = 0; // the engine sounds' pitch factor
 		// The skid marks: their widths (front, rear) and where each wheel lays them, car space.
-		std::array<float, 2> skidWidths = {};
+		std::array<float, 2> skidMarkWidths = {};
 		std::array<std::array<float, 3>, 4> skidPoints = {};
 		std::array<std::array<float, 3>, 4> wheels = {}; // front right, front left, rear right, rear left
 		int32_t handling = 50, topSpeed = 50, acceleration = 80;

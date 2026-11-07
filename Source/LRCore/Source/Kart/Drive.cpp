@@ -31,24 +31,24 @@ float tightestTurn(const Kart& k, const KartParams& p)
 			touching++;
 		}
 	}
-	grip = touching ? grip / float(touching) * k.gripScale : 0;
-	const float hold = grip * (Gravity * p.massScale);
+	grip = touching ? grip / float(touching) * k.gripFactor : 0;
+	const float hold = grip * (Gravity * p.massFactor);
 	if (hold == 0) {
 		return k.contacts == 0 ? 100.0f : MaxRadius;
 	}
 	return ((k.headingSpeed * k.headingSpeed) * p.mass) / hold;
 }
 
-bool canSteer(const Kart& k, float radius)
+bool steerAllowed(const Kart& k, float radius)
 {
-	const float align = dot(k.rotation.f, k.velocityDirection);
+	const float align = dot(k.rotation.f, k.travelDir);
 	return !(align <= 0 || (radius < 0 && k.turnRadius > 0) || (radius > 0 && k.turnRadius < 0) ||
 		(!(k.flags & KartSteering) && align < SteerAlign) || k.wallHits != 0 || k.speed > SteerMaxSpeed);
 }
 
-bool canPowerslide(const Kart& k)
+bool slideAllowed(const Kart& k)
 {
-	return !(k.wallHits != 0 || (!(k.flags & KartHover) && k.contacts < 3) || dot(k.rotation.f, k.velocityDirection) <= SlideAlign ||
+	return !(k.wallHits != 0 || (!(k.flags & KartHover) && k.contacts < 3) || dot(k.rotation.f, k.travelDir) <= SlideAlign ||
 		k.headingSpeed < SlideMinSpeed);
 }
 
@@ -63,7 +63,7 @@ float clampRadius(float r)
 	return 0;
 }
 
-void setThrust(Kart& k, const KartParams& p, float thrust)
+void setEngineForce(Kart& k, const KartParams& p, float thrust)
 {
 	k.thrust = thrust * p.accelerationScale;
 	k.dragCoefficient = (p.mass * std::fabs(k.thrust)) / (k.maxSpeed * k.maxSpeed);
@@ -90,7 +90,7 @@ void throttleInput(Driver& d, const Kart& k, float y)
 
 void startPowerslide(Driver& d, Kart& k, bool tight)
 {
-	if (canPowerslide(k)) {
+	if (slideAllowed(k)) {
 		d.flags |= DriverSliding;
 		d.slideMs = 0;
 		d.tightSlide = tight;
@@ -103,7 +103,7 @@ void startPowerslide(Driver& d, Kart& k, bool tight)
 void endPowerslide(Driver& d, Kart& k)
 {
 	d.flags &= ~DriverSliding;
-	stopSteering(k);
+	endTurn(k);
 	d.slideMs = 0;
 	k.flags &= ~KartPowerslide;
 	k.slideFactor = 0.2f;
@@ -131,7 +131,7 @@ void applyDriver(Driver& d, Kart& k, const KartParams& p)
 {
 	if (d.radius == 0 && d.prevRadius == 0) {
 		k.turnRadius = 0;
-		stopSteering(k);
+		endTurn(k);
 	}
 	else {
 		if (d.radius != 0 && k.speed < 0.04f) {
@@ -140,16 +140,16 @@ void applyDriver(Driver& d, Kart& k, const KartParams& p)
 		const float m = std::fabs(d.radius);
 		const float tightest = tightestTurn(k, p);
 		if (d.flags & DriverSliding) {
-			if (!canSteer(k, d.radius) || m <= 0) {
-				stopSteering(k);
+			if (!steerAllowed(k, d.radius) || m <= 0) {
+				endTurn(k);
 			}
 			else {
 				const float j = std::max(MinSlideTightness, 1 - m / tightest);
 				if (d.tightSlide) {
-					startSteering(k, j + j + 1, 0.25f, Pi);
+					beginTurn(k, j + j + 1, 0.25f, Pi);
 				}
 				else {
-					startSteering(k, j + 1, 0.85f, Pi);
+					beginTurn(k, j + 1, 0.85f, Pi);
 				}
 				if (m < tightest) {
 					d.radius = std::copysign(((tightest - m) * 0.5f) * 0.5f + m, d.radius);
@@ -157,11 +157,11 @@ void applyDriver(Driver& d, Kart& k, const KartParams& p)
 			}
 		}
 		else {
-			if (canSteer(k, d.radius) && m > 0 && m < tightest) {
-				startSteering(k, (1 - m / tightest) + 1, 0.85f, 0.7071f);
+			if (steerAllowed(k, d.radius) && m > 0 && m < tightest) {
+				beginTurn(k, (1 - m / tightest) + 1, 0.85f, 0.7071f);
 			}
 			else {
-				stopSteering(k);
+				endTurn(k);
 			}
 			if (m < tightest) {
 				d.radius = std::copysign((tightest + m) * 0.5f, d.radius);
@@ -171,7 +171,7 @@ void applyDriver(Driver& d, Kart& k, const KartParams& p)
 	}
 
 	const float thrust = (d.flags & DriverTurbo) ? ((d.flags & DriverTurboWeak) ? 216.0f : 432.0f) : d.thrust;
-	setThrust(k, p, thrust);
+	setEngineForce(k, p, thrust);
 }
 
 void updateControls(Controls& c, uint16_t keys, bool blocked, int32_t frameMs, Driver& d, Kart& k, const KartParams& p)

@@ -48,7 +48,7 @@ public:
 	int32_t sweep(int32_t dt, bool queryTrack);
 
 private:
-	float gravityForce() const { return -(Gravity * m_params.massScale); } // negative: down
+	float gravityForce() const { return -(Gravity * m_params.massFactor); } // negative: down
 
 	void cancelPositiveAbout(Vec3 direction, Vec3 point)
 	{
@@ -59,12 +59,12 @@ private:
 		}
 	}
 	void yawImpulse(float rate, int32_t ms) { yawKick(m_kart, m_params, rate, ms); }
-	void stopSteering() { lr::stopSteering(m_kart); }
+	void endTurn() { lr::endTurn(m_kart); }
 
 	void addForce(Vec3 f) { m_forceSum += f; }
 	void addForceAt(Vec3 f, Vec3 at) { m_torqueSum += cross(at - m_kart.centerOfMassWorld, f); }
 
-	void accumulateForces();
+	void sumForces();
 	void groundForces(float align);
 	void integrate(float dt);
 	void limitTilt();
@@ -81,10 +81,10 @@ private:
 	void probeHover(int32_t dt);
 	bool cachedGround(int wheel, Vec3 a, Vec3 b);
 	void insertPlane(int wheel, const SegmentHit& hit);
-	void snapToGround(int best);
+	void settleOnGround(int best);
 	void turnHeadingToward(Vec3 target, float dt);
 	void updateHeading(int32_t dt);
-	void updateWheelSurfaces();
+	void sampleWheelGround();
 	void substep(int32_t dt);
 
 	bool acceptsWall(const SegmentHit& hit, Vec3 worldNormal, Vec3 worldPoint) const;

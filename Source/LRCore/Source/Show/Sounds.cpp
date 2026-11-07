@@ -699,7 +699,7 @@ void RaceSounds::kartLoops(const Show& show, const World& world, size_t n)
 		if (m_racing && !world.racers.playback[i].active) {
 			ShowSound* skid = heldFor(ShowSound::Skid, car);
 			if (!skid && steering && k.wallHits == 0 &&
-				((k.flags & KartPowerslide) || dot(k.velocityDirection, world.racers.visible[i].rotation.f) < 0.9f)) {
+				((k.flags & KartPowerslide) || dot(k.travelDir, world.racers.visible[i].rotation.f) < 0.9f)) {
 				skid = &play(show, SkidSound, car, &world.racers.visible[i].position, 30, 300, true);
 				skid->role = ShowSound::Skid;
 				skid->volume = 0.8f;

@@ -142,7 +142,7 @@ void PowerUps::shove(World& w, size_t i, Vec3 q)
 		return;
 	}
 	Kart& k = w.racers.karts[i];
-	startSteering(k, ShoveGain, ShoveSlip, Pi); // (nothing to a route kart but the flag)
+	beginTurn(k, ShoveGain, ShoveSlip, Pi); // (nothing to a route kart but the flag)
 	Power& pw = w.racers.powers[i];
 	if (!(k.flags & KartPushA)) {
 		push(w, i, 0, q);

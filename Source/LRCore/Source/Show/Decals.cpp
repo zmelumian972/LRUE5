@@ -28,7 +28,7 @@ uint8_t skiddingWheels(const World& world, size_t i, Effects::Visuals& v, int32_
 			wheels = 4 | 8;
 		}
 		else {
-			const Vec3 dir = k.velocityDirection;
+			const Vec3 dir = k.travelDir;
 			wheels = dot(car.rotation.s, dir) > 0 ? (2 | 8) : (1 | 4);
 		}
 		for (size_t w = 0; w < 4; w++) {
@@ -305,7 +305,7 @@ void Decals::trailDecals(const Show& show, int32_t ms)
 			}
 			alpha = uint8_t((1 - float(t.fadeMs) / 1000) * 127);
 		}
-		const float width = show.chassis[t.racer].skidWidths[t.wheel < 2 ? 0 : 1];
+		const float width = show.chassis[t.racer].skidMarkWidths[t.wheel < 2 ? 0 : 1];
 		std::vector<Trail::Piece> pieces = t.pieces;
 		if (t.live) {
 			pieces.push_back(t.current);

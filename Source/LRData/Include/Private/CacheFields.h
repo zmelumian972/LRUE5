@@ -27,7 +27,7 @@ namespace lr {
 
 // clang-format off
 template <class V> void fields(V& v, ChassisTable::Chassis::Variant& x) { v(x.materials, x.textures, x.model, x.skeleton, x.animation); }
-template <class V> void fields(V& v, ChassisTable::Chassis& x) { v(x.name, x.model, x.animation, x.skeleton, x.materials, x.textures, x.second, x.driverMount, x.centerOfMass, x.mass, x.shadowWidth, x.shadowLength, x.enginePitch, x.skidWidths, x.skidPoints, x.wheels, x.handling, x.topSpeed, x.acceleration); }
+template <class V> void fields(V& v, ChassisTable::Chassis& x) { v(x.name, x.model, x.animation, x.skeleton, x.materials, x.textures, x.second, x.driverMount, x.centerOfMass, x.mass, x.shadowWidth, x.shadowLength, x.enginePitch, x.skidMarkWidths, x.skidPoints, x.wheels, x.handling, x.topSpeed, x.acceleration); }
 template <class V> void fields(V& v, ChassisTable& x) { v(x.chassis); }
 template <class V> void fields(V& v, ChampionTable::Champion& x) { v(x.name, x.model, x.materials, x.textures, x.chassis, x.mass, x.centerOfMass); }
 template <class V> void fields(V& v, ChampionTable& x) { v(x.champions); }

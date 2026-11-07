@@ -44,7 +44,7 @@ void Show::loadChassis(const Cache& cache, const World& world)
 			Chassis& out = chassis[i];
 			out.shadowWidth = c->shadowWidth;
 			out.shadowLength = c->shadowLength;
-			out.skidWidths = c->skidWidths;
+			out.skidMarkWidths = c->skidMarkWidths;
 			out.enginePitch = c->enginePitch;
 			for (size_t w = 0; w < 4; w++) {
 				out.skidPoints[w] = {c->skidPoints[w][0], c->skidPoints[w][1] * (world.track.mirrored ? -1.0f : 1.0f), c->skidPoints[w][2]};
